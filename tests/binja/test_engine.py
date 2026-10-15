@@ -26,6 +26,11 @@ def test_activity_rewrites_a_d810_sample():
         assert check_equivalent(lifted, parse(ENTRY["expected"], ENTRY["width"]), use_z3=False) is not Verdict.REFUTED
         report = log.latest_report(func)
         assert report is not None and report.rewrites and not report.rolled_back
+        for r in report.rewrites:  # spec section 10: every applied rewrite says how it was checked
+            assert r.level == "mlil" and r.verdict in ("PROVEN", "TESTED") and r.method, r
+            assert (r.verdict == "TESTED") == bool(r.reason), r
+        assert sum(report.assurance().values()) == len(report.rewrites)
+        assert "proven" in log.render(report)
     finally:
         bv.file.close()
 
@@ -76,7 +81,7 @@ def test_failing_rule_never_breaks_analysis():
         bv, func = _open_typed()
         try:
             report = log.latest_report(func)
-            assert any(source == "Exploding" for source, _ in report.errors)
+            assert any(e.source == "Exploding" for e in report.errors)
             assert not is_mba(strip_versions(lift_return(func)))
         finally:
             bv.file.close()

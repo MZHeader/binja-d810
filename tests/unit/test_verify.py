@@ -80,7 +80,7 @@ def test_signature_verdicts_agree_with_z3():
         if rng.random() < 0.5:
             b = a  # make some pairs equal so both verdicts are exercised
         widths = {v.name: v.width for v in variables(a) + variables(b)}
-        by_z3 = _z3_prove(a, b, widths, 500)
+        by_z3, _ = _z3_prove(a, b, widths, 500)
         if by_z3 is not None:
             decided += 1
             assert _signature_proof(a, b) is by_z3, (to_str(a), to_str(b))

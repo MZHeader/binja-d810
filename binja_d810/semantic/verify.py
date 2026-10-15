@@ -10,6 +10,7 @@ from __future__ import annotations
 import enum
 import random
 import threading
+from dataclasses import dataclass
 from typing import Iterator, Mapping, Optional
 
 from ..ir.evaluate import evaluate
@@ -55,25 +56,42 @@ def sample_envs(var_widths: Mapping[str, int], count: int, seed: int) -> Iterato
         yield env
 
 
-def check_equivalent(
+@dataclass(frozen=True)
+class Check:
+    """A verdict with how it was reached: method is "signature", "z3" or "sampling"; reason says
+    why a TESTED verdict has no proof ("z3 disabled", "z3 unavailable", "z3 timeout", ...)."""
+
+    verdict: Verdict
+    method: str
+    reason: str = ""
+
+
+def check(
     a: Expr, b: Expr, *, samples: int = 64, use_z3: bool = True, z3_timeout_ms: int = 500, seed: int = 0
-) -> Verdict:
+) -> Check:
     if a.width != b.width:
-        return Verdict.REFUTED
+        return Check(Verdict.REFUTED, "width", "")
     var_widths = {v.name: v.width for v in variables(a) + variables(b)}
     for env in sample_envs(var_widths, samples, seed):
         if evaluate(a, env) != evaluate(b, env):
-            return Verdict.REFUTED
+            return Check(Verdict.REFUTED, "sampling")
     by_signature = _signature_proof(a, b)
     if by_signature is not None:
-        return Verdict.PROVEN if by_signature else Verdict.REFUTED
-    if use_z3:
-        proven = _z3_prove(a, b, var_widths, z3_timeout_ms)
-        if proven is False:
-            return Verdict.REFUTED
-        if proven is True:
-            return Verdict.PROVEN
-    return Verdict.TESTED
+        return Check(Verdict.PROVEN if by_signature else Verdict.REFUTED, "signature")
+    if not use_z3:
+        return Check(Verdict.TESTED, "sampling", "z3 disabled")
+    proven, reason = _z3_prove(a, b, var_widths, z3_timeout_ms)
+    if proven is False:
+        return Check(Verdict.REFUTED, "z3")
+    if proven is True:
+        return Check(Verdict.PROVEN, "z3")
+    return Check(Verdict.TESTED, "sampling", reason)
+
+
+def check_equivalent(
+    a: Expr, b: Expr, *, samples: int = 64, use_z3: bool = True, z3_timeout_ms: int = 500, seed: int = 0
+) -> Verdict:
+    return check(a, b, samples=samples, use_z3=use_z3, z3_timeout_ms=z3_timeout_ms, seed=seed).verdict
 
 
 def _signature_proof(a: Expr, b: Expr) -> Optional[bool]:
@@ -90,22 +108,24 @@ def _signature_proof(a: Expr, b: Expr) -> Optional[bool]:
     return signature(a, vs) == signature(b, vs)
 
 
-def _z3_prove(a: Expr, b: Expr, var_widths: Mapping[str, int], timeout_ms: int) -> Optional[bool]:
+def _z3_prove(a: Expr, b: Expr, var_widths: Mapping[str, int], timeout_ms: int) -> tuple[Optional[bool], str]:
+    """(True, "") proven, (False, "") refuted, (None, reason) inconclusive."""
     try:
         import z3
     except ImportError:
-        return None
+        return None, "z3 unavailable"
     ctx = _z3_context()
     z3_vars = {name: z3.BitVec(name, width, ctx) for name, width in var_widths.items()}
     solver = z3.Solver(ctx=ctx)
-    solver.set("timeout", timeout_ms)
+    solver.set("timeout", max(1, int(timeout_ms)))
     solver.add(to_z3(a, z3_vars, ctx) != to_z3(b, z3_vars, ctx))
     result = solver.check()
     if result == z3.unsat:
-        return True
+        return True, ""
     if result == z3.sat:
-        return False
-    return None
+        return False, ""
+    why = solver.reason_unknown()
+    return None, "z3 timeout" if why in ("timeout", "canceled") else f"z3 unknown: {why}"
 
 
 def to_z3(e: Expr, z3_vars: dict, ctx=None):

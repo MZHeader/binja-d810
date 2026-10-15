@@ -66,7 +66,7 @@ def test_load_inside_a_root_is_never_deleted(asm):
     func = function_named(on, "eff_load_and_zero")
     assert _count(func.mlil, LOADS) == _count(function_named(off, "eff_load_and_zero").mlil, LOADS) == 1
     report = log.latest_report(func)
-    assert report is not None and any(reason.startswith("effect:") for _, reason in report.skipped), report
+    assert report is not None and any(r.reason.startswith("effect:") for r in report.skipped), report
 
 
 def test_pure_part_of_an_effectful_root_is_simplified(asm):

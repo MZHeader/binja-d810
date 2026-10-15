@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import NamedTuple, Sequence
 
 from binaryninja import (
     ILSourceLocation, MediumLevelILFunction, MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable,
@@ -28,14 +29,42 @@ class EngineConfig:
     disabled_rules: frozenset[str] = frozenset()
 
 
+class RewriteRecord(NamedTuple):
+    address: int
+    source: str
+    before: str
+    after: str
+    verdict: str  # "PROVEN" or "TESTED": the original -> replacement check (spec section 10)
+    method: str  # "signature", "z3" or "sampling"
+    reason: str  # why a TESTED rewrite has no proof
+    level: str = "mlil"
+
+
+class SkipRecord(NamedTuple):
+    address: int
+    reason: str
+    level: str = "mlil"
+
+
+class ErrorRecord(NamedTuple):
+    source: str
+    message: str
+    level: str = "mlil"
+
+
 @dataclass
 class FunctionReport:
-    rewrites: list[tuple[int, str, str, str]] = field(default_factory=list)
-    skipped: list[tuple[int, str]] = field(default_factory=list)
-    errors: list[tuple[str, str]] = field(default_factory=list)
+    rewrites: list[RewriteRecord] = field(default_factory=list)
+    skipped: list[SkipRecord] = field(default_factory=list)
+    errors: list[ErrorRecord] = field(default_factory=list)
     capped: bool = False
     still_firing: list[str] = field(default_factory=list)
     rolled_back: bool = False
+    refuted: int = 0  # candidate results the checker refuted; never applied
+    rolled_back_rewrites: int = 0  # attempted, then undone; never counted as applied
+
+    def assurance(self) -> Counter:
+        return Counter(r.verdict for r in self.rewrites)
 
 
 def _operations(e: MediumLevelILInstruction):
@@ -144,17 +173,19 @@ def simplify_function(mlil: MediumLevelILFunction, rules: Sequence[Rule],
                 for expr, reason in rejected:
                     seen = lift(expr.ssa_form, root_instr=instr, max_nodes=config.limits.max_nodes, effect_leaves=True)
                     if seen is not None and is_mba(seen):
-                        report.skipped.append((expr.address, reason))
+                        report.skipped.append(SkipRecord(expr.address, reason))
                 for root in roots:
                     ir = lift(root.ssa_form, root_instr=instr, max_nodes=config.limits.max_nodes)
                     if ir is None or not is_mba(ir):
                         continue
                     outcome = simplify_expression(ir, rules, backends, config.limits, frozenset(dead))
+                    report.refuted += outcome.refuted
                     for source, message in outcome.errors:
-                        dead.add(source)
-                        report.errors.append((source, message))
+                        if source != "verify":
+                            dead.add(source)
+                        report.errors.append(ErrorRecord(source, message))
                     if outcome.skipped:
-                        report.skipped.append((root.address, outcome.skipped))
+                        report.skipped.append(SkipRecord(root.address, outcome.skipped))
                     if outcome.rewrite is not None:
                         planned.append((root, outcome.rewrite))
             if not planned:
@@ -164,7 +195,9 @@ def simplify_function(mlil: MediumLevelILFunction, rules: Sequence[Rule],
                 loc = ILSourceLocation.from_instruction(root)
                 backups.append((root.expr_index, root.copy_to(mlil)))
                 mlil.replace_expr(root.expr_index, lower(mlil, rewrite.replacement, loc))
-                report.rewrites.append((root.address, rewrite.source, to_str(rewrite.original), to_str(rewrite.replacement)))
+                report.rewrites.append(RewriteRecord(
+                    root.address, rewrite.source, to_str(rewrite.original), to_str(rewrite.replacement),
+                    rewrite.verdict.name if rewrite.verdict else "UNCHECKED", rewrite.method, rewrite.reason))
             mlil.finalize()
             mlil.generate_ssa_form()
             # Only what these rewrites made dead: ordinary dead stores (z_1 = z at -O0) stay.
@@ -180,12 +213,13 @@ def simplify_function(mlil: MediumLevelILFunction, rules: Sequence[Rule],
         if _cfg_shape(mlil) != shape:
             raise RuntimeError("control flow changed by expression rewrites")
     except Exception as exc:
-        report.errors.append(("engine", f"{type(exc).__name__}: {exc}"))
+        report.errors.append(ErrorRecord("engine", f"{type(exc).__name__}: {exc}"))
         for expr_index, backup in reversed(backups):
             mlil.replace_expr(expr_index, backup)
         if backups:
             mlil.finalize()
             mlil.generate_ssa_form()
+        report.rolled_back_rewrites = len(report.rewrites)
         report.rewrites.clear()
         report.rolled_back = True
     return report

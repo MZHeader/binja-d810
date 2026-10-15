@@ -262,6 +262,11 @@ def test_sample():
                 func = bv.get_function_at(address)
                 if func is None or func.hlil is None:
                     totals["analysis_failures"] += 1
+                    reason = getattr(func, "analysis_skip_reason", None) if func is not None else "function vanished"
+                    totals[f"analysis_failure:{getattr(reason, 'name', reason)}"] += 1
+                    per_function.append({"start": hex(address), "mba_before": before[address].mba_roots,
+                                         "analysis_failure": str(reason),
+                                         "plugin_s": round(sum(timer.seconds.get(address, [])), 4)})
                     continue
                 after = hlil_counts(func)
                 before_c.add(before[address])

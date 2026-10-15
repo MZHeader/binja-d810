@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, Union
 
 from .ir.expr import BinOp, Expr, UnOp, is_mba, node_count, to_str, variables
 from .ir.normalize import normalize
 from .rules.base import Rewrite, Rule
 from .semantic.backend import Tier2Backend
-from .semantic.verify import Verdict, check_equivalent
+from .semantic.verify import Check, Verdict, check
 
 _MAX_RULE_REWRITES = 64
 
@@ -28,6 +28,15 @@ class Outcome:
     rewrite: Optional[Rewrite] = None
     skipped: Optional[str] = None
     errors: list[tuple[str, str]] = field(default_factory=list)
+    refuted: int = 0  # candidate results the checker refuted (never applied)
+
+
+Checker = Callable[[Expr, Expr], Union[Check, Verdict]]
+
+
+def _checked(checker: Checker, a: Expr, b: Expr) -> Check:
+    result = checker(a, b)
+    return result if isinstance(result, Check) else Check(result, "custom")
 
 
 def simplify_expression(
@@ -36,7 +45,7 @@ def simplify_expression(
     backends: Sequence[Tier2Backend],
     limits: Limits = Limits(),
     disabled: frozenset[str] = frozenset(),
-    check: Callable[[Expr, Expr], Verdict] = check_equivalent,
+    check: Checker = check,
 ) -> Outcome:
     out = Outcome()
     size = node_count(expr)
@@ -47,17 +56,20 @@ def simplify_expression(
     sources: list[str] = []
     current = _tier1(normalize(expr), rules, dead, sources, out.errors)
     if is_mba(current) and backends:
-        current, exhausted = _tier2(current, backends, limits, dead, sources, out.errors, check)
+        current, exhausted = _tier2(current, backends, limits, dead, sources, out, check)
         if exhausted:
             out.skipped = f"too complex: Tier 2 time budget ({limits.tier2_seconds:g} s) exhausted"
     if out.skipped is None and is_mba(current) and len(variables(current)) > limits.max_vars:
         out.skipped = f"too complex: {len(variables(current))} variables > {limits.max_vars}"
     if not sources or not _worth_applying(current, expr):
         return out
-    if check(expr, current) is Verdict.REFUTED:
+    final = _checked(check, expr, current)
+    if final.verdict is Verdict.REFUTED:
+        out.refuted += 1
         out.errors.append(("verify", f"refuted {to_str(expr)} -> {to_str(current)} via {sources}"))
         return out
-    out.rewrite = Rewrite(original=expr, replacement=current, source="+".join(dict.fromkeys(sources)))
+    out.rewrite = Rewrite(original=expr, replacement=current, source="+".join(dict.fromkeys(sources)),
+                          verdict=final.verdict, method=final.method, reason=final.reason)
     return out
 
 
@@ -135,7 +147,7 @@ def _best_rule(node: Expr, rules: Sequence[Rule], dead: set[str], errors: list, 
     return best
 
 
-def _tier2(e, backends, limits, dead, sources, errors, check) -> tuple[Expr, bool]:
+def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker) -> tuple[Expr, bool]:
     """Simplify MBA subtrees top-down. Returns (result, whether the time budget ran out)."""
     deadline = time.monotonic() + limits.tier2_seconds
     exhausted = False
@@ -156,12 +168,13 @@ def _tier2(e, backends, limits, dead, sources, errors, check) -> tuple[Expr, boo
                     result = backend.simplify(node)
                 except Exception as exc:
                     dead.add(source)
-                    errors.append((source, f"{type(exc).__name__}: {exc}"))
+                    out.errors.append((source, f"{type(exc).__name__}: {exc}"))
                     continue
                 if result is None or not _better(result, node):
                     continue
-                if check(node, result) is Verdict.REFUTED:
-                    errors.append((source, f"refuted {to_str(node)} -> {to_str(result)}"))
+                if _checked(check, node, result).verdict is Verdict.REFUTED:
+                    out.refuted += 1
+                    out.errors.append((source, f"refuted {to_str(node)} -> {to_str(result)}"))
                     continue
                 sources.append(source)
                 # A backend may stop short (CoBRA leaves x + y - 2 * (x & y) beside x * y); each

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from ..ir.expr import BinOp, Const, Expr, UnOp, walk
+from ..ir.expr import BinOp, Const, Expr, UnOp, mask, walk
 from ..ir.normalize import normalize
 from ..matching.matcher import D810_BINARY, D810_UNARY, match
 from ..third_party.d810.mba.constraints import ConstraintExpr
@@ -13,6 +13,53 @@ from .base import Rewrite
 from .d810_ops import unsupported_ops
 
 _CONSTRAINT_ERRORS = (KeyError, ValueError, AttributeError, TypeError, ArithmeticError)
+
+
+class ModInt(int):
+    """An integer modulo 2**width, for d810's constraint code.
+
+    Constraints are written with plain Python literals (c == -2, c_res == c_1 + ONE, ~c_1); bound
+    constants are width-masked. Comparing and computing modulo the width makes `0xFE == -2` hold at
+    8 bits and `0xFFFFFFFE == -2` at 32 bits, so such rules can fire at all (v1 compared 0xFFFFFFFE
+    with -2 and never matched them)."""
+
+    width: int
+
+    def __new__(cls, value: int, width: int):
+        obj = super().__new__(cls, int(value) & mask(width))
+        obj.width = width
+        return obj
+
+    def _wrap(self, value: int) -> "ModInt":
+        return ModInt(value, self.width)
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, int):
+            return int(self) == int(other) & mask(self.width)
+        return NotImplemented
+
+    def __ne__(self, other) -> bool:
+        result = self.__eq__(other)
+        return result if result is NotImplemented else not result
+
+    __hash__ = int.__hash__
+
+    def __add__(self, o): return self._wrap(int(self) + int(o))
+    def __radd__(self, o): return self._wrap(int(o) + int(self))
+    def __sub__(self, o): return self._wrap(int(self) - int(o))
+    def __rsub__(self, o): return self._wrap(int(o) - int(self))
+    def __mul__(self, o): return self._wrap(int(self) * int(o))
+    def __rmul__(self, o): return self._wrap(int(o) * int(self))
+    def __and__(self, o): return self._wrap(int(self) & int(o))
+    def __rand__(self, o): return self._wrap(int(o) & int(self))
+    def __or__(self, o): return self._wrap(int(self) | int(o))
+    def __ror__(self, o): return self._wrap(int(o) | int(self))
+    def __xor__(self, o): return self._wrap(int(self) ^ int(o))
+    def __rxor__(self, o): return self._wrap(int(o) ^ int(self))
+    def __lshift__(self, o): return self._wrap(int(self) << int(o)) if int(o) < self.width else self._wrap(0)
+    def __rshift__(self, o): return self._wrap(int(self) >> int(o))
+    def __invert__(self): return self._wrap(~int(self))
+    def __neg__(self): return self._wrap(-int(self))
 
 
 class Binding:
@@ -26,7 +73,7 @@ class Binding:
     @property
     def value(self) -> int:
         if isinstance(self.expr, Const):
-            return self.expr.value
+            return ModInt(self.expr.value, self.expr.width)
         raise AttributeError("non-constant binding has no value")
 
     @property

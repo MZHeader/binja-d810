@@ -56,10 +56,11 @@
     },
     "Add_HackersDelightRule_5": {
       "notes": [
-        "16-bit: timeout after 60s"
+        "16-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
         8,
+        16,
         32,
         64
       ]
@@ -75,12 +76,15 @@
     },
     "Add_OllvmRule_2": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "Add_OllvmRule_3": {
@@ -94,12 +98,15 @@
     },
     "Add_OllvmRule_4": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "Add_OllvmRule_DynamicConst": {
@@ -122,22 +129,28 @@
     },
     "Add_SpecialConstantRule_2": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "Add_SpecialConstantRule_3": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "And1_MbaRule_1": {
@@ -160,10 +173,11 @@
     },
     "AndBnot_FactorRule_2": {
       "notes": [
-        "16-bit: timeout after 60s"
+        "16-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
         8,
+        16,
         32,
         64
       ]
@@ -197,9 +211,10 @@
     },
     "AndBnot_HackersDelightRule_2": {
       "notes": [
-        "8-bit: timeout after 60s"
+        "8-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
+        8,
         16,
         32,
         64
@@ -375,10 +390,11 @@
     },
     "BnotXor_Rule_1": {
       "notes": [
-        "16-bit: timeout after 60s"
+        "16-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
         8,
+        16,
         32,
         64
       ]
@@ -457,21 +473,25 @@
     },
     "Bnot_Hodur_1": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
-      ],
-      "widths": [
-        32
-      ]
-    },
-    "Bnot_MbaRule_1": {
-      "notes": [
-        "32-bit: timeout after 60s"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
         8,
         16,
+        32,
+        64
+      ]
+    },
+    "Bnot_MbaRule_1": {
+      "notes": [
+        "32-bit: proven (width-correct constraints, 60s)"
+      ],
+      "widths": [
+        8,
+        16,
+        32,
         64
       ]
     },
@@ -537,12 +557,15 @@
     },
     "CstSimplificationRule14": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "CstSimplificationRule15": {
@@ -601,42 +624,54 @@
     },
     "CstSimplificationRule20": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "CstSimplificationRule21": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "CstSimplificationRule22": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "CstSimplificationRule3": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "CstSimplificationRule4": {
@@ -740,9 +775,9 @@
     },
     "Mul_MBA_1": {
       "notes": [
-        "16-bit: timeout after 60s",
-        "32-bit: timeout after 60s",
-        "64-bit: timeout after 60s"
+        "16-bit: unresolved: timeout (width-correct constraints, 60s)",
+        "32-bit: unresolved: timeout (width-correct constraints, 60s)",
+        "64-bit: unresolved: timeout (width-correct constraints, 60s)"
       ],
       "widths": [
         8
@@ -762,9 +797,9 @@
     },
     "Mul_MBA_4": {
       "notes": [
-        "16-bit: timeout after 60s",
-        "32-bit: timeout after 60s",
-        "64-bit: timeout after 60s"
+        "16-bit: unresolved: timeout (width-correct constraints, 60s)",
+        "32-bit: unresolved: timeout (width-correct constraints, 60s)",
+        "64-bit: unresolved: timeout (width-correct constraints, 60s)"
       ],
       "widths": [
         8
@@ -772,12 +807,15 @@
     },
     "NegAdd_HackersDelightRule_1": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "NegAdd_HackersDelightRule_2": {
@@ -1250,12 +1288,15 @@
     },
     "Sub1_FactorRule_1": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     },
     "Sub1_FactorRule_2": {
@@ -1458,9 +1499,9 @@
     },
     "Xor_Hodur_2": {
       "notes": [
-        "16-bit: refuted: ",
-        "32-bit: refuted: ",
-        "64-bit: refuted: "
+        "16-bit: unresolved: get_constraints: Z3Exception: b'Sorts (_ BitVec 8) and (_ BitVec 16) are incompatible' (width-correct constraints, 60s)",
+        "32-bit: unresolved: get_constraints: Z3Exception: b'Sorts (_ BitVec 8) and (_ BitVec 32) are incompatible' (width-correct constraints, 60s)",
+        "64-bit: unresolved: get_constraints: Z3Exception: b'Sorts (_ BitVec 8) and (_ BitVec 64) are incompatible' (width-correct constraints, 60s)"
       ],
       "widths": [
         8
@@ -1540,10 +1581,10 @@
     },
     "Xor_Rule_4_WithXdu": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "32-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: refuted: {'bnot_c_1': 255, 'x_0': 255, 'c_1': 128} (width-correct constraints, 60s)",
+        "16-bit: refuted: {'x_0': 65535, 'c_1': 32768, 'bnot_c_1': 65535} (width-correct constraints, 60s)",
+        "32-bit: refuted: {'bnot_c_1': 4294967295, 'x_0': 4294967295, 'c_1': 2147483648} (width-correct constraints, 60s)",
+        "64-bit: refuted: {'c_1': 9225623836668461056, 'bnot_c_1': 18446744073709551615, 'x_0': 18444492273895866367} (width-correct constraints, 60s)"
       ],
       "widths": []
     },
@@ -1558,12 +1599,15 @@
     },
     "Xor_SpecialConstantRule_2": {
       "notes": [
-        "8-bit: refuted: ",
-        "16-bit: refuted: ",
-        "64-bit: refuted: "
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
       "widths": [
-        32
+        8,
+        16,
+        32,
+        64
       ]
     }
   },

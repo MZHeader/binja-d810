@@ -6,8 +6,11 @@ import ast
 import random
 import shutil
 import subprocess
+import threading
 from functools import lru_cache
 from typing import Callable, Optional
+
+_SOLVE_LOCK = threading.Lock()
 
 Solver = Callable[[str, int], Optional[str]]
 
@@ -48,10 +51,11 @@ def _python_binding() -> Optional[Solver]:
             mask = (1 << bitwidth) - 1
             tree = _to_tree(ast.parse(expr, mode="eval").body, mask)
             tree, names = _drop_unused(tree, sorted(_names(tree)), bitwidth, evaluate)
-            solved, _expired = _cobra.simplify_budgeted(
-                signature_of(tree, names, bitwidth), names, bitwidth, tree,
-                MAX_VARS, TIME_LIMIT_MS, None,
-            )
+            signature = signature_of(tree, names, bitwidth)
+            with _SOLVE_LOCK:  # Binary Ninja analyzes on parallel threads; the binding was built for IDA
+                solved, _expired = _cobra.simplify_budgeted(
+                    signature, names, bitwidth, tree, MAX_VARS, TIME_LIMIT_MS, None,
+                )
         except Exception:
             return None
         return None if solved is None else _render(solved)

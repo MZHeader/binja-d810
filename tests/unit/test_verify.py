@@ -87,6 +87,31 @@ def test_signature_verdicts_agree_with_z3():
     assert decided >= 30
 
 
+def test_each_thread_gets_its_own_z3_context():
+    # Binary Ninja runs the activity on parallel analysis threads; sharing Z3's default context
+    # crashed it in Z3_mk_context_rc.
+    import threading
+
+    from binja_d810.semantic.verify import _z3_context
+
+    seen = []
+    worker = threading.Thread(target=lambda: seen.append(_z3_context()))
+    worker.start()
+    worker.join()
+    seen.append(_z3_context())
+    assert seen[0] is not seen[1]
+    assert _z3_context() is seen[1]
+
+
+def test_concurrent_z3_checks_agree():
+    from concurrent.futures import ThreadPoolExecutor
+
+    cases = [(p("x << 1"), p("2 * x"), Verdict.PROVEN), (p("x << 1"), p("3 * x"), Verdict.REFUTED)] * 40
+    with ThreadPoolExecutor(8) as pool:
+        verdicts = list(pool.map(lambda c: check_equivalent(c[0], c[1], samples=0), cases))
+    assert verdicts == [expected for _, _, expected in cases]
+
+
 def test_default_z3_budget_is_500_ms():
     import inspect
 

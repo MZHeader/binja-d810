@@ -118,6 +118,13 @@ def test_tier2_time_budget_bounds_slow_backends():
     assert out.skipped and out.skipped.startswith("too complex") and "time budget" in out.skipped
 
 
+def test_normalization_alone_counts_as_a_rewrite():
+    # Binary Ninja's -O2 MLIL for x - (1 + ~y) is x + ~~y; normalize() finishes it with no rule.
+    out = simplify_expression(ir("x + ~~y"), [], [])
+    assert out.rewrite is not None and out.rewrite.source == "normalize"
+    assert out.rewrite.replacement == normalize(ir("x + y"))
+
+
 def test_equal_size_result_that_is_no_longer_mba_is_accepted():
     # PredOr2_Rule_1: 3 & ~(x * x) -> 2 | (1 & ~x), both 6 nodes, but the multiplication is gone.
     out = simplify_expression(ir("3 & ~(x * x)"), RULES, [])

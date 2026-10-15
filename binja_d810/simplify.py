@@ -45,7 +45,10 @@ def simplify_expression(
         return out
     dead = set(disabled)
     sources: list[str] = []
-    current = _tier1(normalize(expr), rules, dead, sources, out.errors)
+    normalized = normalize(expr)
+    if _better(normalized, expr):  # e.g. Binary Ninja's x + ~~y for x - (1 + ~y)
+        sources.append("normalize")
+    current = _tier1(normalized, rules, dead, sources, out.errors)
     if is_mba(current) and backends:
         current, exhausted = _tier2(current, backends, limits, dead, sources, out.errors, check)
         if exhausted:

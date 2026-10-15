@@ -1,8 +1,15 @@
 """Registers the D-810 MLIL activity on Binary Ninja's function workflows."""
 
 import json
+from functools import lru_cache
+from typing import Optional
 
 from binaryninja import Activity, AnalysisContext, Workflow, log_info
+
+from ..rules.registry import load_rules
+from ..semantic.backend import default_backends
+from . import log
+from .engine import EngineConfig, simplify_function
 
 ACTIVITY_NAME = "extension.binja_d810.mba"
 # Key of the enable setting Binary Ninja generates from eligibility.auto (per view / per function).
@@ -11,20 +18,42 @@ ACTIVITY_SETTING = ACTIVITY_NAME
 BASE_WORKFLOWS = ("core.function.metaAnalysis", "core.function.objectiveC")
 
 _ACTIVITIES: list[Activity] = []  # keep callbacks alive
-
-# Spike probe: filled by _probe_action, read by tests/binja/test_environment.py. Removed in Task 17.
-PROBE: dict[int, dict] = {}
+_rules_override: Optional[list] = None
 
 
-def _probe_action(ctx: AnalysisContext) -> None:
-    mlil = ctx.mlil
-    PROBE[ctx.function.start] = {
-        "has_mlil": mlil is not None,
-        "has_ssa": mlil is not None and mlil.ssa_form is not None,
-    }
+def set_rules_override(rules: Optional[list]) -> None:
+    """Testing hook: replace the Tier 1 rule list (None restores the registry)."""
+    global _rules_override
+    _rules_override = rules
 
 
-def register(action=_probe_action) -> list[str]:
+@lru_cache(maxsize=8)
+def _rules(disabled: frozenset[str]) -> tuple:
+    return tuple(load_rules(disabled))
+
+
+@lru_cache(maxsize=1)
+def _backends() -> tuple:
+    return tuple(default_backends())
+
+
+def run_activity(ctx: AnalysisContext) -> None:
+    try:
+        func, mlil = ctx.function, ctx.mlil
+        if func is None or mlil is None:
+            return
+        config = EngineConfig()
+        rules = _rules_override if _rules_override is not None else _rules(config.disabled_rules)
+        report = simplify_function(mlil, rules, _backends() if config.tier2 else (), config)
+        log.record(func, report)
+        if report.rewrites:
+            ctx.mlil = mlil
+    except Exception as exc:  # never break analysis
+        log.logger.log_error(f"binja-d810 activity failed: {exc!r}")
+
+
+def register(action=None) -> list[str]:
+    action = action or run_activity
     config = json.dumps({
         "name": ACTIVITY_NAME,
         "title": "D-810: simplify MBA expressions",

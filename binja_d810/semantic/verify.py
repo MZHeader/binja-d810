@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 import random
+import threading
 from typing import Iterator, Mapping, Optional
 
 from ..ir.evaluate import evaluate
@@ -16,6 +17,24 @@ from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, variables
 from .linear_mba import is_linear_mba, signature
 
 _SIGNATURE_MAX_VARS = 12
+_Z3_LOCAL = threading.local()
+_Z3_CREATE = threading.Lock()
+
+
+def _z3_context():
+    """This thread's Z3 context.
+
+    Binary Ninja runs the activity on parallel analysis threads, and Z3 contexts (the default
+    one included) are not thread-safe. Creation is serialized as well.
+    """
+    ctx = getattr(_Z3_LOCAL, "ctx", None)
+    if ctx is None:
+        import z3
+
+        with _Z3_CREATE:
+            ctx = z3.Context()
+        _Z3_LOCAL.ctx = ctx
+    return ctx
 
 
 class Verdict(enum.Enum):
@@ -76,10 +95,11 @@ def _z3_prove(a: Expr, b: Expr, var_widths: Mapping[str, int], timeout_ms: int) 
         import z3
     except ImportError:
         return None
-    z3_vars = {name: z3.BitVec(name, width) for name, width in var_widths.items()}
-    solver = z3.Solver()
+    ctx = _z3_context()
+    z3_vars = {name: z3.BitVec(name, width, ctx) for name, width in var_widths.items()}
+    solver = z3.Solver(ctx=ctx)
     solver.set("timeout", timeout_ms)
-    solver.add(to_z3(a, z3_vars) != to_z3(b, z3_vars))
+    solver.add(to_z3(a, z3_vars, ctx) != to_z3(b, z3_vars, ctx))
     result = solver.check()
     if result == z3.unsat:
         return True
@@ -88,15 +108,15 @@ def _z3_prove(a: Expr, b: Expr, var_widths: Mapping[str, int], timeout_ms: int) 
     return None
 
 
-def to_z3(e: Expr, z3_vars: dict):
+def to_z3(e: Expr, z3_vars: dict, ctx=None):
     import z3
 
     if isinstance(e, Var):
         return z3_vars[e.name]
     if isinstance(e, Const):
-        return z3.BitVecVal(e.value, e.width)
+        return z3.BitVecVal(e.value, e.width, ctx)
     if isinstance(e, UnOp):
-        x = to_z3(e.operand, z3_vars)
+        x = to_z3(e.operand, z3_vars, ctx)
         if e.op == "neg":
             return -x
         if e.op == "not":
@@ -107,14 +127,14 @@ def to_z3(e: Expr, z3_vars: dict):
             return z3.SignExt(e.width - e.operand.width, x)
         return z3.Extract(e.width - 1, 0, x)  # trunc
     assert isinstance(e, BinOp)
-    x = to_z3(e.left, z3_vars)
-    y = to_z3(e.right, z3_vars)
+    x = to_z3(e.left, z3_vars, ctx)
+    y = to_z3(e.right, z3_vars, ctx)
     if e.op in ("shl", "lshr", "ashr"):
         if e.right.width < e.width:
             y = z3.ZeroExt(e.width - e.right.width, y)
         elif e.right.width > e.width:
             y = z3.Extract(e.width - 1, 0, y)
-        y = z3.URem(y, z3.BitVecVal(e.width, e.width))
+        y = z3.URem(y, z3.BitVecVal(e.width, e.width, ctx))
         if e.op == "shl":
             return x << y
         if e.op == "lshr":

@@ -7,10 +7,11 @@ license = "AGPL-3.0-only"
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest>=8.3", "z3-solver>=4.13"]
+dev = ["pytest>=8.3", "z3-solver>=4.13", "d810-cobra==0.1.7"]
 
 [tool.uv]
 package = false
+override-dependencies = ["d810-ng; sys_platform == 'never'"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]

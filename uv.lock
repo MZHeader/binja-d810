@@ -2,6 +2,9 @@ version = 1
 revision = 5
 requires-python = "==3.13.*"
 
+[manifest]
+overrides = [{ name = "d810-ng", marker = "sys_platform == 'never'" }]
+
 [[package]]
 name = "binja-d810"
 version = "0.1.0"
@@ -9,6 +12,7 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "d810-cobra" },
     { name = "pytest" },
     { name = "z3-solver" },
 ]
@@ -17,6 +21,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "d810-cobra", specifier = "==0.1.7" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "z3-solver", specifier = ">=4.13" },
 ]
@@ -29,6 +34,31 @@ sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
 ]
+
+[[package]]
+name = "d810-cobra"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "d810-ng", marker = "sys_platform == 'never'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b6/57/e1f9899a54e447d5b7ba190808e08b4b224c4b0d3169535a09452a948cc0/d810_cobra-0.1.7.tar.gz", hash = "sha256:37c9de265fd1c5034fe8dec43b6240520926f0a892aae7514477aa4c8b9fa0dc", size = 60594, upload-time = "2026-09-27T22:09:20.879Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f5/02/4fe2cee7c1fe0fe2247a1a61d31662686df9299e532cd4082d84e46955aa/d810_cobra-0.1.7-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:877315f51d4ecf98d29bf1c84d239f91238aba4929b8941898f51b78f5259043", size = 1390769, upload-time = "2026-09-27T22:09:13.542Z" },
+    { url = "https://files.pythonhosted.org/packages/47/13/29a2c3b1f3a5d9db116788f3b60fa25df568574f5142bc1ab33daf948186/d810_cobra-0.1.7-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:392d62dbf870e477892f4d4437fdf0456a96ef3b45822a40a890efe174ca0ec5", size = 1343747, upload-time = "2026-09-27T22:09:14.923Z" },
+    { url = "https://files.pythonhosted.org/packages/74/58/494946d965369b3698439a75b4ca2570173f1c3d0e6adf75a2a9eaac0176/d810_cobra-0.1.7-cp313-cp313-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a53455cc9ba4101dc37dc3735708fb740b074e4bbf1fa2614a4e76df577102b4", size = 2156293, upload-time = "2026-09-27T22:09:16.783Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/66/e43f516c6b74ad16fe0d59d539a006e7f76321238de94dfe0c4282dd6874/d810_cobra-0.1.7-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:21b657d0de953498268d89590cfb33eaa5ea6813f2b2063ace42fe6d1b847e93", size = 2283056, upload-time = "2026-09-27T22:09:18.254Z" },
+    { url = "https://files.pythonhosted.org/packages/69/cd/5d78064cb02ffb25f690c50ad5e520b4e5c61c10c07f697932d53f7a4ba6/d810_cobra-0.1.7-cp313-cp313-win_amd64.whl", hash = "sha256:b05443178e43174fcb833f7ff0c6c5eaeb1576cd5425e52ef2040f78ba8acb8b", size = 817341, upload-time = "2026-09-27T22:09:19.64Z" },
+]
+
+[[package]]
+name = "d810-ng"
+version = "0.6.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/29/f0/73c8126c43d2a3ded13f1fe379bd2cdaf18412b14d3ba93ba9ec1e9e13af/d810_ng-0.6.6.tar.gz", hash = "sha256:ec4e34cec9ac715f09dcfa06b6039f0de9367a25bcd253650ef6529a79693d5b", size = 715195, upload-time = "2026-02-17T19:27:49.154Z" }
 
 [[package]]
 name = "iniconfig"
@@ -80,6 +110,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
+]
+
+[[package]]
+name = "typing-extensions"
+version = "4.16.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6/typing_extensions-4.16.0.tar.gz", hash = "sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5", size = 113555, upload-time = "2026-07-02T08:40:05.92Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl", hash = "sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8", size = 45571, upload-time = "2026-07-02T08:40:04.659Z" },
 ]
 
 [[package]]

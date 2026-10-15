@@ -5,3 +5,5 @@ __pycache__/
 .binja-test/
 tests/samples/build/
 *.bndb
+.local/
+tests/binja/real/*.local.toml

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from ..ir.expr import BinOp, Const, Expr, UnOp
+from ..ir.expr import BinOp, Const, Expr, UnOp, walk
 from ..ir.normalize import normalize
 from ..matching.matcher import D810_BINARY, D810_UNARY, match
 from ..third_party.d810.mba.constraints import ConstraintExpr
@@ -61,6 +61,8 @@ class D810Rule:
             try:
                 replacement = build(self.replacement, ctx, e.width)
             except _CONSTRAINT_ERRORS:
+                continue
+            if _shifts_out_of_range(e) or _shifts_out_of_range(replacement):
                 continue
             return Rewrite(original=e, replacement=normalize(replacement), source=self.name)
         return None
@@ -130,3 +132,11 @@ def build(sym: Any, ctx: dict[str, Any], width: int) -> Expr:
     if op in D810_UNARY:
         return UnOp(D810_UNARY[op], build(sym.left, ctx, width), width)
     return BinOp(D810_BINARY[op], build(sym.left, ctx, width), build(sym.right, ctx, width), width)
+
+
+def _shifts_out_of_range(e: Expr) -> bool:
+    """A constant shift count at or above the width. d810 proved its rules with Z3's shifts, which
+    never reduce the count; Binary Ninja's IL reduces it modulo max(32, width) (ir.evaluate). The two
+    agree only below the width, so rules never fire outside it (CstSimplificationRule7/15/19)."""
+    return any(isinstance(n, BinOp) and n.op in ("shl", "lshr", "ashr") and isinstance(n.right, Const)
+               and n.right.value >= n.width for n in walk(e))

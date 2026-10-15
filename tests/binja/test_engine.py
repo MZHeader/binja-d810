@@ -1,7 +1,9 @@
 import pytest
 from helpers import function_named, lift_return, manifest, open_sample, set_types, signature, strip_versions
 
-from binja_d810.binja import engine, log, workflow
+from binja_d810.binja import log, workflow
+from binja_d810.binja.mlil import adapter as mlil_adapter
+from binja_d810.binja.mlil.adapter import MLILAdapter
 from binja_d810.ir.expr import is_mba
 from binja_d810.ir.parse import parse
 from binja_d810.rules.registry import load_rules
@@ -42,7 +44,7 @@ def test_dead_assignment_analysis_keeps_every_used_value():
     try:
         set_types(bv, {entry["name"]: signature(entry)})
         mlil = function_named(bv, entry["name"]).mlil
-        dead = engine._dead_assignments(mlil)
+        dead = MLILAdapter(mlil).dead_assignments()
         assert [str(mlil[i]) for i in sorted(dead)] == ["z_1 = z"]
     finally:
         bv.file.close()
@@ -91,7 +93,7 @@ def test_failing_rule_never_breaks_analysis():
 
 def test_failure_mid_rewrite_rolls_back(monkeypatch):
     calls = {"n": 0}
-    real_lower = engine.lower
+    real_lower = mlil_adapter.lower
 
     def flaky_lower(mlil, e, loc):
         calls["n"] += 1
@@ -99,7 +101,7 @@ def test_failure_mid_rewrite_rolls_back(monkeypatch):
             raise RuntimeError("injected lowering failure")
         return real_lower(mlil, e, loc)
 
-    monkeypatch.setattr(engine, "lower", flaky_lower)
+    monkeypatch.setattr(mlil_adapter, "lower", flaky_lower)
     bv = open_sample("mba_O2.dylib", d810=True)
     try:
         rolled = [log.latest_report(f) for f in bv.functions]

@@ -10,7 +10,7 @@ import pytest
 from binaryninja import MediumLevelILOperation
 from helpers import open_sample
 
-from binja_d810.binja.lift import lift
+from binja_d810.binja.mlil.lift import lift
 from binja_d810.ir.evaluate import evaluate
 from binja_d810.ir.expr import mask, to_signed, variables
 

@@ -4,7 +4,7 @@ from helpers import (
     function_named, lift_return, manifest, open_sample, return_expr, set_types, signature, strip_versions,
 )
 
-from binja_d810.binja.lift import SUPPORTED_OPS, Opaque, candidate_roots, lift
+from binja_d810.binja.mlil.lift import SUPPORTED_OPS, Opaque, candidate_roots, lift
 from binja_d810.ir.expr import is_mba, variables
 from binja_d810.ir.parse import parse
 from binja_d810.semantic.verify import Verdict, check_equivalent

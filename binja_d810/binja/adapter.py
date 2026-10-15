@@ -1,0 +1,48 @@
+"""The contract between the IL-independent engine and one IL level (spec section 4)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable, Hashable, Iterator, Protocol
+
+from ..ir.expr import Expr
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A maximal effect-free supported expression, lifted with version-safe leaves."""
+
+    root: object  # the IL expression to replace
+    address: int
+    ir: Expr
+
+
+Skip = Callable[[int, str], None]
+
+
+class ILAdapter(Protocol):
+    level: str  # "mlil" or "hlil"
+
+    def has_candidates(self) -> bool:
+        """Cheap pre-check: does the function mix arithmetic and bitwise operations at all?"""
+
+    def candidates(self, skip: Skip) -> Iterator[Candidate]:
+        """Every candidate whose lift is an MBA; roots split by effects are reported to `skip`."""
+
+    def replace(self, candidate: Candidate, replacement: Expr) -> None:
+        """Lower `replacement` and put it in place of the candidate's root, keeping a backup."""
+
+    def finish(self) -> None:
+        """Finalize the IL and regenerate SSA after a batch of replacements or removals."""
+
+    def dead_assignments(self) -> set[Hashable]:
+        """Pure assignments whose value is never used (shared policy: binja_d810.binja.deadcode)."""
+
+    def remove(self, dead: set[Hashable]) -> None:
+        """Remove those assignments, keeping backups."""
+
+    def cfg_shape(self) -> tuple:
+        """A value that changes if and only if the function's control flow changes."""
+
+    def restore(self) -> None:
+        """Undo every replacement and removal made through this adapter (pass-level rollback)."""

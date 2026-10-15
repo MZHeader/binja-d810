@@ -11,6 +11,7 @@ from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
 from . import log, settings
 from .engine import simplify_function
+from .mlil.adapter import MLILAdapter
 
 ACTIVITY_NAME = "extension.binja_d810.mba"
 # Key of the enable setting Binary Ninja generates from eligibility.auto (per view / per function).
@@ -47,7 +48,8 @@ def run_activity(ctx: AnalysisContext) -> None:
             return
         config = settings.engine_config(ctx)
         rules = _rules_override if _rules_override is not None else _rules(config.disabled_rules)
-        report = simplify_function(mlil, rules, _backends() if config.tier2 else (), config)
+        adapter = MLILAdapter(mlil, config.limits.max_nodes)
+        report = simplify_function(adapter, rules, _backends() if config.tier2 else (), config)
         log.record(func, report)
         if report.rewrites:
             ctx.mlil = mlil

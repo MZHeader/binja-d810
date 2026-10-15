@@ -8,7 +8,7 @@ import pytest
 from binaryninja import MediumLevelILOperation, SSAVariable
 
 from binja_d810.binja import workflow
-from binja_d810.binja.lift import Backing, lift
+from binja_d810.binja.mlil.lift import Backing, lift
 from binja_d810.ir.expr import Var, substitute, variables
 
 BUILD = Path(__file__).resolve().parents[1] / "samples" / "build"

@@ -165,7 +165,8 @@ class _Timer:
 
 def _function_of(args) -> int:
     for arg in args:
-        source = getattr(arg, "source_function", None)
+        il = getattr(arg, "mlil", None) or getattr(arg, "hlil", None) or arg  # v2 passes an adapter
+        source = getattr(il, "source_function", None)
         if source is not None:
             return source.start
     return -1

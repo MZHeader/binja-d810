@@ -57,7 +57,7 @@ def _has_mixed_ops(mlil: MediumLevelILFunction) -> bool:
     return bool(seen & _ARITH) and bool(seen & _BITWISE)
 
 
-_PURE_LEAVES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_CONST, Op.MLIL_CONST_PTR})
+_PURE_LEAVES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_VAR_SSA_FIELD, Op.MLIL_CONST, Op.MLIL_CONST_PTR})
 
 
 def _pure(e: MediumLevelILInstruction) -> bool:

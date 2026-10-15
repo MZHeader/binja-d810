@@ -8,7 +8,7 @@ import pytest
 from binaryninja import MediumLevelILOperation, SSAVariable
 
 from binja_d810.binja import workflow
-from binja_d810.binja.lift import lift
+from binja_d810.binja.lift import Backing, lift
 from binja_d810.ir.expr import Var, substitute, variables
 
 BUILD = Path(__file__).resolve().parents[1] / "samples" / "build"
@@ -51,9 +51,11 @@ def lift_return(func, *, check_versions: bool = False):
 
 
 def strip_versions(e, params=("x", "y", "z", "p")):
+    """Rename leaves that read a parameter to the parameter's name. A backing value (the whole
+    register a narrow parameter lives in, binja_d810.binja.lift.Backing) keeps its own width."""
     mapping = {}
     for v in variables(e):
-        if isinstance(v.ref, SSAVariable) and v.ref.var.name in params:
+        if isinstance(v.ref, (SSAVariable, Backing)) and v.ref.var.name in params:
             mapping[v.name] = Var(v.ref.var.name, v.width)
     return substitute(e, mapping)
 

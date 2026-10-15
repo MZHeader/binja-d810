@@ -4,11 +4,27 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from ..ir.expr import BinOp, Expr, UnOp, Var, substitute, to_str, variables, walk
+from ..ir.expr import BinOp, Const, Expr, UnOp, Var, substitute, to_str, variables
 from ..ir.normalize import normalize
 from ..ir.parse import ParseError, parse
 
-_UNSUPPORTED = frozenset({"lshr", "ashr", "zx", "sx", "trunc"})
+_SOLVER_BINARY = frozenset({"add", "sub", "mul", "and", "or", "xor"})
+_SOLVER_UNARY = frozenset({"neg", "not"})
+
+
+def _atomize(e: Expr, width: int, atoms: dict[Expr, Var]) -> Expr:
+    """Replace what CoBRA cannot take (shifts, extensions, narrow reads of wider values) by fresh
+    variables; equal subterms share one. An identity that holds for every value of such an atom
+    also holds for the subterm, and every result is verified afterwards anyway."""
+    if isinstance(e, Const) or (isinstance(e, Var) and e.width == width):
+        return e
+    if isinstance(e, UnOp) and e.op in _SOLVER_UNARY:
+        return UnOp(e.op, _atomize(e.operand, width, atoms), width)
+    if isinstance(e, BinOp) and e.op in _SOLVER_BINARY:
+        return BinOp(e.op, _atomize(e.left, width, atoms), _atomize(e.right, width, atoms), width)
+    if e not in atoms:
+        atoms[e] = Var(f"atom@{len(atoms)}", width)
+    return atoms[e]
 
 
 class CobraBackend:
@@ -18,20 +34,19 @@ class CobraBackend:
         self._solve = solve
 
     def simplify(self, e: Expr) -> Optional[Expr]:
-        if any(isinstance(n, (BinOp, UnOp)) and n.op in _UNSUPPORTED for n in walk(e)):
-            return None
-        vs = variables(e)
-        if any(v.width != e.width for v in vs):
-            return None
+        atoms: dict[Expr, Var] = {}
+        solvable = _atomize(e, e.width, atoms)
+        vs = variables(solvable)
         plain = {v.name: Var(f"v{i}", e.width) for i, v in enumerate(vs)}
-        text = self._solve(to_str(substitute(e, plain)), e.width)
+        text = self._solve(to_str(substitute(solvable, plain)), e.width)
         if text is None:
             return None
         try:
             parsed = parse(text, e.width)
         except ParseError:
             return None
-        back = {f"v{i}": v for i, v in enumerate(vs)}
+        restore = {atom.name: term for term, atom in atoms.items()}
+        back = {f"v{i}": restore.get(v.name, v) for i, v in enumerate(vs)}
         if any(v.name not in back for v in variables(parsed)):
             return None
         return normalize(substitute(parsed, back))

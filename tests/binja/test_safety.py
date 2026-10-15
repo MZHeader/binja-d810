@@ -1,3 +1,5 @@
+import random
+
 import pytest
 from binaryninja import MediumLevelILOperation, Settings
 from helpers import function_named, lift_return, manifest, open_sample, set_types, signature, strip_versions
@@ -43,19 +45,23 @@ def test_safety_reassign_is_equivalent(safety):
     assert check_equivalent(lifted, reference, use_z3=False) is not Verdict.REFUTED
 
 
-def test_safety_u8_is_equivalent(safety):
+def test_safety_u8_is_simplified_without_assuming_upper_bits(safety):
+    # At -O2 Binary Ninja reads the 8-bit parameters both as bytes and as 32-bit register fields
+    # (y.w1 & x.w0). The lifter relates them through the whole registers, whose upper bits stay
+    # unknown: the check below draws them at random.
     _, bv = safety
     func = function_named(bv, "safety_u8")
     plain = strip_versions(lift_return(func))
-    if not {v.name for v in variables(plain)} <= {"x", "y"}:
-        # At -O2 Binary Ninja reads the 8-bit parameters as 32-bit register fields (y.w1), which
-        # the lifter keeps opaque: the function must then be left untouched.
-        report = log.latest_report(func)
-        assert report is None or not report.rewrites
-        return
+    assert {v.name for v in variables(plain)} <= {"x", "y"}, plain
+    assert not is_mba(plain), plain
+    report = log.latest_report(func)
+    assert report is not None and report.rewrites, "v1 left safety_u8 untouched at -O2"
+    rng = random.Random(8)
+    widths = {v.name: v.width for v in variables(plain)}
     for x in range(0, 256, 3):
         for y in range(256):
-            assert evaluate(plain, {"x": x, "y": y}) & 0xFF == ((x ^ y) + 2 * (x & y)) & 0xFF, (x, y)
+            env = {"x": x | (rng.getrandbits(widths.get("x", 8)) & ~0xFF), "y": y | (rng.getrandbits(widths.get("y", 8)) & ~0xFF)}
+            assert evaluate(plain, env) & 0xFF == ((x ^ y) + 2 * (x & y)) & 0xFF, (x, y)
 
 
 def test_safety_load_keeps_single_load(safety):

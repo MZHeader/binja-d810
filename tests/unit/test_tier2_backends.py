@@ -28,9 +28,36 @@ def test_cobra_backend_renames_variables_and_restores_refs():
     assert next(v for v in variables(result) if v.name == "x").ref is ref
 
 
-@pytest.mark.parametrize("text", ["(x >> 1) + (x & y)", "sar(x, 1) ^ y"])
-def test_cobra_backend_refuses_unsupported_ops(text):
-    assert CobraBackend(lambda t, w: "v0").simplify(ir(text)) is None
+@pytest.mark.parametrize("text,atom", [("(x >> 1) + (x & y)", "x >> 1"), ("sar(x, 1) ^ y", "sar(x, 1)")])
+def test_cobra_backend_treats_unsupported_subterms_as_atoms(text, atom):
+    # CoBRA takes + - * & | ^ ~ only; anything else is passed as an opaque variable and restored.
+    seen = []
+
+    def fake_solve(t, w):
+        seen.append(t)
+        return "v0"
+
+    result = CobraBackend(fake_solve).simplify(ir(text))
+    assert ">>" not in seen[0] and "sar" not in seen[0]
+    assert result in (ir(atom), ir("x"), ir("y"))
+
+
+def test_cobra_backend_sees_narrow_reads_of_wide_storage_as_atoms():
+    # trunc8(@x0#0): the low byte of a 64-bit register version (binja_d810.binja.storage).
+    from binja_d810.ir.expr import BinOp, UnOp
+
+    bx, by = Var("@x0#0", 64), Var("@x1#0", 64)
+    x, y = UnOp("trunc", bx, 8), UnOp("trunc", by, 8)
+    e = BinOp("add", BinOp("xor", x, y, 8), BinOp("mul", ir("2", 8), BinOp("and", x, y, 8), 8), 8)
+    seen = []
+
+    def fake_solve(t, w):
+        seen.append((t, w))
+        return "v0 + v1"
+
+    result = CobraBackend(fake_solve).simplify(e)
+    assert seen and seen[0][1] == 8 and "@" not in seen[0][0]
+    assert result is not None and {n for n in map(str, variables(result))} == {str(bx), str(by)}
 
 
 def test_cobra_backend_handles_solver_failure():

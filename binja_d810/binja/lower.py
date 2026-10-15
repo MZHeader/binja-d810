@@ -5,11 +5,19 @@ from __future__ import annotations
 from binaryninja import ExpressionIndex, ILSourceLocation, MediumLevelILFunction, SSAVariable
 
 from ..ir.expr import BinOp, Const, Expr, UnOp, Var
-from .lift import Opaque
+from .lift import Backing, Opaque
+from .storage import as_field
 
 
 def lower(mlil: MediumLevelILFunction, e: Expr, loc: ILSourceLocation) -> ExpressionIndex:
     size = e.width // 8
+    field = as_field(e)
+    if field is not None and isinstance(field[0].ref, Backing):
+        backing, offset, width = field
+        var = backing.ref.var
+        if offset == 0 and width == 8 * var.type.width:
+            return mlil.var(size, var, loc)
+        return mlil.var_field(size, var, offset // 8, loc)
     if isinstance(e, Const):
         return mlil.const(size, e.value, loc)
     if isinstance(e, Var):

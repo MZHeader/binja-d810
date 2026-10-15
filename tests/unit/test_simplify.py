@@ -118,6 +118,40 @@ def test_tier2_time_budget_bounds_slow_backends():
     assert out.skipped and out.skipped.startswith("too complex") and "time budget" in out.skipped
 
 
+def test_equal_size_result_that_is_no_longer_mba_is_accepted():
+    # PredOr2_Rule_1: 3 & ~(x * x) -> 2 | (1 & ~x), both 6 nodes, but the multiplication is gone.
+    out = simplify_expression(ir("3 & ~(x * x)"), RULES, [])
+    assert out.rewrite is not None and not is_mba(out.rewrite.replacement)
+
+
+def test_rules_that_undo_each_other_do_not_starve_other_rewrites():
+    # BnotOr_FactorRule_1 and CstSimplificationRule17 swap 3 & ~(x * x) and ~(-4 | x * x); left
+    # unchecked they used up the whole rewrite budget before the right-hand side got its turn.
+    by_name = {r.name: r for r in RULES}
+    add_rule = next(r for r in RULES if r.match(normalize(ir("(a ^ b) + 2 * (a & b)"))))
+    rules = [by_name["BnotOr_FactorRule_1"], by_name["CstSimplificationRule17"], add_rule]
+    e = ir("(3 & ~(x * x)) - ((a ^ b) + 2 * (a & b))")
+    out = simplify_expression(e, rules, [])
+    assert out.rewrite is not None
+    assert node_count(out.rewrite.replacement) < node_count(normalize(e))
+
+
+def test_tier2_output_is_simplified_further():
+    poly = ir("(x & y) * (x | y) + (x & ~y) * (~x & y) + (x | y) - (x & y)")
+    partial = normalize(ir("(-2) * (x & y) + (y + (x + x * y))"))  # what CoBRA returns for poly
+
+    class Partial:
+        name = "partial"
+
+        def simplify(self, e):
+            correct = check_equivalent(e, partial, use_z3=False) is not Verdict.REFUTED
+            return partial if correct and node_count(partial) < node_count(e) else None
+
+    out = simplify_expression(poly, [], [Partial(), LinearMBABackend()])
+    assert out.rewrite is not None
+    assert node_count(out.rewrite.replacement) <= node_count(normalize(ir("x * y + (x ^ y)")))
+
+
 def test_result_is_always_smaller():
     for text in ["(a | b) - (a & b)", "(x ^ y) + 2 * (x & y)", "(x & y) + (x & ~y)"]:
         out = simplify_expression(ir(text), RULES, LINEAR)

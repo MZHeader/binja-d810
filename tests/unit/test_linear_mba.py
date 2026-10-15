@@ -24,6 +24,8 @@ def ir(text, width=32):
         ("(x | y) - (x & y) - (x ^ y) + 5", "5"),
         ("(x ^ y) + 2 * (x & y) + 3 * ((x | y) - (x & ~y) - y)", "x + y"),
         ("(x & y) + (x & ~y)", "x"),
+        # Needs a subset of the single-variable terms (z) plus one bitwise remainder (x ^ y).
+        ("x + y + z - 2 * (x & y)", "z + (x ^ y)"),
     ],
 )
 def test_simplifies_known_linear_mbas(obfuscated, expected):
@@ -37,6 +39,25 @@ def test_simplifies_known_linear_mbas(obfuscated, expected):
 def test_rejects_non_linear(text):
     assert not is_linear_mba(ir(text))
     assert backend.simplify(ir(text)) is None
+
+
+@pytest.mark.parametrize(
+    "text, widths, expected, expected_widths",
+    [
+        # CoBRA's partial result for the poly corpus sample: x * y is an opaque term in a linear sum.
+        ("(-2) * (x & y) + (y + (x + x * y))", None, "x * y + (x ^ y)", None),
+        # A repeated non-linear term is the same atom, so it can cancel or combine.
+        ("((x * y) ^ z) + 2 * ((x * y) & z) - z", None, "x * y", None),
+        # Narrow operands inside an extension stay inside the atom.
+        ("(zx32(p) ^ y) + 2 * (zx32(p) & y)", {"p": 8}, "zx32(p) + y", {"p": 8}),
+    ],
+)
+def test_non_linear_subterms_are_treated_as_atoms(text, widths, expected, expected_widths):
+    e = normalize(parse(text, 32, widths))
+    result = backend.simplify(e)
+    assert result is not None
+    assert check_equivalent(e, result) is not Verdict.REFUTED
+    assert node_count(result) <= node_count(normalize(parse(expected, 32, expected_widths)))
 
 
 def test_refuses_too_many_variables():

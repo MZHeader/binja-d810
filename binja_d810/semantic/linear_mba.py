@@ -4,6 +4,10 @@ A linear MBA is a sum of constant multiples of bitwise expressions over the same
 Every bit position evaluates independently, so such an expression is determined by its values
 on inputs where each variable is 0 or 1 (its signature). We build candidate expressions with the
 same signature, keep the smallest, and return it only if it is smaller than the input.
+
+Non-linear subterms (x * y, x & 0xff, shifts, extensions) are first replaced by fresh variables
+("atoms"). An identity that holds for every value of an atom also holds for the subterm it stands
+for, so (x * y) + (x ^ y) + 2 * (x & y) still simplifies, to (x * y) + x + y.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from functools import lru_cache
 from typing import Iterator, Optional
 
 from ..ir.evaluate import evaluate
-from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, node_count, variables
+from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, node_count, substitute, variables
 from ..ir.normalize import normalize
 
 _DP_MAX_SIZE = 15
@@ -41,6 +45,32 @@ def is_linear_mba(e: Expr) -> bool:
         if isinstance(e.right, Const):
             return is_linear_mba(e.left)
     return False
+
+
+def _abstract(e: Expr, atoms: dict[Expr, Var], taken: set[str]) -> Expr:
+    """Replace maximal non-linear subterms by variables; equal subterms share one variable."""
+    if isinstance(e, (Var, Const)):
+        return e
+    if isinstance(e, UnOp) and e.op == "neg":
+        return UnOp("neg", _abstract(e.operand, atoms, taken), e.width)
+    if isinstance(e, BinOp) and (e.op in ("add", "sub") or (
+            e.op == "mul" and (isinstance(e.left, Const) or isinstance(e.right, Const)))):
+        return BinOp(e.op, _abstract(e.left, atoms, taken), _abstract(e.right, atoms, taken), e.width)
+    if isinstance(e, UnOp) and e.op == "not":
+        candidate: Expr = UnOp("not", _abstract(e.operand, atoms, taken), e.width)
+        if _is_bitwise(candidate):
+            return candidate
+    if isinstance(e, BinOp) and e.op in ("and", "or", "xor"):
+        candidate = BinOp(e.op, _abstract(e.left, atoms, taken), _abstract(e.right, atoms, taken), e.width)
+        if _is_bitwise(candidate):
+            return candidate
+    if e not in atoms:
+        name = f"atom@{len(atoms)}"
+        while name in taken:
+            name += "_"
+        taken.add(name)
+        atoms[e] = Var(name, e.width)
+    return atoms[e]
 
 
 def signature(e: Expr, vs: list[Var]) -> tuple[int, ...]:
@@ -140,12 +170,14 @@ class LinearMBABackend:
         self.max_vars = max_vars
 
     def simplify(self, e: Expr) -> Optional[Expr]:
-        if not is_linear_mba(e):
+        atoms: dict[Expr, Var] = {}
+        linear = _abstract(e, atoms, {v.name for v in variables(e)})
+        if not is_linear_mba(linear):
             return None
-        vs = sorted(variables(e), key=lambda v: v.name)
+        vs = sorted(variables(linear), key=lambda v: v.name)
         if len(vs) > self.max_vars or any(v.width != e.width for v in vs):
             return None
-        sig = signature(e, vs)
+        sig = signature(linear, vs)
         valid = []
         for candidate in self._candidates(sig, vs, e.width):
             candidate = normalize(candidate)
@@ -154,6 +186,8 @@ class LinearMBABackend:
         if not valid:
             return None
         best = min(valid, key=node_count)
+        if atoms:
+            best = normalize(substitute(best, {atom.name: term for term, atom in atoms.items()}))
         return best if node_count(best) < node_count(e) else None
 
     def _candidates(self, sig: tuple[int, ...], vs: list[Var], w: int) -> Iterator[Expr]:
@@ -190,16 +224,21 @@ class LinearMBABackend:
             conj = _plus(conj, Const(s0, w), w)
         yield conj if conj is not None else Const(s0, w)
 
+        # Some single-variable terms plus one scaled bitwise remainder: z + (x ^ y) keeps z and
+        # leaves x ^ y, while keeping every single term would leave -2 * (x & y) instead.
         singles = [coeff[1 << k] for k in range(t)]
-        resid = [(g[i] - sum(singles[k] for k in range(t) if (i >> k) & 1)) & m for i in range(n)]
-        nonzero = set(resid) - {0}
-        if len(nonzero) == 1:
+        active = [k for k in range(t) if singles[k]]
+        for chosen in range(1 << len(active)):
+            kept = [k for j, k in enumerate(active) if (chosen >> j) & 1]
+            resid = [(g[i] - sum(singles[k] for k in kept if (i >> k) & 1)) & m for i in range(n)]
+            nonzero = set(resid) - {0}
+            if len(nonzero) != 1:
+                continue
             c = nonzero.pop()
             table = sum(1 << i for i in range(n) if resid[i] == c)
             expr = _scaled(c, _to_expr(_formula_for(table, t), vs, w), w)
-            for k in range(t):
-                if singles[k]:
-                    expr = _plus(expr, _scaled(singles[k], vs[k], w), w)
+            for k in kept:
+                expr = _plus(expr, _scaled(singles[k], vs[k], w), w)
             if s0:
                 expr = _plus(expr, Const(s0, w), w)
             yield expr

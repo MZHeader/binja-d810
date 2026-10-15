@@ -52,13 +52,19 @@ def simplify_expression(
             out.skipped = f"too complex: Tier 2 time budget ({limits.tier2_seconds:g} s) exhausted"
     if out.skipped is None and is_mba(current) and len(variables(current)) > limits.max_vars:
         out.skipped = f"too complex: {len(variables(current))} variables > {limits.max_vars}"
-    if not sources or node_count(current) >= size:
+    if not sources or not _better(current, expr):
         return out
     if check(expr, current) is Verdict.REFUTED:
         out.errors.append(("verify", f"refuted {to_str(expr)} -> {to_str(current)} via {sources}"))
         return out
     out.rewrite = Rewrite(original=expr, replacement=current, source="+".join(dict.fromkeys(sources)))
     return out
+
+
+def _better(new: Expr, old: Expr) -> bool:
+    """Smaller: fewer nodes, or as many nodes without mixing arithmetic and bitwise operations."""
+    n, o = node_count(new), node_count(old)
+    return n < o or (n == o and is_mba(old) and not is_mba(new))
 
 
 def _rebuild(node: Expr, visit: Callable[[Expr], Expr]) -> Expr:
@@ -72,21 +78,31 @@ def _rebuild(node: Expr, visit: Callable[[Expr], Expr]) -> Expr:
 def _tier1(e: Expr, rules: Sequence[Rule], dead: set[str], sources: list[str], errors: list) -> Expr:
     budget = [_MAX_RULE_REWRITES]
 
-    def visit(node: Expr) -> Expr:
-        node = _rebuild(node, visit)
+    def visit(node: Expr, chain: frozenset[Expr]) -> Expr:
+        """`chain` holds what this position was rewritten from: rules can undo each other."""
+        node = _rebuild(node, lambda child: visit(child, frozenset()))
+        chain = chain | {node}
         while budget[0] > 0:
-            rewrite = _first_rule(node, rules, dead, errors)
+            rewrite = _best_rule(node, rules, dead, errors, chain)
             if rewrite is None:
                 break
             budget[0] -= 1
             sources.append(rewrite.source)
-            node = visit(rewrite.replacement)
+            node = visit(rewrite.replacement, chain)
+            chain = chain | {node}
         return node
 
-    return visit(e)
+    return visit(e, frozenset())
 
 
-def _first_rule(node: Expr, rules: Sequence[Rule], dead: set[str], errors: list) -> Optional[Rewrite]:
+def _best_rule(node: Expr, rules: Sequence[Rule], dead: set[str], errors: list, chain: frozenset[Expr]) -> Optional[Rewrite]:
+    """The best non-growing rewrite to something not already in `chain`.
+
+    A result that no longer mixes arithmetic and bitwise operations wins, then the smallest:
+    BnotOr_FactorRule_1 and PredOr2_Rule_1 both match 3 & ~(x * x) at the same size, but
+    only PredOr2_Rule_1 removes the multiplication.
+    """
+    best, best_key = None, None
     for rule in rules:
         if rule.name in dead:
             continue
@@ -96,9 +112,12 @@ def _first_rule(node: Expr, rules: Sequence[Rule], dead: set[str], errors: list)
             dead.add(rule.name)
             errors.append((rule.name, f"{type(exc).__name__}: {exc}"))
             continue
-        if rewrite is not None and rewrite.replacement != node and node_count(rewrite.replacement) <= node_count(node):
-            return rewrite
-    return None
+        if rewrite is None or rewrite.replacement in chain or node_count(rewrite.replacement) > node_count(node):
+            continue
+        key = (is_mba(rewrite.replacement), node_count(rewrite.replacement))
+        if best_key is None or key < best_key:
+            best, best_key = rewrite, key
+    return best
 
 
 def _tier2(e, backends, limits, dead, sources, errors, check) -> tuple[Expr, bool]:
@@ -124,13 +143,15 @@ def _tier2(e, backends, limits, dead, sources, errors, check) -> tuple[Expr, boo
                     dead.add(source)
                     errors.append((source, f"{type(exc).__name__}: {exc}"))
                     continue
-                if result is None or node_count(result) >= node_count(node):
+                if result is None or not _better(result, node):
                     continue
                 if check(node, result) is Verdict.REFUTED:
                     errors.append((source, f"refuted {to_str(node)} -> {to_str(result)}"))
                     continue
                 sources.append(source)
-                return result
+                # A backend may stop short (CoBRA leaves x + y - 2 * (x & y) beside x * y); each
+                # accepted step is strictly better, so revisiting terminates.
+                return visit(result)
         return _rebuild(node, visit)
 
     return visit(e), exhausted

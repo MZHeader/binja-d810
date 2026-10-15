@@ -9,9 +9,12 @@ for opt in O0 O2; do
   clang -arch arm64 "-$opt" -shared -o "$OUT/mba_$opt.dylib" "$OUT/mba.c"
   clang -arch arm64 "-$opt" -shared -o "$OUT/regression_$opt.dylib" "$HERE/src/regression.c"
   clang -arch arm64 "-$opt" -shared -o "$OUT/safety_$opt.dylib" "$HERE/src/safety.c"
+  clang -arch arm64 "-$opt" -shared -o "$OUT/effects_$opt.dylib" "$HERE/src/effects.c"
 done
 # Shift-boundary fixtures (spec section 6.5), as exact assembly.
 clang -target x86_64-linux-gnu -c "$HERE/src/shifts_x86_64.S" -o "$OUT/shifts_x86_64.o"
 ld.lld -shared -o "$OUT/shifts_x86_64.so" "$OUT/shifts_x86_64.o"
 clang -arch arm64 -shared -o "$OUT/shifts_arm64.dylib" "$HERE/src/shifts_arm64.S"
+clang -target x86_64-linux-gnu -c "$HERE/src/effects_x86_64.S" -o "$OUT/effects_x86_64.o"
+ld.lld -shared -o "$OUT/effects_x86_64.so" "$OUT/effects_x86_64.o"
 ls -la "$OUT"

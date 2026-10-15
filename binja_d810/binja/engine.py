@@ -49,8 +49,11 @@ def _operations(e: MediumLevelILInstruction):
 def _has_mixed_ops(mlil: MediumLevelILFunction) -> bool:
     seen = set()
     for instr in mlil.instructions:
-        for root in candidate_roots(instr):
+        rejected: list = []
+        for root in candidate_roots(instr, rejected):
             seen.update(_operations(root))
+        for expr, _ in rejected:
+            seen.update(_operations(expr))
     return bool(seen & _ARITH) and bool(seen & _BITWISE)
 
 
@@ -136,7 +139,13 @@ def simplify_function(mlil: MediumLevelILFunction, rules: Sequence[Rule],
                 mlil.generate_ssa_form()
             planned = []
             for instr in list(mlil.instructions):
-                for root in candidate_roots(instr):
+                rejected: list = []
+                roots = list(candidate_roots(instr, rejected))
+                for expr, reason in rejected:
+                    seen = lift(expr.ssa_form, root_instr=instr, max_nodes=config.limits.max_nodes, effect_leaves=True)
+                    if seen is not None and is_mba(seen):
+                        report.skipped.append((expr.address, reason))
+                for root in roots:
                     ir = lift(root.ssa_form, root_instr=instr, max_nodes=config.limits.max_nodes)
                     if ir is None or not is_mba(ir):
                         continue

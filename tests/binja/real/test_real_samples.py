@@ -251,6 +251,9 @@ def test_sample():
                 if func is None:
                     totals["function_vanished"] += 1
                     continue
+                if address not in before:  # discovered after the first snapshot
+                    before[address] = hlil_counts(func)
+                    totals["functions_discovered_late"] += 1
                 Settings().set_bool(workflow.ACTIVITY_SETTING, True, func)
                 t0 = time.perf_counter()
                 func.reanalyze()

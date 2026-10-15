@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.binja-test/
+tests/samples/build/
+*.bndb

@@ -118,6 +118,21 @@ def test_tier2_time_budget_bounds_slow_backends():
     assert out.skipped and out.skipped.startswith("too complex") and "time budget" in out.skipped
 
 
+def test_small_rewrites_of_ordinary_code_are_not_applied():
+    # CRC's branchless mask: CoBRA returns C * (crc & 1), correct and one node smaller (6 -> 5)
+    # but still mixed. Results must remove the mix or shrink the expression by at least 25%.
+    crc = ir("0xedb88320 & (0 - (crc & 1))")
+    cobra_answer = normalize(ir("0xedb88320 * (crc & 1)"))
+
+    class CobraLike:
+        name = "cobra"
+
+        def simplify(self, e):
+            return cobra_answer if e == normalize(crc) else None
+
+    assert simplify_expression(crc, [], [CobraLike()]).rewrite is None
+
+
 def test_normalization_alone_is_not_a_rewrite():
     # Ordinary code like CRC's 0u - (crc & 1u) must stay untouched, and canonical forms such as
     # x + ~~y already read cleanly in Binary Ninja's HLIL; only rules and Tier 2 rewrite.

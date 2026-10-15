@@ -30,6 +30,32 @@ def test_activity_rewrites_a_d810_sample():
         bv.file.close()
 
 
+def test_dead_assignment_analysis_keeps_every_used_value():
+    # Untouched -O0 code: every assignment feeds the return except the spill "z_1 = z".
+    entry = next(e for e in manifest() if e["name"] == "mba_d810_Add_HackersDelightRule_2")
+    bv = open_sample("mba_O0.dylib", d810=False)
+    try:
+        set_types(bv, {entry["name"]: signature(entry)})
+        mlil = function_named(bv, entry["name"]).mlil
+        dead = engine._dead_assignments(mlil)
+        assert [str(mlil[i]) for i in sorted(dead)] == ["z_1 = z"]
+    finally:
+        bv.file.close()
+
+
+def test_dead_intermediates_are_removed():
+    # At -O0 the barriers leave copy chains (x8_1 = x8 ^ x9; var_10 = x8_1; ...) that die once the
+    # result is rewritten; without cleanup HLIL kept "var_10_1 = x ^ y".
+    entry = next(e for e in manifest() if e["name"] == "mba_d810_Add_HackersDelightRule_2")
+    bv = open_sample("mba_O0.dylib", d810=True)
+    try:
+        set_types(bv, {entry["name"]: signature(entry)})
+        hlil = "\n".join(str(i) for i in function_named(bv, entry["name"]).hlil.instructions)
+        assert "^" not in hlil and "&" not in hlil, hlil
+    finally:
+        bv.file.close()
+
+
 def test_disabled_activity_leaves_code_alone():
     bv, func = _open_typed(d810=False)
     try:

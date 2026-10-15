@@ -52,7 +52,7 @@ def simplify_expression(
             out.skipped = f"too complex: Tier 2 time budget ({limits.tier2_seconds:g} s) exhausted"
     if out.skipped is None and is_mba(current) and len(variables(current)) > limits.max_vars:
         out.skipped = f"too complex: {len(variables(current))} variables > {limits.max_vars}"
-    if not sources or not _better(current, expr):
+    if not sources or not _worth_applying(current, expr):
         return out
     if check(expr, current) is Verdict.REFUTED:
         out.errors.append(("verify", f"refuted {to_str(expr)} -> {to_str(current)} via {sources}"))
@@ -65,6 +65,21 @@ def _better(new: Expr, old: Expr) -> bool:
     """Smaller: fewer nodes, or as many nodes without mixing arithmetic and bitwise operations."""
     n, o = node_count(new), node_count(old)
     return n < o or (n == o and is_mba(old) and not is_mba(new))
+
+
+_MIN_SHRINK = 0.75
+
+
+def _worth_applying(new: Expr, original: Expr) -> bool:
+    """Final gate: remove the arithmetic/bitwise mix, or shrink the normalized input by >= 25%.
+
+    Obfuscation inflates expressions far more than that; small trims are churn on ordinary code
+    (CoBRA turns CRC's 0xedb88320 & -(crc & 1) into 0xedb88320 * (crc & 1), 6 -> 5 nodes).
+    """
+    base = normalize(original)
+    if is_mba(base) and not is_mba(new):
+        return True
+    return node_count(new) <= _MIN_SHRINK * node_count(base)
 
 
 def _rebuild(node: Expr, visit: Callable[[Expr], Expr]) -> Expr:

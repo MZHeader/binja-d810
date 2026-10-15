@@ -118,11 +118,11 @@ def test_tier2_time_budget_bounds_slow_backends():
     assert out.skipped and out.skipped.startswith("too complex") and "time budget" in out.skipped
 
 
-def test_normalization_alone_counts_as_a_rewrite():
-    # Binary Ninja's -O2 MLIL for x - (1 + ~y) is x + ~~y; normalize() finishes it with no rule.
-    out = simplify_expression(ir("x + ~~y"), [], [])
-    assert out.rewrite is not None and out.rewrite.source == "normalize"
-    assert out.rewrite.replacement == normalize(ir("x + y"))
+def test_normalization_alone_is_not_a_rewrite():
+    # Ordinary code like CRC's 0u - (crc & 1u) must stay untouched, and canonical forms such as
+    # x + ~~y already read cleanly in Binary Ninja's HLIL; only rules and Tier 2 rewrite.
+    assert simplify_expression(ir("0 - (crc & 1)"), [], []).rewrite is None
+    assert simplify_expression(ir("x + ~~y"), [], []).rewrite is None
 
 
 def test_equal_size_result_that_is_no_longer_mba_is_accepted():

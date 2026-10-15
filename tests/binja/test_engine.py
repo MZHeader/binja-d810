@@ -7,7 +7,9 @@ from binja_d810.ir.parse import parse
 from binja_d810.rules.registry import load_rules
 from binja_d810.semantic.verify import Verdict, check_equivalent
 
-ENTRY = next(e for e in manifest() if e["category"] == "d810")
+# Binary Ninja leaves this one mixed at -O2 ((x | y) - (x & y): orr, and, sub); the first d810
+# sample, x - (1 + ~y), already reads x + y in its HLIL.
+ENTRY = next(e for e in manifest() if e["name"] == "mba_d810_Xor_HackersDelightRule_1")
 
 
 def _open_typed(d810=True):

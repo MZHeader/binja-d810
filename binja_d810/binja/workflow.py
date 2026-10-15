@@ -5,11 +5,12 @@ from functools import lru_cache
 from typing import Optional
 
 from binaryninja import Activity, AnalysisContext, Workflow, log_info
+from binaryninja.interaction import show_plain_text_report
 
 from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
-from . import log
-from .engine import EngineConfig, simplify_function
+from . import log, settings
+from .engine import simplify_function
 
 ACTIVITY_NAME = "extension.binja_d810.mba"
 # Key of the enable setting Binary Ninja generates from eligibility.auto (per view / per function).
@@ -40,14 +41,18 @@ def _backends() -> tuple:
 def run_activity(ctx: AnalysisContext) -> None:
     try:
         func, mlil = ctx.function, ctx.mlil
-        if func is None or mlil is None:
+        if func is None or mlil is None or not ctx.get_setting_bool(settings.ENABLED):
             return
-        config = EngineConfig()
+        if func.start in settings.skipped_functions(ctx):
+            return
+        config = settings.engine_config(ctx)
         rules = _rules_override if _rules_override is not None else _rules(config.disabled_rules)
         report = simplify_function(mlil, rules, _backends() if config.tier2 else (), config)
         log.record(func, report)
         if report.rewrites:
             ctx.mlil = mlil
+        if func.check_for_debug_report("d810"):
+            show_plain_text_report(f"D-810: {func.name}", log.render(report))
     except Exception as exc:  # never break analysis
         log.logger.log_error(f"binja-d810 activity failed: {exc!r}")
 

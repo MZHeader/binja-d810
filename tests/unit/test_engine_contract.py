@@ -133,3 +133,28 @@ def test_exhaustion_mid_planning_still_applies_verified_candidates():
     assert report.budget_exhausted and 1 <= len(applied) < len(roots)
     assert len(report.rewrites) == len(applied) and not report.rolled_back
     assert report.plan_seconds >= 0.12 and report.overrun_seconds < 0.2
+
+
+class ChainAdapter(FakeAdapter):
+    """t1 = MBA (single use, inlined by r); r = t1 + MBA."""
+
+    def __init__(self, consumer_simplifies=True):
+        super().__init__({"t1": p("(x ^ y) + 2 * (x & y)"),
+                          "r": p("((x ^ y) + 2 * (x & y)) + ((x | y) - (x & y))") if consumer_simplifies else p("z")})
+        self.planned: list = []
+
+    def candidates(self, skip):
+        yield Candidate("t1", 0x10, self.roots["t1"], defines="t1", single_use=True)
+        yield Candidate("r", 0x20, self.roots["r"], consumes=frozenset({"t1"}))
+
+
+def test_single_use_definitions_inlined_by_a_planned_candidate_are_not_simplified_twice():
+    adapter = ChainAdapter()
+    report = simplify_function(adapter, [], [LinearMBABackend()], EngineConfig(max_iterations=1))
+    assert [r.address for r in report.rewrites] == [0x20] and report.subsumed == 1
+
+
+def test_a_consumer_that_does_not_simplify_leaves_its_inputs_to_be_simplified():
+    adapter = ChainAdapter(consumer_simplifies=False)
+    report = simplify_function(adapter, [], [LinearMBABackend()], EngineConfig(max_iterations=1))
+    assert [r.address for r in report.rewrites] == [0x10] and report.subsumed == 0

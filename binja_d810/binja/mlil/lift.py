@@ -60,11 +60,14 @@ def candidate_roots(instr: MediumLevelILInstruction, rejected: Optional[list] = 
 
 
 def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruction,
-         check_versions: bool = True, max_nodes: int = 200, effect_leaves: bool = False) -> Optional[Expr]:
+         check_versions: bool = True, max_nodes: int = 200, effect_leaves: bool = False,
+         inlined: Optional[set] = None) -> Optional[Expr]:
     """`effect_leaves` is for diagnostics only: effectful sub-expressions of the root become leaves
     without a Binary Ninja ref, so the result can be classified but never lowered."""
     lifter = _Lifter(ssa_expr.function, root_instr, check_versions, max_nodes, effect_leaves)
     e = lifter.expr(ssa_expr, inlined=False)
+    if e is not None and inlined is not None:
+        inlined.update(lifter.inlined)  # (variable identifier, version) of each definition followed
     return None if e is None else lifter.relate(e)
 
 
@@ -89,6 +92,7 @@ class _Lifter:
         self.effect_leaves = effect_leaves
         self.names: dict[tuple, str] = {}  # leaf identity -> IR name; names are labels, not identities
         self.backings: dict[tuple, Var] = {}
+        self.inlined: set[tuple[int, int]] = set()
 
     def expr(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
         self.budget -= 1
@@ -137,11 +141,12 @@ class _Lifter:
     def var(self, ssa_var: SSAVariable, width: int) -> Optional[Expr]:
         definition = self.ssa.get_ssa_var_definition(ssa_var)
         if definition is not None and self.budget > 0:
-            saved = self.budget
+            saved, saved_inlined = self.budget, set(self.inlined)
             inner = self.definition(definition, ssa_var, width)
             if inner is not None:
+                self.inlined.add((ssa_var.var.identifier, ssa_var.version))
                 return inner
-            self.budget = saved
+            self.budget, self.inlined = saved, saved_inlined
         if not self.live(ssa_var):
             return None  # overwritten before the root and not rebuildable from live values
         # One IR name per (variable, version, width): the verifier keys samples and Z3 symbols by name.

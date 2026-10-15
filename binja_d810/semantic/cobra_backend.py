@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from typing import Callable, Optional
 
 from ..ir.expr import BinOp, Const, Expr, UnOp, Var, substitute, to_str, variables
 from ..ir.normalize import normalize
 from ..ir.parse import ParseError, parse
 
+_MISS = object()
 _SOLVER_BINARY = frozenset({"add", "sub", "mul", "and", "or", "xor"})
 _SOLVER_UNARY = frozenset({"neg", "not"})
 
@@ -30,16 +33,31 @@ def _atomize(e: Expr, width: int, atoms: dict[Expr, Var]) -> Expr:
 class CobraBackend:
     name = "cobra"
 
-    def __init__(self, solve: Callable[[str, int], Optional[str]]):
+    def __init__(self, solve: Callable[[str, int], Optional[str]], cache_size: int = 4096):
         self._solve = solve
+        # Tier 2 meets the same subexpressions again in every candidate of a chain and in every
+        # fixpoint iteration; CoBRA's answer to an identical (renamed) query is reused.
+        self._cache: "OrderedDict[tuple[str, int], Optional[str]]" = OrderedDict()
+        self._cache_size = cache_size
+        self._lock = threading.Lock()
 
     def simplify(self, e: Expr, deadline=None) -> Optional[Expr]:
         atoms: dict[Expr, Var] = {}
         solvable = _atomize(e, e.width, atoms)
         vs = variables(solvable)
         plain = {v.name: Var(f"v{i}", e.width) for i, v in enumerate(vs)}
-        text = to_str(substitute(solvable, plain))
-        text = self._solve(text, e.width) if deadline is None else self._solve(text, e.width, deadline)
+        query = (to_str(substitute(solvable, plain)), e.width)
+        with self._lock:
+            cached = self._cache.get(query, _MISS)
+        if cached is _MISS:
+            text = self._solve(*query) if deadline is None else self._solve(*query, deadline)
+            if text is not None or deadline is None or not deadline.expired():  # a cut-off None is not an answer
+                with self._lock:
+                    self._cache[query] = text
+                    while len(self._cache) > self._cache_size:
+                        self._cache.popitem(last=False)
+        else:
+            text = cached
         if text is None:
             return None
         try:

@@ -75,3 +75,18 @@ def test_real_cobra_simplifies_polynomial_mba():
     cobra = CobraBackend(cobra_shim.load())
     result = cobra.simplify(ir("(x & y) * (x | y) + (x & ~y) * (~x & y)"))
     assert result == ir("x * y")
+
+
+def test_cobra_answers_are_reused_for_identical_queries():
+    calls = []
+
+    def fake_solve(text, width, deadline=None):
+        calls.append(text)
+        return "v0 + v1"
+
+    backend = CobraBackend(fake_solve)
+    e = ir("(x ^ y) + 2 * (x & y)")
+    assert backend.simplify(e) == backend.simplify(e) == ir("x + y")
+    assert len(calls) == 1
+    other = ir("(a ^ b) + 2 * (a & b)")  # the same query once variables are renamed v0, v1
+    assert backend.simplify(other) == ir("a + b") and len(calls) == 1

@@ -62,6 +62,7 @@ class FunctionReport:
     rolled_back: bool = False
     refuted: int = 0  # candidate results the checker refuted; never applied
     rolled_back_rewrites: int = 0  # attempted, then undone; never counted as applied
+    subsumed: int = 0  # candidates skipped because a planned later candidate inlined them
     # Time (spec section 8). Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0
@@ -107,7 +108,13 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
         for _ in range(config.max_iterations):
             planning = time.monotonic()
             planned = []
-            for candidate in adapter.candidates(skip):
+            consumed: set = set()
+            # Last first: a later candidate that inlines a single-use definition makes rewriting that
+            # definition on its own wasted work (it is dead once the later one is applied).
+            for candidate in reversed(list(adapter.candidates(skip))):
+                if candidate.single_use and candidate.defines is not None and candidate.defines in consumed:
+                    report.subsumed += 1
+                    continue
                 if deadline.expired():
                     # No new solver or proof work; candidates already verified are still applied.
                     report.budget_exhausted = True
@@ -123,6 +130,7 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
                     skip(candidate.address, outcome.skipped)
                 if outcome.rewrite is not None:
                     planned.append((candidate, outcome.rewrite))
+                    consumed |= candidate.consumes
             now = time.monotonic()
             report.plan_seconds += now - planning
             report.overrun_seconds = max(report.overrun_seconds, now - deadline.at)
@@ -132,6 +140,7 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
                 break
             committing = time.monotonic()
             dead_before = adapter.dead_assignments()
+            planned.reverse()  # apply in instruction order, as before
             for candidate, rewrite in planned:
                 adapter.replace(candidate, rewrite.replacement)
                 report.rewrites.append(RewriteRecord(

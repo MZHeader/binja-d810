@@ -80,12 +80,14 @@ def candidate_roots(statement: HighLevelILInstruction, aliased: frozenset,
 
 
 def lift(ssa_expr: HighLevelILInstruction, *, aliased: frozenset = frozenset(), check_versions: bool = True,
-         max_nodes: int = 200, effect_leaves: bool = False) -> Optional[Expr]:
+         max_nodes: int = 200, effect_leaves: bool = False, inlined: Optional[set] = None) -> Optional[Expr]:
     """`aliased` holds the address-taken variables (HighLevelILFunction.aliased_vars): their reads
     are never moved. `effect_leaves` is for diagnostics only: other operations become leaves
     without a ref, so the result can be classified but never lowered."""
     lifter = _Lifter(ssa_expr, aliased, check_versions, max_nodes, effect_leaves)
     e = lifter.expr(ssa_expr, inlined=False)
+    if e is not None and inlined is not None:
+        inlined.update(lifter.inlined)
     return None if e is None else _relate(e)
 
 
@@ -136,6 +138,7 @@ class _Lifter:
         self.budget = max_nodes
         self.effect_leaves = effect_leaves
         self.names: dict[tuple, str] = {}
+        self.inlined: set[tuple[int, int]] = set()
 
     def expr(self, e: HighLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
         self.budget -= 1
@@ -179,12 +182,13 @@ class _Lifter:
         definition = self.ssa.get_ssa_var_definition(ssa_var)
         if (definition is not None and definition.operation in _DEFINITIONS and definition.src.size * 8 == width
                 and self.budget > 0 and ssa_var.var not in self.aliased):
-            saved = self.budget
+            saved, saved_inlined = self.budget, set(self.inlined)
             if hlil_effect(definition.src, self.aliased) is None:
                 inner = self.expr(definition.src, inlined=True)
                 if inner is not None:
+                    self.inlined.add((ssa_var.var.identifier, ssa_var.version))
                     return inner
-            self.budget = saved
+            self.budget, self.inlined = saved, saved_inlined
         if not self.live(ssa_var) or ssa_var.var in self.aliased:
             return None  # redefined before the root and not rebuildable from live values
         label = f"{ssa_var.var.name}#{ssa_var.version}"

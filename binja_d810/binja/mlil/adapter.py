@@ -48,9 +48,18 @@ class MLILAdapter:
                 if seen is not None and is_mba(seen):
                     skip(expr.address, reason)
             for root in roots:
-                ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes)
+                inlined: set = set()
+                ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes, inlined=inlined)
                 if ir is not None and is_mba(ir):
-                    yield Candidate(root, root.address, ir)
+                    defines, single = self._defines(instr, root)
+                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined))
+
+    def _defines(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction):
+        """The SSA value the root is the whole definition of, and whether it has one use."""
+        if instr.operation != Op.MLIL_SET_VAR or instr.src.expr_index != root.expr_index:
+            return None, False
+        dest = instr.ssa_form.dest
+        return _key(dest), len(self.mlil.ssa_form.get_ssa_var_uses(dest)) == 1
 
     def replace(self, candidate: Candidate, replacement: Expr) -> None:
         root = candidate.root

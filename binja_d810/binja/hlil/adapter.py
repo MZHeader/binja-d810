@@ -58,9 +58,20 @@ class HLILAdapter:
                 if seen is not None and is_mba(seen):
                     skip(expr.address, reason)
             for root in roots:
-                ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes)
+                inlined: set = set()
+                ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, inlined=inlined)
                 if ir is not None and is_mba(ir):
-                    yield Candidate(root, root.address, ir)
+                    defines, single = self._defines(statement, root)
+                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined))
+
+    def _defines(self, statement: HighLevelILInstruction, root: HighLevelILInstruction):
+        """The SSA value the root is the whole definition of, and whether it has one use."""
+        if statement.operation not in (H.HLIL_VAR_INIT, H.HLIL_ASSIGN) or statement.src.expr_index != root.expr_index:
+            return None, False
+        dest = _defined(statement.ssa_form)
+        if dest is None:
+            return None, False
+        return _key(dest), len(self.hlil.ssa_form.get_ssa_var_uses(dest)) == 1
 
     def replace(self, candidate: Candidate, replacement: Expr) -> None:
         root = candidate.root

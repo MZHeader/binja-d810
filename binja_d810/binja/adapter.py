@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Hashable, Iterator, Protocol
+from typing import Callable, Hashable, Iterator, Optional, Protocol
 
 from ..ir.expr import Expr
 
@@ -15,6 +15,11 @@ class Candidate:
     root: object  # the IL expression to replace
     address: int
     ir: Expr
+    # For skipping work (v2.1): the SSA value this root is the whole definition of, whether that
+    # value has exactly one use, and the definitions the lift inlined.
+    defines: Optional[Hashable] = None
+    single_use: bool = False
+    consumes: frozenset = frozenset()
 
 
 Skip = Callable[[int, str], None]

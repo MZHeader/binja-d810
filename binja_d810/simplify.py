@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence, Union
 
-from .ir.expr import BinOp, Expr, UnOp, is_mba, node_count, to_str, variables
+from .ir.expr import BinOp, Const, Expr, UnOp, is_mba, node_count, to_str, variables
 from .ir.normalize import normalize
 from .rules.base import Rewrite, Rule
 from .semantic.backend import Tier2Backend
@@ -131,13 +131,14 @@ def _rebuild(node: Expr, visit: Callable[[Expr], Expr]) -> Expr:
 def _tier1(e: Expr, rules: Sequence[Rule], dead: set[str], sources: list[str], errors: list,
            deadline: Deadline = Deadline.never()) -> Expr:
     budget = [_MAX_RULE_REWRITES]
+    index = RuleIndex(rules)
 
     def visit(node: Expr, chain: frozenset[Expr]) -> Expr:
         """`chain` holds what this position was rewritten from: rules can undo each other."""
         node = _rebuild(node, lambda child: visit(child, frozenset()))
         chain = chain | {node}
         while budget[0] > 0 and not deadline.expired():
-            rewrite = _best_rule(node, rules, dead, errors, chain)
+            rewrite = _best_rule(node, index.candidates(node), dead, errors, chain)
             if rewrite is None:
                 break
             budget[0] -= 1
@@ -147,6 +148,46 @@ def _tier1(e: Expr, rules: Sequence[Rule], dead: set[str], sources: list[str], e
         return node
 
     return visit(e, frozenset())
+
+
+# Which target node kinds a d810 pattern root can match, through the matcher's equivalences
+# (matching/matcher.py): sub <-> add, xor with all-ones <-> not, mul by -1 and 0 - x <-> neg,
+# shl by a constant <-> mul, and unary patterns against folded constants.
+_TARGETS_OF_ROOT = {
+    "add": {"add", "sub"}, "sub": {"sub", "add", "neg"}, "mul": {"mul", "neg"}, "and": {"and"}, "or": {"or"},
+    "xor": {"xor", "not"}, "shl": {"shl", "mul"}, "shr": {"lshr"}, "sar": {"ashr"},
+    "bnot": {"not", "const"}, "neg": {"neg", "const"}, "zext": {"zx"},
+}
+
+
+def _kind(e: Expr) -> str:
+    if isinstance(e, (BinOp, UnOp)):
+        return e.op
+    return "const" if isinstance(e, Const) else "var"
+
+
+class RuleIndex:
+    """Tier 1 rules by the target node kinds their pattern root can match (v2.1: the full scan
+    tried all 156 rules at every node). Rules without a d810 pattern are always candidates."""
+
+    def __init__(self, rules: Sequence[Rule]):
+        self.rules = list(rules)
+        self._always: list[Rule] = []
+        self._by_kind: dict[str, list[Rule]] = {}
+        for rule in self.rules:
+            root = getattr(getattr(rule, "pattern", None), "operation", "?")
+            kinds = _TARGETS_OF_ROOT.get(root)
+            if kinds is None:
+                self._always.append(rule)
+                continue
+            for kind in kinds:
+                self._by_kind.setdefault(kind, []).append(rule)
+        order = {id(rule): i for i, rule in enumerate(self.rules)}
+        for kind, bucket in self._by_kind.items():
+            self._by_kind[kind] = sorted(bucket + self._always, key=lambda r: order[id(r)])
+
+    def candidates(self, node: Expr) -> list[Rule]:
+        return self._by_kind.get(_kind(node), self._always)
 
 
 def _best_rule(node: Expr, rules: Sequence[Rule], dead: set[str], errors: list, chain: frozenset[Expr]) -> Optional[Rewrite]:

@@ -47,7 +47,7 @@ def test_variable_limit_skips_tier2_only():
     class Spy:
         name = "spy"
 
-        def simplify(self, e):
+        def simplify(self, e, deadline=None):
             called.append(e)
             return None
 
@@ -73,7 +73,7 @@ def test_refuted_backend_result_is_rejected():
     class Liar:
         name = "liar"
 
-        def simplify(self, e):
+        def simplify(self, e, deadline=None):
             return Var("a", e.width)
 
     out = simplify_expression(ir("(a ^ b) + 2 * (a & b)"), [], [Liar()])
@@ -105,7 +105,7 @@ def test_tier2_time_budget_bounds_slow_backends():
     class Slow:
         name = "slow"
 
-        def simplify(self, e):
+        def simplify(self, e, deadline=None):
             time.sleep(0.05)
             return None
 
@@ -127,7 +127,7 @@ def test_small_rewrites_of_ordinary_code_are_not_applied():
     class CobraLike:
         name = "cobra"
 
-        def simplify(self, e):
+        def simplify(self, e, deadline=None):
             return cobra_answer if e == normalize(crc) else None
 
     assert simplify_expression(crc, [], [CobraLike()]).rewrite is None
@@ -165,7 +165,7 @@ def test_tier2_output_is_simplified_further():
     class Partial:
         name = "partial"
 
-        def simplify(self, e):
+        def simplify(self, e, deadline=None):
             correct = check_equivalent(e, partial, use_z3=False) is not Verdict.REFUTED
             return partial if correct and node_count(partial) < node_count(e) else None
 
@@ -178,3 +178,15 @@ def test_result_is_always_smaller():
     for text in ["(a | b) - (a & b)", "(x ^ y) + 2 * (x & y)", "(x & y) + (x & ~y)"]:
         out = simplify_expression(ir(text), RULES, LINEAR)
         assert node_count(out.rewrite.replacement) < node_count(ir(text))
+
+
+def test_normalization_that_removes_the_mix_is_a_rewrite():
+    # i686 -O2 HLIL: 2 * ((x | z) + (y | z) - ((z | x) + (z | y))) + (x | y): the two sums are the same
+    # once canonicalized, so normalization alone leaves x | y. That is deobfuscation, not churn.
+    outcome = simplify_expression(ir("2 * ((x | z) + (y | z) - ((z | x) + (z | y))) + (x | y)"), [], [])
+    assert outcome.rewrite is not None and outcome.rewrite.source == "normalize"
+    assert outcome.rewrite.replacement == normalize(ir("x | y"))
+
+
+def test_normalization_that_keeps_the_mix_is_still_not_a_rewrite():
+    assert simplify_expression(ir("(x & y) + ~~z"), [], []).rewrite is None

@@ -29,3 +29,10 @@ def test_plugin_under_test_is_the_requested_one():
     if not requested:
         pytest.skip("BINJA_D810_PLUGIN not set: the installed plugin is under test")
     assert Path(binja_d810.__file__).resolve().parent == Path(requested).resolve()
+
+
+def test_hlil_activity_registered_after_hlil_generation():
+    wf = Workflow("core.function.metaAnalysis")
+    assert wf.contains(workflow.HLIL_ACTIVITY_NAME)
+    # No eligibility setting of its own: the MLIL activity's setting is the one toggle.
+    assert workflow.HLIL_ACTIVITY_NAME not in wf.eligibility_settings()

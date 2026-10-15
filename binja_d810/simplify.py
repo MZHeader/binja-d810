@@ -10,7 +10,9 @@ from .ir.expr import BinOp, Expr, UnOp, is_mba, node_count, to_str, variables
 from .ir.normalize import normalize
 from .rules.base import Rewrite, Rule
 from .semantic.backend import Tier2Backend
-from .semantic.verify import Check, Verdict, check
+from .deadline import Deadline
+from .semantic.verify import Check, Verdict
+from .semantic.verify import check as verify_check
 
 _MAX_RULE_REWRITES = 64
 
@@ -20,7 +22,9 @@ class Limits:
     max_vars: int = 4
     max_nodes: int = 200
     # Tier 2 retries a failing backend on every nested MBA subtree; this bounds the total per expression.
-    tier2_seconds: float = 1.0
+    # CoBRA's own limit is 1 s, and polynomial MBA needs most of it; the function's shared budget
+    # (binja_d810.functionSeconds) bounds the total.
+    tier2_seconds: float = 2.0
 
 
 @dataclass
@@ -45,23 +49,38 @@ def simplify_expression(
     backends: Sequence[Tier2Backend],
     limits: Limits = Limits(),
     disabled: frozenset[str] = frozenset(),
-    check: Checker = check,
+    check: Optional[Checker] = None,
+    deadline: Deadline = Deadline.never(),
 ) -> Outcome:
+    """`deadline` is the function's shared allowance: once it passes, no new rule, backend or
+    proof work starts. `check` replaces the verifier (tests); by default it honours the deadline."""
     out = Outcome()
+    if check is None:
+        check = lambda a, b: verify_check(a, b, deadline=deadline)  # noqa: E731
+    if deadline.expired():
+        out.skipped = "budget exhausted"
+        return out
     size = node_count(expr)
     if size > limits.max_nodes:
         out.skipped = f"too complex: {size} nodes > {limits.max_nodes}"
         return out
     dead = set(disabled)
     sources: list[str] = []
-    current = _tier1(normalize(expr), rules, dead, sources, out.errors)
-    if is_mba(current) and backends:
-        current, exhausted = _tier2(current, backends, limits, dead, sources, out, check)
+    current = _tier1(normalize(expr), rules, dead, sources, out.errors, deadline)
+    if is_mba(current) and backends and not deadline.expired():
+        current, exhausted = _tier2(current, backends, limits, dead, sources, out, check, deadline)
         if exhausted:
-            out.skipped = f"too complex: Tier 2 time budget ({limits.tier2_seconds:g} s) exhausted"
+            out.skipped = ("budget exhausted" if deadline.expired()
+                           else f"too complex: Tier 2 time budget ({limits.tier2_seconds:g} s) exhausted")
+    elif is_mba(current) and backends:
+        out.skipped = "budget exhausted"
     if out.skipped is None and is_mba(current) and len(variables(current)) > limits.max_vars:
         out.skipped = f"too complex: {len(variables(current))} variables > {limits.max_vars}"
-    if not sources or not _worth_applying(current, expr):
+    if not sources:
+        if not _cancelled_by_normalization(current, expr):
+            return out
+        sources.append("normalize")  # its own gate: the mix is gone and the size at least halved
+    elif not _worth_applying(current, expr):
         return out
     final = _checked(check, expr, current)
     if final.verdict is Verdict.REFUTED:
@@ -94,6 +113,13 @@ def _worth_applying(new: Expr, original: Expr) -> bool:
     return node_count(new) <= _MIN_SHRINK * node_count(base)
 
 
+def _cancelled_by_normalization(new: Expr, original: Expr) -> bool:
+    """Normalization alone is not a rewrite (canonical clean-ups like x + ~~y are left to Binary
+    Ninja), unless it removes the arithmetic/bitwise mix and at least halves the expression:
+    (x | z) + (y | z) - ((z | x) + (z | y)) cancels to 0 once both sums are canonical."""
+    return is_mba(original) and not is_mba(new) and node_count(new) * 2 <= node_count(original)
+
+
 def _rebuild(node: Expr, visit: Callable[[Expr], Expr]) -> Expr:
     if isinstance(node, BinOp):
         return normalize(BinOp(node.op, visit(node.left), visit(node.right), node.width))
@@ -102,14 +128,15 @@ def _rebuild(node: Expr, visit: Callable[[Expr], Expr]) -> Expr:
     return node
 
 
-def _tier1(e: Expr, rules: Sequence[Rule], dead: set[str], sources: list[str], errors: list) -> Expr:
+def _tier1(e: Expr, rules: Sequence[Rule], dead: set[str], sources: list[str], errors: list,
+           deadline: Deadline = Deadline.never()) -> Expr:
     budget = [_MAX_RULE_REWRITES]
 
     def visit(node: Expr, chain: frozenset[Expr]) -> Expr:
         """`chain` holds what this position was rewritten from: rules can undo each other."""
         node = _rebuild(node, lambda child: visit(child, frozenset()))
         chain = chain | {node}
-        while budget[0] > 0:
+        while budget[0] > 0 and not deadline.expired():
             rewrite = _best_rule(node, rules, dead, errors, chain)
             if rewrite is None:
                 break
@@ -147,9 +174,10 @@ def _best_rule(node: Expr, rules: Sequence[Rule], dead: set[str], errors: list, 
     return best
 
 
-def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker) -> tuple[Expr, bool]:
-    """Simplify MBA subtrees top-down. Returns (result, whether the time budget ran out)."""
-    deadline = time.monotonic() + limits.tier2_seconds
+def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
+           shared: Deadline = Deadline.never()) -> tuple[Expr, bool]:
+    """Simplify MBA subtrees top-down. Returns (result, whether a time budget ran out)."""
+    deadline = Deadline.after(limits.tier2_seconds).earlier(shared)
     exhausted = False
 
     def visit(node: Expr) -> Expr:
@@ -161,11 +189,11 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker) -> 
                 source = f"tier2:{backend.name}"
                 if source in dead:
                     continue
-                if time.monotonic() > deadline:
+                if deadline.expired():
                     exhausted = True
                     return node
                 try:
-                    result = backend.simplify(node)
+                    result = backend.simplify(node, deadline=deadline)
                 except Exception as exc:
                     dead.add(source)
                     out.errors.append((source, f"{type(exc).__name__}: {exc}"))

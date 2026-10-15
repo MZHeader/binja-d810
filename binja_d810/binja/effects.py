@@ -45,3 +45,43 @@ def mlil_effect(tree) -> Optional[str]:
         if name not in MLIL_PURE:
             return f"effect: {name}"
     return None
+
+
+# HLIL: a candidate's leaves are variables, constants and field reads of variables; supported
+# operations combine them. Everything else bounds a candidate. These are the operations that may
+# stay *inside* an HLIL expression the pass leaves alone without making it unsafe to rewrite the
+# pure parts around them; any other operation found under a supported node splits it.
+HLIL_LEAVES = frozenset({"HLIL_VAR", "HLIL_VAR_SSA", "HLIL_CONST", "HLIL_CONST_PTR", "HLIL_STRUCT_FIELD"})
+
+
+def hlil_effect(tree, aliased: frozenset = frozenset()) -> Optional[str]:
+    """None if the tree only reads variables (not address-taken ones), fields of them and
+    constants through supported operations; else the reason it is not a candidate."""
+    for node in _nodes(tree):
+        name = node.operation.name
+        if name in ("HLIL_VAR", "HLIL_VAR_SSA"):
+            var = getattr(node.var, "var", node.var)
+            if var in aliased:
+                return "effect: aliased read"
+            continue
+        if name == "HLIL_STRUCT_FIELD":
+            if node.src.operation.name not in ("HLIL_VAR", "HLIL_VAR_SSA"):
+                return "effect: HLIL_STRUCT_FIELD of a non-variable"
+            continue
+        if name in HLIL_LEAVES or name in _HLIL_SUPPORTED:
+            continue
+        return f"effect: {name}" if name not in _HLIL_PURE_UNSUPPORTED else f"unsupported: {name}"
+    return None
+
+
+_HLIL_SUPPORTED = frozenset({
+    "HLIL_ADD", "HLIL_SUB", "HLIL_MUL", "HLIL_AND", "HLIL_OR", "HLIL_XOR", "HLIL_LSL", "HLIL_LSR", "HLIL_ASR",
+    "HLIL_NEG", "HLIL_NOT", "HLIL_ZX", "HLIL_SX", "HLIL_LOW_PART",
+})
+_HLIL_PURE_UNSUPPORTED = frozenset({
+    "HLIL_CMP_E", "HLIL_CMP_NE", "HLIL_CMP_SLT", "HLIL_CMP_ULT", "HLIL_CMP_SLE", "HLIL_CMP_ULE", "HLIL_CMP_SGE",
+    "HLIL_CMP_UGE", "HLIL_CMP_SGT", "HLIL_CMP_UGT", "HLIL_TEST_BIT", "HLIL_BOOL_TO_INT", "HLIL_ROL", "HLIL_ROR",
+    "HLIL_RLC", "HLIL_RRC", "HLIL_ADC", "HLIL_SBB", "HLIL_BSWAP", "HLIL_POPCNT", "HLIL_CLZ", "HLIL_CTZ",
+    "HLIL_RBIT", "HLIL_CLS", "HLIL_MINS", "HLIL_MAXS", "HLIL_MINU", "HLIL_MAXU", "HLIL_ABS", "HLIL_SPLIT",
+    "HLIL_MULU_DP", "HLIL_MULS_DP", "HLIL_ADDRESS_OF", "HLIL_IMPORT", "HLIL_EXTERN_PTR", "HLIL_CONST_DATA",
+})

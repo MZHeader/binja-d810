@@ -13,8 +13,10 @@ import threading
 from dataclasses import dataclass
 from typing import Iterator, Mapping, Optional
 
+from ..deadline import Deadline
 from ..ir.evaluate import evaluate
 from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, variables
+from ..ir.normalize import normalize
 from .linear_mba import is_linear_mba, signature
 
 _SIGNATURE_MAX_VARS = 12
@@ -67,7 +69,8 @@ class Check:
 
 
 def check(
-    a: Expr, b: Expr, *, samples: int = 64, use_z3: bool = True, z3_timeout_ms: int = 500, seed: int = 0
+    a: Expr, b: Expr, *, samples: int = 64, use_z3: bool = True, z3_timeout_ms: int = 500, seed: int = 0,
+    deadline: Optional[Deadline] = None,
 ) -> Check:
     if a.width != b.width:
         return Check(Verdict.REFUTED, "width", "")
@@ -75,11 +78,19 @@ def check(
     for env in sample_envs(var_widths, samples, seed):
         if evaluate(a, env) != evaluate(b, env):
             return Check(Verdict.REFUTED, "sampling")
+    # Proofs work on normalized forms (normalization is an exact identity, and turns x << 1 into
+    # 2 * x and trunc32(zx64(y)) into y); the sampling above checked the forms as given.
+    a, b = normalize(a), normalize(b)
     by_signature = _signature_proof(a, b)
     if by_signature is not None:
         return Check(Verdict.PROVEN if by_signature else Verdict.REFUTED, "signature")
     if not use_z3:
         return Check(Verdict.TESTED, "sampling", "z3 disabled")
+    if deadline is not None and deadline.at != float("inf"):
+        remaining_ms = deadline.remaining() * 1000
+        if remaining_ms < 2:
+            return Check(Verdict.TESTED, "sampling", "proof budget exhausted")
+        z3_timeout_ms = min(z3_timeout_ms, int(remaining_ms))
     proven, reason = _z3_prove(a, b, var_widths, z3_timeout_ms)
     if proven is False:
         return Check(Verdict.REFUTED, "z3")

@@ -7,6 +7,7 @@ import random
 import shutil
 import subprocess
 import threading
+import time
 from functools import lru_cache
 from typing import Callable, Optional
 
@@ -46,16 +47,23 @@ def _python_binding() -> Optional[Solver]:
     except ImportError:
         return None
 
-    def solve(expr: str, bitwidth: int) -> Optional[str]:
+    def solve(expr: str, bitwidth: int, deadline=None) -> Optional[str]:
         try:
             mask = (1 << bitwidth) - 1
             tree = _to_tree(ast.parse(expr, mode="eval").body, mask)
             tree, names = _drop_unused(tree, sorted(_names(tree)), bitwidth, evaluate)
             signature = signature_of(tree, names, bitwidth)
-            with _SOLVE_LOCK:  # Binary Ninja analyzes on parallel threads; the binding was built for IDA
-                solved, _expired = _cobra.simplify_budgeted(
-                    signature, names, bitwidth, tree, MAX_VARS, TIME_LIMIT_MS, None,
-                )
+            # Binary Ninja analyzes on parallel threads; the binding was built for IDA. Waiting for
+            # the lock counts against the caller's deadline and gives up when it passes.
+            if not _acquire(deadline):
+                return None
+            try:
+                limit = _time_limit_ms(deadline)
+                if limit is None:
+                    return None
+                solved, _expired = _cobra.simplify_budgeted(signature, names, bitwidth, tree, MAX_VARS, limit, None)
+            finally:
+                _SOLVE_LOCK.release()
         except Exception:
             return None
         return None if solved is None else _render(solved)
@@ -63,16 +71,50 @@ def _python_binding() -> Optional[Solver]:
     return solve
 
 
+_WAIT = threading.local()
+
+
+def lock_wait_seconds() -> float:
+    """Seconds this thread has spent waiting for the solver lock (see reset_lock_wait)."""
+    return getattr(_WAIT, "seconds", 0.0)
+
+
+def reset_lock_wait() -> None:
+    _WAIT.seconds = 0.0
+
+
+def _acquire(deadline) -> bool:
+    start = time.monotonic()
+    if deadline is None:
+        acquired = _SOLVE_LOCK.acquire()
+    else:
+        acquired = _SOLVE_LOCK.acquire(timeout=deadline.remaining()) if deadline.remaining() > 0 else \
+            _SOLVE_LOCK.acquire(blocking=False)
+    _WAIT.seconds = lock_wait_seconds() + time.monotonic() - start
+    return acquired
+
+
+def _time_limit_ms(deadline) -> Optional[int]:
+    """The solver's own limit, clamped to what is left; None if nothing is."""
+    if deadline is None:
+        return TIME_LIMIT_MS
+    remaining_ms = int(deadline.remaining() * 1000)
+    return None if remaining_ms < 1 else min(TIME_LIMIT_MS, remaining_ms)
+
+
 def _cli() -> Optional[Solver]:
     exe = shutil.which("cobra-cli")
     if exe is None:
         return None
 
-    def solve(expr: str, bitwidth: int) -> Optional[str]:
+    def solve(expr: str, bitwidth: int, deadline=None) -> Optional[str]:
+        limit = _time_limit_ms(deadline)
+        if limit is None:
+            return None
         try:
             done = subprocess.run(
                 [exe, "--mba", expr, "--bitwidth", str(bitwidth)],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, timeout=min(10.0, limit / 1000 + 0.05),
             )
         except subprocess.TimeoutExpired:
             return None

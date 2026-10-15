@@ -6,11 +6,14 @@ candidates, lowering, dead-code analysis, the control-flow fingerprint and the t
 
 from __future__ import annotations
 
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import NamedTuple, Sequence
 
+from ..deadline import Deadline
 from ..ir.expr import to_str
+from ..semantic import cobra_shim
 from ..rules.base import Rule
 from ..semantic.backend import Tier2Backend
 from ..simplify import Limits, simplify_expression
@@ -23,6 +26,7 @@ class EngineConfig:
     max_iterations: int = 10
     tier2: bool = True
     disabled_rules: frozenset[str] = frozenset()
+    function_seconds: float = 5.0  # shared by both passes of one analysis run (spec section 8)
 
 
 class RewriteRecord(NamedTuple):
@@ -58,17 +62,41 @@ class FunctionReport:
     rolled_back: bool = False
     refuted: int = 0  # candidate results the checker refuted; never applied
     rolled_back_rewrites: int = 0  # attempted, then undone; never counted as applied
+    # Time (spec section 8). Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
+    # rollback) is native and measured separately. overrun: planning past the deadline.
+    allowance_seconds: float = 0.0
+    budget_exhausted: bool = False
+    plan_seconds: float = 0.0
+    commit_seconds: float = 0.0
+    lock_wait_seconds: float = 0.0
+    overrun_seconds: float = 0.0
+    total_seconds: float = 0.0
 
     def assurance(self) -> Counter:
         return Counter(r.verdict for r in self.rewrites)
 
 
 def simplify_function(adapter: ILAdapter, rules: Sequence[Rule], backends: Sequence[Tier2Backend],
-                      config: EngineConfig) -> FunctionReport:
-    level = adapter.level
+                      config: EngineConfig, deadline: Deadline = Deadline.never()) -> FunctionReport:
+    start = time.monotonic()
+    cobra_shim.reset_lock_wait()
     report = FunctionReport()
+    report.allowance_seconds = deadline.remaining() if deadline.at != float("inf") else config.function_seconds
+    try:
+        _run(adapter, rules, backends, config, deadline, report)
+    finally:
+        report.lock_wait_seconds = cobra_shim.lock_wait_seconds()
+        report.total_seconds = time.monotonic() - start
+    return report
+
+
+def _run(adapter, rules, backends, config, deadline, report) -> None:
+    level = adapter.level
+    if deadline.expired():
+        report.budget_exhausted = True
+        return
     if not adapter.has_candidates():
-        return report
+        return
     shape = adapter.cfg_shape()
     dead = set(config.disabled_rules)
 
@@ -77,9 +105,15 @@ def simplify_function(adapter: ILAdapter, rules: Sequence[Rule], backends: Seque
 
     try:
         for _ in range(config.max_iterations):
+            planning = time.monotonic()
             planned = []
             for candidate in adapter.candidates(skip):
-                outcome = simplify_expression(candidate.ir, rules, backends, config.limits, frozenset(dead))
+                if deadline.expired():
+                    # No new solver or proof work; candidates already verified are still applied.
+                    report.budget_exhausted = True
+                    break
+                outcome = simplify_expression(candidate.ir, rules, backends, config.limits, frozenset(dead),
+                                              deadline=deadline)
                 report.refuted += outcome.refuted
                 for source, message in outcome.errors:
                     if source != "verify":
@@ -89,8 +123,14 @@ def simplify_function(adapter: ILAdapter, rules: Sequence[Rule], backends: Seque
                     skip(candidate.address, outcome.skipped)
                 if outcome.rewrite is not None:
                     planned.append((candidate, outcome.rewrite))
+            now = time.monotonic()
+            report.plan_seconds += now - planning
+            report.overrun_seconds = max(report.overrun_seconds, now - deadline.at)
+            if deadline.expired():
+                report.budget_exhausted = True
             if not planned:
                 break
+            committing = time.monotonic()
             dead_before = adapter.dead_assignments()
             for candidate, rewrite in planned:
                 adapter.replace(candidate, rewrite.replacement)
@@ -103,7 +143,10 @@ def simplify_function(adapter: ILAdapter, rules: Sequence[Rule], backends: Seque
             if newly_dead:
                 adapter.remove(newly_dead)
                 adapter.finish()
+            report.commit_seconds += time.monotonic() - committing
             last_sources = sorted({rewrite.source for _, rewrite in planned})
+            if report.budget_exhausted:
+                break
         else:
             report.capped = True
             report.still_firing = last_sources
@@ -111,8 +154,9 @@ def simplify_function(adapter: ILAdapter, rules: Sequence[Rule], backends: Seque
             raise RuntimeError("control flow changed by expression rewrites")
     except Exception as exc:
         report.errors.append(ErrorRecord("engine", f"{type(exc).__name__}: {exc}", level))
+        undo = time.monotonic()
         adapter.restore()
+        report.commit_seconds += time.monotonic() - undo
         report.rolled_back_rewrites = len(report.rewrites)
         report.rewrites.clear()
         report.rolled_back = True
-    return report

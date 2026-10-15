@@ -17,6 +17,7 @@ MAX_NODES = f"{PREFIX}.maxNodes"
 MAX_ITERATIONS = f"{PREFIX}.maxIterations"
 DISABLED_RULES = f"{PREFIX}.disabledRules"
 SKIP_FUNCTIONS = f"{PREFIX}.skipFunctions"
+FUNCTION_SECONDS = f"{PREFIX}.functionSeconds"
 
 _SPECS = {
     ENABLED: {"title": "Enabled", "type": "boolean", "default": True,
@@ -33,6 +34,11 @@ _SPECS = {
                      "description": "Tier 1 rule names to skip."},
     SKIP_FUNCTIONS: {"title": "Skipped functions", "type": "array", "elementType": "string", "default": [],
                      "description": "Function start addresses (hex) that D-810 never rewrites."},
+    FUNCTION_SECONDS: {"title": "Time budget per function (seconds)", "type": "number", "default": 5,
+                       "minValue": 1, "maxValue": 600,
+                       "description": "Planning and solving time shared by the MLIL and HLIL passes of one "
+                                      "analysis run. When it runs out, already verified rewrites are applied "
+                                      "and nothing new is attempted."},
 }
 
 
@@ -52,6 +58,7 @@ def engine_config(ctx) -> EngineConfig:
         max_iterations=ctx.get_setting_uint64(MAX_ITERATIONS),
         tier2=ctx.get_setting_bool(TIER2),
         disabled_rules=frozenset(ctx.get_setting_string_list(DISABLED_RULES)),
+        function_seconds=float(ctx.get_setting_uint64(FUNCTION_SECONDS)),
     )
 
 

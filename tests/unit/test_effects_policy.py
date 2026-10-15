@@ -54,3 +54,32 @@ def test_effects_are_found_at_any_depth():
 
 def test_lists_of_operands_are_searched():
     assert effects.mlil_effect(Node("MLIL_ADD", [[var(), Node("MLIL_CALL_SSA")], const()])) == "effect: MLIL_CALL_SSA"
+
+
+def hvar(name="x"):
+    return Node("HLIL_VAR", [name]) if False else _HVar(name)
+
+
+class _HVar(Node):
+    def __init__(self, name):
+        super().__init__("HLIL_VAR", [])
+        self.var = name
+
+
+def test_hlil_reads_of_plain_variables_are_candidates():
+    tree = Node("HLIL_ADD", [Node("HLIL_XOR", [_HVar("x"), _HVar("y")]), Node("HLIL_CONST", [3])])
+    assert effects.hlil_effect(tree) is None
+
+
+@pytest.mark.parametrize("op", ["HLIL_DEREF", "HLIL_CALL", "HLIL_ARRAY_INDEX", "HLIL_DIVU", "HLIL_INTRINSIC", "HLIL_NEW_THING"])
+def test_hlil_effects_bound_candidates(op):
+    assert effects.hlil_effect(Node("HLIL_ADD", [_HVar("x"), Node(op, [_HVar("y")])])) == f"effect: {op}"
+
+
+def test_hlil_pure_unsupported_operations_bound_candidates_too():
+    assert effects.hlil_effect(Node("HLIL_ADD", [_HVar("x"), Node("HLIL_ROL", [_HVar("y")])])) == "unsupported: HLIL_ROL"
+
+
+def test_hlil_aliased_variable_reads_are_effects():
+    assert effects.hlil_effect(Node("HLIL_XOR", [_HVar("x_1"), _HVar("y")]), aliased=frozenset({"x_1"})) == \
+        "effect: aliased read"

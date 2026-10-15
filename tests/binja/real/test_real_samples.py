@@ -181,10 +181,19 @@ def _summary(values: list[float]) -> dict:
             "max": round(ordered[-1], 4), "total": round(sum(values), 2)}
 
 
-def _report_summary(report, into: Counter, skips: Counter) -> None:
+def _reports(func) -> dict:
+    """{level: report}: v2 keeps one per pass; frozen v1 has a single (MLIL) report."""
+    if hasattr(log, "latest_reports"):
+        return log.latest_reports(func)
+    report = log.latest_report(func)
+    return {} if report is None else {"mlil": report}
+
+
+def _report_summary(report, into: Counter, skips: Counter, level: str = "mlil") -> None:
     if report is None:
         into["no_report"] += 1
         return
+    into[f"{level}:rewrites"] += len(report.rewrites)
     into["rewrites"] += len(report.rewrites)
     for record in report.rewrites:
         source = record[1] if isinstance(record, tuple) else record.source
@@ -197,8 +206,8 @@ def _report_summary(report, into: Counter, skips: Counter) -> None:
     into["rolled_back"] += bool(report.rolled_back)
     into["capped"] += bool(report.capped)
     into["refuted"] += getattr(report, "refuted", 0)
-    for name in ("budget_exhausted", "overrun"):
-        into[name] += bool(getattr(report, name, False))
+    into["budget_exhausted"] += bool(getattr(report, "budget_exhausted", False))
+    into["overruns"] += getattr(report, "overrun_seconds", 0.0) > 0
     for entry in report.skipped:
         reason = entry[1] if isinstance(entry, tuple) else entry.reason
         skips[reason.split(":")[0]] += 1
@@ -246,6 +255,7 @@ def test_sample():
         totals, skips = Counter(), Counter()
         before_c, after_c = RootCounts(), RootCounts()
         reanalysis, per_function = [], []
+        stage_times: dict[str, list[float]] = {}
         with _Timer() as timer:
             for address in candidates:
                 func = bv.get_function_at(address)
@@ -272,11 +282,18 @@ def test_sample():
                 after = hlil_counts(func)
                 before_c.add(before[address])
                 after_c.add(after)
-                report = log.latest_report(func)
-                _report_summary(report, totals, skips)
+                reports = _reports(func)
+                if not reports:
+                    totals["no_report"] += 1
+                for level, report in reports.items():
+                    _report_summary(report, totals, skips, level)
+                    for name in ("plan_seconds", "commit_seconds", "lock_wait_seconds", "overrun_seconds"):
+                        if hasattr(report, name):
+                            stage_times.setdefault(f"{level}:{name}", []).append(getattr(report, name))
                 per_function.append({"start": hex(address), "mba_before": before[address].mba_roots,
                                      "mba_after": after.mba_roots,
-                                     "rewrites": len(report.rewrites) if report else 0,
+                                     "rewrites": sum(len(r.rewrites) for r in reports.values()),
+                                     "exhausted": any(getattr(r, "budget_exhausted", False) for r in reports.values()),
                                      "plugin_s": round(sum(timer.seconds.get(address, [])), 4)})
         plugin_s = [sum(v) for k, v in timer.seconds.items() if k in set(candidates)]
         result["candidates_before"] = before_c.to_json()
@@ -284,7 +301,8 @@ def test_sample():
         result["plugin"] = dict(totals)
         result["skip_reasons"] = dict(skips.most_common())
         result["timing"] = {"plugin_per_function": _summary(plugin_s),
-                            "reanalysis_per_function": _summary(reanalysis)}
+                            "reanalysis_per_function": _summary(reanalysis),
+                            **{name: _summary(values) for name, values in sorted(stage_times.items())}}
         per_function.sort(key=lambda r: -r["mba_before"])
         result["top_functions"] = per_function[:25]
         result["status"] = "complete"

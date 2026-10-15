@@ -106,3 +106,30 @@ def test_iteration_cap_is_reported():
     adapter = Endless({"r": p("(x ^ y) + 2 * (x & y)")})
     report = simplify_function(adapter, [], [LinearMBABackend()], EngineConfig(max_iterations=3))
     assert report.capped and report.still_firing == ["tier2:linear"] and len(report.rewrites) == 3
+
+
+def test_expired_allowance_does_nothing():
+    from binja_d810.deadline import Deadline
+
+    adapter = FakeAdapter({"r": p("(x ^ y) + 2 * (x & y)")})
+    report = simplify_function(adapter, [], [LinearMBABackend()], EngineConfig(), Deadline.after(0))
+    assert report.budget_exhausted and adapter.roots["r"] == p("(x ^ y) + 2 * (x & y)") and adapter.finished == 0
+
+
+def test_exhaustion_mid_planning_still_applies_verified_candidates():
+    import time
+
+    from binja_d810.deadline import Deadline
+
+    class SlowLinear(LinearMBABackend):
+        def simplify(self, e, deadline=None):
+            time.sleep(0.08)
+            return super().simplify(e, deadline)
+
+    roots = {name: p(f"({name} ^ y) + 2 * ({name} & y)") for name in ("a", "b", "c", "d", "e")}
+    adapter = FakeAdapter(roots)
+    report = simplify_function(adapter, [], [SlowLinear()], EngineConfig(), Deadline.after(0.12))
+    applied = {r for r, e in adapter.roots.items() if e != roots[r]}
+    assert report.budget_exhausted and 1 <= len(applied) < len(roots)
+    assert len(report.rewrites) == len(applied) and not report.rolled_back
+    assert report.plan_seconds >= 0.12 and report.overrun_seconds < 0.2

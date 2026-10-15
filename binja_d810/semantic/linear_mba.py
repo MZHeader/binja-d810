@@ -169,7 +169,8 @@ class LinearMBABackend:
     def __init__(self, max_vars: int = 6):
         self.max_vars = max_vars
 
-    def simplify(self, e: Expr) -> Optional[Expr]:
+    def simplify(self, e: Expr, deadline=None) -> Optional[Expr]:
+        # Bounded by max_vars (at most 2**6 signature entries): no deadline checks needed.
         atoms: dict[Expr, Var] = {}
         linear = _abstract(e, atoms, {v.name for v in variables(e)})
         if not is_linear_mba(linear):

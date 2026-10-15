@@ -33,12 +33,13 @@ class CobraBackend:
     def __init__(self, solve: Callable[[str, int], Optional[str]]):
         self._solve = solve
 
-    def simplify(self, e: Expr) -> Optional[Expr]:
+    def simplify(self, e: Expr, deadline=None) -> Optional[Expr]:
         atoms: dict[Expr, Var] = {}
         solvable = _atomize(e, e.width, atoms)
         vs = variables(solvable)
         plain = {v.name: Var(f"v{i}", e.width) for i, v in enumerate(vs)}
-        text = self._solve(to_str(substitute(solvable, plain)), e.width)
+        text = to_str(substitute(solvable, plain))
+        text = self._solve(text, e.width) if deadline is None else self._solve(text, e.width, deadline)
         if text is None:
             return None
         try:

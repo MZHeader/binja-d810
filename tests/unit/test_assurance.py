@@ -76,7 +76,7 @@ class _Fixed:
     def __init__(self, result):
         self.result = result
 
-    def simplify(self, e):
+    def simplify(self, e, deadline=None):
         return self.result
 
 
@@ -91,3 +91,13 @@ def test_legacy_verdict_only_check_still_works():
     outcome = simplify_expression(p("(x ^ y) + 2 * (x & y)"), [], [LinearMBABackend()],
                                   check=lambda a, b: Verdict.TESTED)
     assert outcome.rewrite is not None and outcome.rewrite.verdict is Verdict.TESTED
+
+
+def test_linear_identities_written_with_shifts_and_extensions_are_proven():
+    # HLIL on x64: (y ^ x) + (trunc32(zx64(y) & zx64(x)) << 1) is linear once normalized.
+    from binja_d810.ir.expr import BinOp, Const, UnOp
+
+    x, y = parse("x", 32), parse("y", 32)
+    wide_and = BinOp("and", UnOp("zx", y, 64), UnOp("zx", x, 64), 64)
+    e = BinOp("add", BinOp("xor", y, x, 32), BinOp("shl", UnOp("trunc", wide_and, 32), Const(1, 8), 32), 32)
+    assert check(e, p("x + y")) == Check(Verdict.PROVEN, "signature", "")

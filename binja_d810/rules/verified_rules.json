@@ -1,0 +1,1580 @@
+{
+  "rules": {
+    "AddXor_Rule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "AddXor_Rule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_HackersDelightRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_HackersDelightRule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_HackersDelightRule_5": {
+      "notes": [
+        "16-bit: timeout after 60s"
+      ],
+      "widths": [
+        8,
+        32,
+        64
+      ]
+    },
+    "Add_OllvmRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_OllvmRule_2": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "Add_OllvmRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_OllvmRule_4": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "Add_OllvmRule_DynamicConst": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_SpecialConstantRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Add_SpecialConstantRule_2": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "Add_SpecialConstantRule_3": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "And1_MbaRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "AndBnot_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "AndBnot_FactorRule_2": {
+      "notes": [
+        "16-bit: timeout after 60s"
+      ],
+      "widths": [
+        8,
+        32,
+        64
+      ]
+    },
+    "AndBnot_FactorRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "AndBnot_FactorRule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "AndBnot_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "AndBnot_HackersDelightRule_2": {
+      "notes": [
+        "8-bit: timeout after 60s"
+      ],
+      "widths": [
+        16,
+        32,
+        64
+      ]
+    },
+    "AndGetUpperBits_FactorRule_1": {
+      "notes": [
+        "excluded: marked KNOWN_INCORRECT upstream"
+      ],
+      "widths": []
+    },
+    "AndOr_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "AndXor_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_FactorRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_HackersDelightRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_HackersDelightRule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_OllvmRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_OllvmRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "And_OllvmRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotAdd_MbaRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotAnd_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotAnd_FactorRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotAnd_FactorRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotAnd_FactorRule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotOr_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotXor_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotXor_Rule_1": {
+      "notes": [
+        "16-bit: timeout after 60s"
+      ],
+      "widths": [
+        8,
+        32,
+        64
+      ]
+    },
+    "BnotXor_Rule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "BnotXor_Rule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Bnot_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Bnot_FactorRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Bnot_FactorRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Bnot_FactorRule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Bnot_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Bnot_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Bnot_Hodur_1": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "Bnot_MbaRule_1": {
+      "notes": [
+        "32-bit: timeout after 60s"
+      ],
+      "widths": [
+        8,
+        16,
+        64
+      ]
+    },
+    "Bnot_Rule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Bnot_XorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule10": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule11": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule12": {
+      "notes": [
+        "excluded: marked KNOWN_INCORRECT upstream"
+      ],
+      "widths": []
+    },
+    "CstSimplificationRule13": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule14": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "CstSimplificationRule15": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule16": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule17": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule18": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule19": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule20": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "CstSimplificationRule21": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "CstSimplificationRule22": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "CstSimplificationRule3": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "CstSimplificationRule4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule5": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule6": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule7": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule8": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "CstSimplificationRule9": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "GetIdentRule1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "GetIdentRule2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "GetIdentRule3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Mul_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Mul_FactorRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Mul_MBA_1": {
+      "notes": [
+        "16-bit: timeout after 60s",
+        "32-bit: timeout after 60s",
+        "64-bit: timeout after 60s"
+      ],
+      "widths": [
+        8
+      ]
+    },
+    "Mul_MBA_2": {
+      "notes": [
+        "excluded: marked KNOWN_INCORRECT upstream"
+      ],
+      "widths": []
+    },
+    "Mul_MBA_3": {
+      "notes": [
+        "excluded: marked KNOWN_INCORRECT upstream"
+      ],
+      "widths": []
+    },
+    "Mul_MBA_4": {
+      "notes": [
+        "16-bit: timeout after 60s",
+        "32-bit: timeout after 60s",
+        "64-bit: timeout after 60s"
+      ],
+      "widths": [
+        8
+      ]
+    },
+    "NegAdd_HackersDelightRule_1": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "NegAdd_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "NegOr_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "NegSub_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "NegXor_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "NegXor_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Neg_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Neg_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "OrBnot_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "OrBnot_FactorRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "OrBnot_FactorRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "OrBnot_FactorRule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_FactorRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_FactorRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_HackersDelightRule_2_variant_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_Hodur_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_Hodur_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_MbaRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_MbaRule_1_Commuted": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_MbaRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_MbaRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_OllvmRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_Rule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_Rule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_Rule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Or_Rule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Pred0Rule1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Pred0Rule2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Pred0Rule3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Pred0Rule4": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "Pred0Rule5": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Pred0Rule6": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Pred0Rule7": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "PredFFRule1": {
+      "notes": [
+        "excluded: pattern or replacement is not a symbolic expression"
+      ],
+      "widths": []
+    },
+    "PredFFRule2": {
+      "notes": [
+        "excluded: pattern or replacement is not a symbolic expression"
+      ],
+      "widths": []
+    },
+    "PredFFRule3": {
+      "notes": [
+        "excluded: pattern or replacement is not a symbolic expression"
+      ],
+      "widths": []
+    },
+    "PredFFRule4": {
+      "notes": [
+        "excluded: pattern or replacement is not a symbolic expression"
+      ],
+      "widths": []
+    },
+    "PredOdd1": {
+      "notes": [
+        "excluded: pattern or replacement is not a symbolic expression"
+      ],
+      "widths": []
+    },
+    "PredOdd2": {
+      "notes": [
+        "excluded: pattern or replacement is not a symbolic expression"
+      ],
+      "widths": []
+    },
+    "PredOr1_Rule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "PredOr2_Rule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "PredSetbRule1": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetnzRule1": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetnzRule2": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetnzRule3": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetnzRule4": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetnzRule5": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetnzRule6": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetnzRule8": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetzRule1": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetzRule2": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "PredSetzRule3": {
+      "notes": [
+        "deferred: unsupported ops ['bool_to_int']"
+      ],
+      "widths": []
+    },
+    "Sub1Add_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Sub1And1_MbaRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Sub1And_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Sub1Or_MbaRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Sub1_FactorRule_1": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    },
+    "Sub1_FactorRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Sub_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Sub_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Sub_HackersDelightRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Sub_HackersDelightRule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "WeirdRule1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "WeirdRule2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "WeirdRule3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "WeirdRule4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "WeirdRule5": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "WeirdRule6": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor1_MbaRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "XorAlmost_Rule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_FactorRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_FactorRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_FactorRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_HackersDelightRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_HackersDelightRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_HackersDelightRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_HackersDelightRule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_HackersDelightRule_5": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_Hodur_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_Hodur_2": {
+      "notes": [
+        "16-bit: refuted: ",
+        "32-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        8
+      ]
+    },
+    "Xor_MbaRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_MbaRule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_MbaRule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_NestedStuff": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_Rule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_Rule_2": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_Rule_3": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_Rule_4": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_Rule_4_WithXdu": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "32-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": []
+    },
+    "Xor_SpecialConstantRule_1": {
+      "notes": [],
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
+    },
+    "Xor_SpecialConstantRule_2": {
+      "notes": [
+        "8-bit: refuted: ",
+        "16-bit: refuted: ",
+        "64-bit: refuted: "
+      ],
+      "widths": [
+        32
+      ]
+    }
+  },
+  "source": {
+    "repo": "w00tzenheimer/d810-ng",
+    "sha": "2e59ab4ce18e5e82911880137d1285d95279981a"
+  },
+  "widths": [
+    8,
+    16,
+    32,
+    64
+  ]
+}

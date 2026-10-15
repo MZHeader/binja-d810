@@ -1,4 +1,9 @@
-"""Equivalence checking for every rewrite: random evaluation always, Z3 proof when available."""
+"""Equivalence checking for every rewrite: random evaluation always, then a proof.
+
+The proof is by signature when both sides are linear MBAs (fast and exact), else by Z3 when
+available. Z3 rarely proves MBA equivalences quickly, so its default budget is 500 ms; a
+timeout leaves the random-evaluation result (TESTED).
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,9 @@ from typing import Iterator, Mapping, Optional
 
 from ..ir.evaluate import evaluate
 from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, variables
+from .linear_mba import is_linear_mba, signature
+
+_SIGNATURE_MAX_VARS = 12
 
 
 class Verdict(enum.Enum):
@@ -29,7 +37,7 @@ def sample_envs(var_widths: Mapping[str, int], count: int, seed: int) -> Iterato
 
 
 def check_equivalent(
-    a: Expr, b: Expr, *, samples: int = 64, use_z3: bool = True, z3_timeout_ms: int = 2000, seed: int = 0
+    a: Expr, b: Expr, *, samples: int = 64, use_z3: bool = True, z3_timeout_ms: int = 500, seed: int = 0
 ) -> Verdict:
     if a.width != b.width:
         return Verdict.REFUTED
@@ -37,6 +45,9 @@ def check_equivalent(
     for env in sample_envs(var_widths, samples, seed):
         if evaluate(a, env) != evaluate(b, env):
             return Verdict.REFUTED
+    by_signature = _signature_proof(a, b)
+    if by_signature is not None:
+        return Verdict.PROVEN if by_signature else Verdict.REFUTED
     if use_z3:
         proven = _z3_prove(a, b, var_widths, z3_timeout_ms)
         if proven is False:
@@ -44,6 +55,20 @@ def check_equivalent(
         if proven is True:
             return Verdict.PROVEN
     return Verdict.TESTED
+
+
+def _signature_proof(a: Expr, b: Expr) -> Optional[bool]:
+    """Exact verdict for two linear MBAs whose variables all have the expression's width.
+
+    Each bit of such an expression depends only on the same bit of its inputs, so the expression
+    is determined by its values on 0/1 inputs. None when the precondition does not hold.
+    """
+    vs = sorted({v.name: v for v in variables(a) + variables(b)}.values(), key=lambda v: v.name)
+    if len(vs) > _SIGNATURE_MAX_VARS or any(v.width != a.width for v in vs):
+        return None
+    if not (is_linear_mba(a) and is_linear_mba(b)):
+        return None
+    return signature(a, vs) == signature(b, vs)
 
 
 def _z3_prove(a: Expr, b: Expr, var_widths: Mapping[str, int], timeout_ms: int) -> Optional[bool]:

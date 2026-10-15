@@ -30,6 +30,12 @@ def test_z3_catches_what_sampling_misses():
 
 
 def test_without_z3_sampling_result_is_tested(monkeypatch):
+    _without_z3(monkeypatch)
+    # Non-linear, so the signature proof does not apply and only Z3 could prove it.
+    assert check_equivalent(p("(x & y) * (x | y)"), p("x * y")) is Verdict.TESTED
+
+
+def _without_z3(monkeypatch):
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -38,7 +44,52 @@ def test_without_z3_sampling_result_is_tested(monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    assert check_equivalent(p("(x ^ y) + 2 * (x & y)"), p("x + y")) is Verdict.TESTED
+
+
+def test_linear_mba_pairs_are_proven_by_signature_without_z3(monkeypatch):
+    _without_z3(monkeypatch)
+    a = p("(x ^ y) + 2 * (x & y) + 3 * ((x | y) - (x & ~y) - y)")
+    assert check_equivalent(a, p("x + y")) is Verdict.PROVEN
+
+
+def test_linear_mba_pairs_are_refuted_by_signature():
+    assert check_equivalent(p("x | y"), p("x + y"), samples=0, use_z3=False) is Verdict.REFUTED
+
+
+def test_signature_proof_needs_both_sides_linear():
+    # x * y and x & y agree on every 0/1 input but differ in general.
+    assert check_equivalent(p("x * y"), p("x & y"), samples=0, use_z3=False) is Verdict.TESTED
+
+
+def test_signature_proof_needs_full_width_variables():
+    # zx32(q) is not a 32-bit variable, so the 0/1 signature does not determine the expression.
+    a = parse("zx32(q) & 1", 32, {"q": 8})
+    assert check_equivalent(a, parse("zx32(q)", 32, {"q": 8}), samples=0, use_z3=False) is Verdict.TESTED
+
+
+def test_signature_verdicts_agree_with_z3():
+    from binja_d810.semantic.verify import _signature_proof, _z3_prove
+
+    rng = random.Random(12)
+    terms = ["x", "y", "z", "(x & y)", "(x | z)", "(y ^ z)", "(~x & y)", "(x & y & z)", "~(x | y)", "5"]
+    decided = 0
+    for _ in range(60):
+        a, b = (p(" + ".join(f"{rng.choice([1, 2, -1, 3])} * {rng.choice(terms)}" for _ in range(3)), 16)
+                for _ in range(2))
+        if rng.random() < 0.5:
+            b = a  # make some pairs equal so both verdicts are exercised
+        widths = {v.name: v.width for v in variables(a) + variables(b)}
+        by_z3 = _z3_prove(a, b, widths, 500)
+        if by_z3 is not None:
+            decided += 1
+            assert _signature_proof(a, b) is by_z3, (to_str(a), to_str(b))
+    assert decided >= 30
+
+
+def test_default_z3_budget_is_500_ms():
+    import inspect
+
+    assert inspect.signature(check_equivalent).parameters["z3_timeout_ms"].default == 500
 
 
 def test_width_mismatch_is_refuted():

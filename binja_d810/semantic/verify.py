@@ -130,11 +130,14 @@ def to_z3(e: Expr, z3_vars: dict, ctx=None):
     x = to_z3(e.left, z3_vars, ctx)
     y = to_z3(e.right, z3_vars, ctx)
     if e.op in ("shl", "lshr", "ashr"):
+        # ir.evaluate.shift_count: the count modulo max(32, width), taken at the count's own width.
+        # The reduced count is at most 63, so resizing it to the result width is lossless; Z3's
+        # shifts then clear (or sign-fill) for a reduced count >= the width, as an 8-bit shift does.
+        y = y & z3.BitVecVal(max(32, e.width) - 1, e.right.width, ctx)
         if e.right.width < e.width:
             y = z3.ZeroExt(e.width - e.right.width, y)
         elif e.right.width > e.width:
             y = z3.Extract(e.width - 1, 0, y)
-        y = z3.URem(y, z3.BitVecVal(e.width, e.width, ctx))
         if e.op == "shl":
             return x << y
         if e.op == "lshr":

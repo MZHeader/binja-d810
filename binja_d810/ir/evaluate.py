@@ -1,4 +1,4 @@
-"""Concrete evaluation of IR modulo 2**width."""
+"""Concrete evaluation of IR modulo 2**width (shift counts: see shift_count)."""
 
 from __future__ import annotations
 
@@ -36,9 +36,22 @@ def evaluate(e: Expr, env: Mapping[str, int]) -> int:
         return x | y
     if e.op == "xor":
         return x ^ y
-    shift = y % e.width
-    if e.op == "shl":
-        return (x << shift) & m
-    if e.op == "lshr":
-        return x >> shift
-    return (to_signed(x, e.width) >> shift) & m  # ashr
+    return _shift(e.op, x, y, e.width)
+
+
+def shift_count(count: int, width: int) -> int:
+    """Binary Ninja's IL takes a shift count modulo max(32, width), never modulo an 8- or 16-bit
+    width: x86 `shl al, cl` by 8 clears al, ARM64 `lsl w0, w0, w1` by 33 shifts by 1 (both measured
+    with Binary Ninja's dataflow, see tests/unit/test_shifts.py). x86's own count masks are explicit
+    `and` nodes in the IL."""
+    return count % max(32, width)
+
+
+def _shift(op: str, x: int, count: int, width: int) -> int:
+    c = shift_count(count, width)
+    m = mask(width)
+    if op == "shl":
+        return (x << c) & m
+    if op == "lshr":
+        return x >> c
+    return (to_signed(x, width) >> c) & m  # ashr

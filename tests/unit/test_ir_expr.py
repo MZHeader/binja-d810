@@ -49,7 +49,9 @@ def test_evaluate_classic_mba_identity():
 def test_evaluate_shifts_and_extensions():
     assert evaluate(BinOp("ashr", Const(0x80000000, 32), Const(4, 32), 32), {}) == 0xF8000000
     assert evaluate(BinOp("lshr", Const(0x80000000, 32), Const(4, 32), 32), {}) == 0x08000000
-    assert evaluate(BinOp("shl", Const(1, 32), Const(33, 32), 32), {}) == 2  # amount mod width
+    # Counts are reduced modulo max(32, width) (tests/unit/test_shifts.py has the measured reference):
+    assert evaluate(BinOp("shl", Const(1, 32), Const(33, 32), 32), {}) == 2  # ARM64 lsl w by 33
+    assert evaluate(BinOp("shl", Const(1, 8), Const(8, 8), 8), {}) == 0  # x86 shl al by 8 (v1 said 1)
     assert evaluate(UnOp("sx", Const(0x80, 8), 32), {}) == 0xFFFFFF80
     assert evaluate(UnOp("zx", Const(0x80, 8), 32), {}) == 0x80
     assert evaluate(UnOp("trunc", Const(0x12345678, 32), 8), {}) == 0x78

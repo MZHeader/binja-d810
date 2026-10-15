@@ -31,8 +31,9 @@ def test_z3_catches_what_sampling_misses():
 
 def test_without_z3_sampling_result_is_tested(monkeypatch):
     _without_z3(monkeypatch)
-    # Non-linear, so the signature proof does not apply and only Z3 could prove it.
-    assert check_equivalent(p("(x & y) * (x | y)"), p("x * y")) is Verdict.TESTED
+    # A true non-linear identity, so the signature proof does not apply and only Z3 could prove it.
+    a = p("(x & y) * (x | y) + (x & ~y) * (~x & y)")
+    assert check_equivalent(a, p("x * y")) is Verdict.TESTED
 
 
 def _without_z3(monkeypatch):

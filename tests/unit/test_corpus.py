@@ -40,6 +40,14 @@ def test_emitted_c_compiles(tmp_path):
     subprocess.run(["clang", "-arch", "arm64", "-fsyntax-only", "-Wall", "-Werror", str(src)], check=True)
 
 
+def test_arithmetic_subterms_are_behind_barriers():
+    # Without one, clang -O2 folds (x * x) & 3 into x & 1 and the sample has no MBA left.
+    from binja_d810.ir.parse import parse
+
+    text = gen_mba.emit_function(gen_mba.Sample("s", "d810", 32, parse("(x * x) & 3", 32), parse("x & 1", 32)))
+    assert "t0 = (x * x); B(t0);" in text
+
+
 def test_pipeline_simplifies_corpus():
     rules, backends = load_rules(), default_backends()
     failures = {"d810": [], "linear": [], "poly": []}

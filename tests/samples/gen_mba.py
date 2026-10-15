@@ -109,20 +109,30 @@ def _bitwise_only(e: Expr) -> bool:
     return e.op in ("and", "or", "xor") and _bitwise_only(e.left) and _bitwise_only(e.right)
 
 
+def _arith_only(e: Expr) -> bool:
+    if isinstance(e, (Var, Const)):
+        return True
+    if isinstance(e, UnOp):
+        return e.op == "neg" and _arith_only(e.operand)
+    return e.op in ("add", "sub", "mul") and _arith_only(e.left) and _arith_only(e.right)
+
+
 def _plain(e: Expr, width: int) -> str:
     if isinstance(e, Var):
         return e.name
     if isinstance(e, Const):
         return f"0x{e.value:x}{SUFFIX[width]}"
     if isinstance(e, UnOp):
-        return f"(~{_plain(e.operand, width)})"
+        return f"({'-' if e.op == 'neg' else '~'}{_plain(e.operand, width)})"
     return f"({_plain(e.left, width)} {SYMBOL[e.op]} {_plain(e.right, width)})"
 
 
 def _c(e: Expr, temps: list[str], width: int) -> str:
     if isinstance(e, (Var, Const)):
         return _plain(e, width)
-    if _bitwise_only(e):  # each bitwise subterm goes through an optimization barrier
+    # Each purely bitwise or purely arithmetic subterm goes through an optimization barrier, so
+    # clang cannot fold across the mix (at -O2 it turns (x * x) & 3 into x & 1).
+    if _bitwise_only(e) or _arith_only(e):
         temps.append(_plain(e, width))
         return f"t{len(temps) - 1}"
     if isinstance(e, UnOp):

@@ -4,3 +4,8 @@ try:
     import binaryninja
 except ImportError:  # plain pytest, outside Binary Ninja
     binaryninja = None
+
+if binaryninja is not None:
+    from .binja import plugin
+
+    plugin.register()

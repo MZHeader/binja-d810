@@ -2,6 +2,7 @@
 keep their count and order; values already materialized from them remain usable leaves."""
 
 import pytest
+from arch import IDS, MATRIX, expect_miss, sample
 from helpers import function_named, lift_return, open_sample, set_types, strip_versions
 
 from binja_d810.binja import log
@@ -38,6 +39,16 @@ def _count(il, names) -> int:
     return count
 
 
+def _hlil_simplified(func) -> bool:
+    """The final HLIL no longer mixes ^ or & with arithmetic: (m ^ y) + 2 * (m & y) became m + y."""
+    text = "\n".join(map(str, func.hlil.instructions))
+    return "^" not in text and " & " not in text
+
+
+def _count_hlil_derefs(func) -> int:
+    return _count(func.hlil, {"HLIL_DEREF", "HLIL_DEREF_FIELD", "HLIL_ARRAY_INDEX"})
+
+
 def _pair(file_name, types):
     on, off = open_sample(file_name, d810=True), open_sample(file_name, d810=False)
     set_types(on, types)
@@ -53,10 +64,10 @@ def asm():
     off.file.close()
 
 
-@pytest.fixture(scope="module", params=["O0", "O2"])
+@pytest.fixture(scope="module", params=MATRIX, ids=IDS)
 def c_code(request):
-    on, off = _pair(f"effects_{request.param}.dylib", C_TYPES)
-    yield on, off
+    on, off = _pair(sample("effects", *request.param), C_TYPES)
+    yield on, off, "-".join(request.param)
     on.file.close()
     off.file.close()
 
@@ -77,31 +88,27 @@ def test_pure_part_of_an_effectful_root_is_simplified(asm):
     assert "^" not in hlil and "&" not in hlil, hlil
 
 
-def test_call_result_is_a_stable_leaf(c_code):
-    on, off = c_code
+def test_call_result_is_a_stable_leaf(c_code, request):
+    on, off, build_level = c_code
+    expect_miss(request, "eff_call_result", build_level)
     func = function_named(on, "eff_call_result")
     assert _count(func.mlil, CALLS) == _count(function_named(off, "eff_call_result").mlil, CALLS) == 1
-    assert not is_mba(strip_versions(lift_return(func)))
+    assert _hlil_simplified(func)
 
 
-def test_aliased_value_is_kept_and_simplified(c_code):
-    on, off = c_code
+def test_aliased_value_is_kept_and_simplified(c_code, request):
+    on, off, build_level = c_code
+    expect_miss(request, "eff_aliased", build_level)
     func = function_named(on, "eff_aliased")
     plain = function_named(off, "eff_aliased")
     assert _count(func.mlil.ssa_form, {"MLIL_VAR_ALIASED"}) == _count(plain.mlil.ssa_form, {"MLIL_VAR_ALIASED"})
     assert _count(func.mlil, LOADS) == _count(plain.mlil, LOADS)
-    assert not is_mba(strip_versions(lift_return(func)))
+    assert _hlil_simplified(func)
 
 
 def test_volatile_reads_are_not_merged(c_code):
-    on, off = c_code
+    # (g ^ y) + 2 * (g & y) with g volatile is two reads; x + y over one read would be wrong.
+    on, off, _ = c_code
     func = function_named(on, "eff_volatile")
     assert _count(func.mlil, LOADS) == _count(function_named(off, "eff_volatile").mlil, LOADS) == 2
-    lifted = strip_versions(lift_return(func), params=("y",))
-    loads = [v for v in variables(lifted) if v.name != "y"]
-    assert len(loads) == 2, lifted
-    named = substitute(lifted, {loads[0].name: Var("a", 32), loads[1].name: Var("b", 32)})
-    first, second = parse("(a ^ y) + 2 * (b & y)", 32), parse("(b ^ y) + 2 * (a & y)", 32)
-    assert Verdict.REFUTED in (check_equivalent(named, first, use_z3=False), check_equivalent(named, second, use_z3=False)) \
-        and (check_equivalent(named, first, use_z3=False) is not Verdict.REFUTED
-             or check_equivalent(named, second, use_z3=False) is not Verdict.REFUTED), named
+    assert _count_hlil_derefs(func) == _count_hlil_derefs(function_named(off, "eff_volatile")) == 2

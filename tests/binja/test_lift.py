@@ -1,11 +1,12 @@
 import pytest
+from arch import IDS, MATRIX, sample
 from binaryninja import MediumLevelILOperation, SSAVariable
 from helpers import (
     function_named, lift_return, manifest, open_sample, return_expr, set_types, signature, strip_versions,
 )
 
 from binja_d810.binja.mlil.lift import SUPPORTED_OPS, Opaque, candidate_roots, lift
-from binja_d810.ir.expr import is_mba, variables
+from binja_d810.ir.expr import UnOp, is_mba, variables
 from binja_d810.ir.parse import parse
 from binja_d810.semantic.verify import Verdict, check_equivalent
 
@@ -16,18 +17,18 @@ SAFETY_TYPES = {
 }
 
 
-@pytest.fixture(scope="module", params=["O0", "O2"])
+@pytest.fixture(scope="module", params=MATRIX, ids=IDS)
 def plain_mba(request):
-    bv = open_sample(f"mba_{request.param}.dylib", d810=False)
+    bv = open_sample(sample("mba", *request.param), d810=False)
     entries = [e for e in manifest() if e["category"] == "d810"][:10]
     set_types(bv, {e["name"]: signature(e) for e in entries})
     yield bv, entries
     bv.file.close()
 
 
-@pytest.fixture(scope="module", params=["O0", "O2"])
+@pytest.fixture(scope="module", params=MATRIX, ids=IDS)
 def plain_safety(request):
-    bv = open_sample(f"safety_{request.param}.dylib", d810=False)
+    bv = open_sample(sample("safety", *request.param), d810=False)
     set_types(bv, SAFETY_TYPES)
     yield bv
     bv.file.close()
@@ -46,17 +47,27 @@ def _result_definition(func):
     return definition, definition.src
 
 
+def _at_width(e, width):
+    return e if e.width == width else UnOp("trunc", e, width) if e.width > width else UnOp("zx", e, width)
+
+
 def test_lift_reconstructs_mba_split_across_instructions(plain_mba):
     bv, entries = plain_mba
     for entry in entries:
         func = function_named(bv, entry["name"])
         instr, expr = _result_definition(func)
-        lifted = lift(expr.ssa_form, root_instr=instr, max_nodes=10_000)
-        assert lifted is not None and is_mba(lifted), entry["name"]
-        plain = strip_versions(lifted)
+        # Following every definition rebuilds the whole MBA over the parameters ...
+        unchecked = lift(expr.ssa_form, root_instr=instr, check_versions=False, max_nodes=10_000)
+        assert unchecked is not None and is_mba(unchecked), entry["name"]
+        plain = _at_width(strip_versions(unchecked), entry["width"])
         assert {v.name for v in variables(plain)} <= {"x", "y", "z"}, entry["name"]
         obf = parse(entry["obfuscated"], entry["width"])
         assert check_equivalent(plain, obf, use_z3=False) is not Verdict.REFUTED, entry["name"]
+        # ... and the checked lift, where it succeeds, only keeps leaves still current at the root.
+        checked = lift(expr.ssa_form, root_instr=instr, max_nodes=10_000)
+        for leaf in variables(checked) if checked is not None else []:
+            if isinstance(leaf.ref, SSAVariable):
+                assert instr.get_ssa_var_version(leaf.ref.var) == leaf.ref.version, (entry["name"], leaf.name)
 
 
 def test_lift_never_uses_stale_versions(plain_safety):
@@ -71,7 +82,7 @@ def test_lift_never_uses_stale_versions(plain_safety):
 
 def test_unchecked_lift_follows_all_definitions(plain_safety):
     func = function_named(plain_safety, "safety_reassign")
-    lifted = strip_versions(lift_return(func))
+    lifted = _at_width(strip_versions(lift_return(func)), 32)
     reference = parse("(x ^ y) + 2 * (x & y) + (3 * x + 1)", 32)
     assert check_equivalent(lifted, reference, use_z3=False) is not Verdict.REFUTED
 

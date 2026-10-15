@@ -2,7 +2,11 @@
 // effects embedded in HLIL expressions; conditional evaluation.
 #include <stdint.h>
 #define B(v) __asm__ volatile("" : "+r"(v))
+#ifdef _WIN32
+#define EXPORT __declspec(dllexport) __attribute__((noinline, used))
+#else
 #define EXPORT __attribute__((noinline, used, visibility("default")))
+#endif
 
 EXPORT uint32_t hl_source(uint32_t x) { __asm__ volatile("" : "+r"(x)); return x * 2654435761u; }
 

@@ -91,3 +91,30 @@ def test_as_field_recognizes_lowerable_reads():
 def test_field_read_must_fit(offset, width):
     with pytest.raises(ValueError):
         storage.field_read(Var("b", 64), offset, width)
+
+
+@pytest.mark.parametrize("read,write,kind", [
+    ((5, 1), (5, 1), "inside"), ((4, 1), (4, 2), "inside"), ((5, 1), (4, 2), "inside"),
+    ((7, 1), (5, 1), "disjoint"), ((0, 4), (4, 4), "disjoint"), ((4, 4), (0, 4), "disjoint"),
+    ((3, 2), (4, 1), "partial"), ((0, 8), (5, 1), "partial"),
+])
+def test_read_over_write(read, write, kind):
+    # x86 -O0 spills bytes into one stack slot (var_8:7.b = y; var_8:6.b = x; ... var_8:5.b): a read
+    # inside the last write reads the written value, a disjoint read reads the previous version.
+    assert storage.read_over_write(*read, *write) == kind
+
+
+def test_wider_operands_of_modular_operations_are_truncated_exactly():
+    # HLIL folds lea into x * 5 with an 8-byte constant under a 4-byte multiply. For + - * & | ^ the
+    # low w bits of the result depend only on the low w bits of the operands.
+    import random
+
+    for op in ("add", "sub", "mul", "and", "or", "xor"):
+        wide = BinOp(op, Var("a", 64), Var("b", 64), 64)
+        narrow = BinOp(op, storage.fit(Var("a", 64), 32), storage.fit(Var("b", 64), 32), 32)
+        rng = random.Random(op)
+        for _ in range(200):
+            env = {"a": rng.getrandbits(64), "b": rng.getrandbits(64)}
+            assert evaluate(narrow, env) == evaluate(wide, env) & 0xFFFFFFFF
+    assert storage.fit(Const(5, 64), 32) == Const(5, 32)
+    assert storage.fit(Var("a", 8), 32) is None  # a narrower operand needs an extension the IL did not give

@@ -1,12 +1,13 @@
 import pytest
+from arch import IDS, MATRIX, sample
 from helpers import open_sample
 
 from binja_d810.binja import log
 
 
-@pytest.mark.parametrize("level", ["O0", "O2"])
-def test_ordinary_code_gets_zero_rewrites(level):
-    bv = open_sample(f"regression_{level}.dylib", d810=True)
+@pytest.mark.parametrize("build,level", MATRIX, ids=IDS)
+def test_ordinary_code_gets_zero_rewrites(build, level):
+    bv = open_sample(sample("regression", build, level), d810=True)
     try:
         rewritten = {}
         for func in bv.functions:

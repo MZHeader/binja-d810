@@ -71,3 +71,19 @@ def test_normalize_preserves_semantics_at_8_and_16_bits():
             for _ in range(10):
                 env = {name: rng.getrandbits(32) for name in "abc"}
                 assert evaluate(once, env) == evaluate(narrow, env)
+
+
+def test_constants_of_one_associative_operation_are_combined():
+    # x86 masks a shift count (cl & 0x1f) that the source already masked: (n & 31) & 31.
+    for text, expected in [("((32 - r) & 31) & 31", "(32 - r) & 31"), ("(a | 3) | 12", "a | 15"),
+                           ("(a ^ 5) ^ 5", "a"), ("(a + 3) + 4", "a + 7"), ("(a * 3) * 5", "a * 15")]:
+        assert normalize(parse(text, 32)) == normalize(parse(expected, 32)), text
+
+
+def test_redundant_shift_count_mask_is_not_worth_a_rewrite():
+    # Ordinary rotate code on i686 -O0 (regression.c reg_rotl): only the mask changes.
+    from binja_d810.semantic.backend import default_backends
+    from binja_d810.simplify import simplify_expression
+
+    e = parse("x >> (((32 - r) & 31) & 31)", 32)
+    assert simplify_expression(e, [], default_backends()).rewrite is None

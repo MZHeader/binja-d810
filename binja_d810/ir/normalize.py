@@ -85,6 +85,10 @@ def _binary(op: str, a: Expr, b: Expr, w: int) -> Expr:
             return _binary("add", a, b.operand, w)
     if op in COMMUTATIVE_OPS and _key(b) < _key(a):
         a, b = b, a
+    if isinstance(a, Const) and isinstance(b, BinOp) and b.op == op and op in COMMUTATIVE_OPS \
+            and isinstance(b.left, Const):
+        # c2 op (c1 op x) == (c1 op c2) op x: x86's shift-count mask on an already masked count.
+        return _binary(op, Const(evaluate(BinOp(op, a, b.left, w), {}), w), b.right, w)
     if isinstance(a, Const):
         c = a.value
         if op in ("add", "or", "xor") and c == 0:

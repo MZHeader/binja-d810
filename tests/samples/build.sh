@@ -1,21 +1,34 @@
 #!/usr/bin/env bash
-# Build ARM64 sample dylibs at -O0 and -O2 into tests/samples/build.
+# Build the sample binaries into tests/samples/build: the generated MBA corpus and the fixture
+# sources for every target in tests/binja/arch.py, at -O0 and -O2, plus exact-assembly fixtures.
+# ARM64 keeps v1's names (mba_O2.dylib); other targets add the build id (mba_x86_64-pe_O2.dll).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/build"
 mkdir -p "$OUT"
 uv run --project "$HERE/../.." python "$HERE/gen_mba.py" --out "$OUT"
+SOURCES=("$OUT/mba.c" "$HERE/src/regression.c" "$HERE/src/safety.c" "$HERE/src/effects.c" "$HERE/src/hlil_fixtures.c")
+FLAGS=(-ffreestanding -fno-builtin -fno-stack-protector)
 for opt in O0 O2; do
-  clang -arch arm64 "-$opt" -shared -o "$OUT/mba_$opt.dylib" "$OUT/mba.c"
-  clang -arch arm64 "-$opt" -shared -o "$OUT/regression_$opt.dylib" "$HERE/src/regression.c"
-  clang -arch arm64 "-$opt" -shared -o "$OUT/safety_$opt.dylib" "$HERE/src/safety.c"
-  clang -arch arm64 "-$opt" -shared -o "$OUT/effects_$opt.dylib" "$HERE/src/effects.c"
-  clang -arch arm64 "-$opt" -shared -o "$OUT/hlil_fixtures_$opt.dylib" "$HERE/src/hlil_fixtures.c"
+  for src in "${SOURCES[@]}"; do
+    base="$(basename "$src" .c)"
+    clang -arch arm64 "-$opt" -shared -o "$OUT/${base}_$opt.dylib" "$src"
+    for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
+      id="$([ "$target" = x86_64-pc-windows-msvc ] && echo x86_64-pe || echo i686-pe)"
+      clang -target "$target" "-$opt" "${FLAGS[@]}" -c "$src" -o "$OUT/${base}_${id}_$opt.obj"
+      lld-link /dll /noentry /nodefaultlib /out:"$OUT/${base}_${id}_$opt.dll" "$OUT/${base}_${id}_$opt.obj" >/dev/null
+    done
+    clang -target x86_64-linux-gnu -fPIC "-$opt" "${FLAGS[@]}" -c "$src" -o "$OUT/${base}_x86_64-elf_$opt.o"
+    ld.lld -shared -nostdlib -o "$OUT/${base}_x86_64-elf_$opt.so" "$OUT/${base}_x86_64-elf_$opt.o"
+  done
 done
-# Shift-boundary fixtures (spec section 6.5), as exact assembly.
-clang -target x86_64-linux-gnu -c "$HERE/src/shifts_x86_64.S" -o "$OUT/shifts_x86_64.o"
-ld.lld -shared -o "$OUT/shifts_x86_64.so" "$OUT/shifts_x86_64.o"
+# Exact-assembly fixtures: shift boundaries (spec 6.5), effects (5.2), partial registers (6.1).
+for asm in shifts_x86_64 effects_x86_64 partial_x86_64; do
+  clang -target x86_64-linux-gnu -c "$HERE/src/$asm.S" -o "$OUT/$asm.o"
+  ld.lld -shared -o "$OUT/$asm.so" "$OUT/$asm.o"
+done
+clang -target i686-linux-gnu -c "$HERE/src/partial_i686.S" -o "$OUT/partial_i686.o"
+ld.lld -shared -o "$OUT/partial_i686.so" "$OUT/partial_i686.o"
 clang -arch arm64 -shared -o "$OUT/shifts_arm64.dylib" "$HERE/src/shifts_arm64.S"
-clang -target x86_64-linux-gnu -c "$HERE/src/effects_x86_64.S" -o "$OUT/effects_x86_64.o"
-ld.lld -shared -o "$OUT/effects_x86_64.so" "$OUT/effects_x86_64.o"
-ls -la "$OUT"
+rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
+ls "$OUT"

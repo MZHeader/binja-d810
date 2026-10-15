@@ -1,7 +1,11 @@
 // Review Focus inputs: reassigned inputs, narrow types, loads.
 #include <stdint.h>
 #define B(v) __asm__ volatile("" : "+r"(v))
+#ifdef _WIN32
+#define EXPORT __declspec(dllexport) __attribute__((noinline, used))
+#else
 #define EXPORT __attribute__((noinline, used, visibility("default")))
+#endif
 
 EXPORT uint32_t safety_reassign(uint32_t x, uint32_t y) {
     uint32_t t0 = x ^ y; B(t0);

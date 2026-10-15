@@ -54,6 +54,14 @@ def function_result(func) -> tuple:
             env[statement.dest.identifier] = _expr(statement.src, env, params)
         elif op == H.HLIL_ASSIGN and statement.dest.operation == H.HLIL_VAR:
             env[statement.dest.var.identifier] = _expr(statement.src, env, params)
+        elif (op == H.HLIL_ASSIGN and statement.dest.operation == H.HLIL_STRUCT_FIELD
+              and statement.dest.src.operation == H.HLIL_VAR and statement.dest.member_index is None):
+            # var_8:5.b = value: replace those bytes of the variable, keep the others.
+            var = statement.dest.src.var
+            old = _read(var, 0, var.type.width * 8, env, params)
+            value = _expr(statement.src, env, params)
+            env[var.identifier] = _merge(old, value, statement.dest.offset * 8)
+
         elif op == H.HLIL_RET and len(statement.src) == 1:
             result = _expr(statement.src[0], env, params)
         else:
@@ -81,13 +89,33 @@ def _expr(e, env, params) -> tuple:
         return _read(e.var, 0, width, env, params)
     if op == H.HLIL_STRUCT_FIELD and e.src.operation == H.HLIL_VAR and e.member_index is None:
         return _read(e.src.var, e.offset, width, env, params)
+    if op == H.HLIL_STRUCT_FIELD and e.member_index is None:  # y.w:1.b: a field of a field
+        inner = _expr(e.src, env, params)
+        if 8 * e.offset + width > _width(inner):
+            raise Unvalidated(f"field beyond its value: {e}")
+        return ("bits", inner, 8 * e.offset, width)
     if op in _BINARY:
-        return ("op", _BINARY[op], width, _expr(e.left, env, params), _expr(e.right, env, params))
+        left, right = _expr(e.left, env, params), _expr(e.right, env, params)
+        if op not in (H.HLIL_LSL, H.HLIL_LSR, H.HLIL_ASR):
+            left, right = _fit(left, width, e), _fit(right, width, e)
+        else:
+            left = _fit(left, width, e)
+        return ("op", _BINARY[op], width, left, right)
     if op in _UNARY:
         return ("op", _UNARY[op], width, _expr(e.src, env, params))
     if op == H.HLIL_SPLIT:
         return ("op", "concat", width, _expr(e.high, env, params), _expr(e.low, env, params))
     raise Unvalidated(f"unsupported expression {op.name}: {e}")
+
+
+def _fit(x: tuple, width: int, e) -> tuple:
+    """An operand wider than its operation keeps its low bits; a narrower one is not modelled."""
+    have = _width(x)
+    if have == width:
+        return x
+    if have > width:
+        return ("bits", x, 0, width)
+    raise Unvalidated(f"{have}-bit operand in a {width}-bit operation: {e}")
 
 
 def _read(var, offset: int, width: int, env, params) -> tuple:
@@ -98,11 +126,24 @@ def _read(var, offset: int, width: int, env, params) -> tuple:
         if offset * 8 + width > _width(value):
             raise Unvalidated(f"read of {var.name} beyond its assigned value")
         return ("bits", value, offset * 8, width)
+    if offset * 8 + width > PARAM_BITS:
+        raise Unvalidated(f"read of {var.name} beyond {PARAM_BITS} bits")
     if var.identifier in params:
-        if offset * 8 + width > PARAM_BITS:
-            raise Unvalidated(f"read of {var.name} beyond {PARAM_BITS} bits")
         return ("bits", ("param", var.name), offset * 8, width)
-    raise Unvalidated(f"read of unassigned variable {var.name}")
+    # Read before any assignment (an uninitialized register, e.g. int64_t var_8 = rax at -O0): an
+    # unknown value. The reference never uses it, so a result that depends on it is a mismatch.
+    return ("bits", ("param", f"?{var.name}"), offset * 8, width)
+
+
+def _merge(old: tuple, value: tuple, offset_bits: int) -> tuple:
+    width, value_width = _width(old), _width(value)
+    if offset_bits + value_width > width:
+        raise Unvalidated("partial assignment beyond the variable")
+    keep = ("const", ~(((1 << value_width) - 1) << offset_bits) & _mask(width), width)
+    placed = ("op", "zx", width, value) if value_width < width else value
+    if offset_bits:
+        placed = ("op", "shl", width, placed, ("const", offset_bits, width))
+    return ("op", "or", width, ("op", "and", width, old, keep), placed)
 
 
 def _width(x: tuple) -> int:

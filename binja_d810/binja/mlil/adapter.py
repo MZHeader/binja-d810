@@ -74,6 +74,11 @@ class MLILAdapter:
                 key = _key(instr.dest)
                 pure[key] = [_key(v) for v in _ssa_vars(instr.src)]
                 index_of[key] = instr.non_ssa_form.instr_index
+            elif instr.operation == Op.MLIL_SET_VAR_SSA_FIELD and _pure(instr.src):
+                # A partial write (var_8:5.b = x ^ y at -O0) reads the previous version as well.
+                key = _key(instr.dest)
+                pure[key] = [_key(instr.prev)] + [_key(v) for v in _ssa_vars(instr.src)]
+                index_of[key] = instr.non_ssa_form.instr_index
             else:
                 roots.extend(_key(v) for v in _ssa_vars(instr))
         return {index_of[key] for key in dead_definitions(pure, roots)}

@@ -1,6 +1,10 @@
 // Ordinary code that must produce zero rewrites.
 #include <stdint.h>
+#ifdef _WIN32
+#define EXPORT __declspec(dllexport) __attribute__((noinline, used))
+#else
 #define EXPORT __attribute__((noinline, used, visibility("default")))
+#endif
 
 EXPORT uint32_t reg_crc32_step(uint32_t crc, uint32_t byte) {
     crc ^= byte;

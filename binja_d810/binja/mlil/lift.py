@@ -14,9 +14,9 @@ from typing import Iterator, Optional
 
 from binaryninja import MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable, VariableSourceType
 
-from ...ir.expr import BinOp, Const, Expr, UnOp, Var, substitute, variables
+from ...ir.expr import BinOp, Const, Expr, UnOp, Var, variables
 from ..effects import mlil_effect
-from ..storage import contained, field_read, merge_partial_write
+from ..storage import contained, field_read, fit, merge_partial_write, read_over_write
 
 _BINARY = {Op.MLIL_ADD: "add", Op.MLIL_SUB: "sub", Op.MLIL_MUL: "mul", Op.MLIL_AND: "and",
            Op.MLIL_OR: "or", Op.MLIL_XOR: "xor", Op.MLIL_LSL: "shl", Op.MLIL_LSR: "lshr", Op.MLIL_ASR: "ashr"}
@@ -110,6 +110,11 @@ class _Lifter:
             right = self.expr(e.right, inlined=inlined)
             if left is None or right is None:
                 return None
+            if _BINARY[op] not in ("shl", "lshr", "ashr"):
+                # HLIL folds lea into x * 5 with an 8-byte constant under a 4-byte multiply.
+                left, right = fit(left, width), fit(right, width)
+                if left is None or right is None:
+                    return None
             try:
                 return BinOp(_BINARY[op], left, right, width)
             except ValueError:
@@ -139,7 +144,8 @@ class _Lifter:
             self.budget = saved
         if not self.live(ssa_var):
             return None  # overwritten before the root and not rebuildable from live values
-        return Var(self.name(("var", ssa_var.var.identifier, ssa_var.version), f"{ssa_var.var.name}#{ssa_var.version}"),
+        # One IR name per (variable, version, width): the verifier keys samples and Z3 symbols by name.
+        return Var(self.name(("var", ssa_var.var.identifier, ssa_var.version, width), f"{ssa_var.var.name}#{ssa_var.version}"),
                    width, ref=ssa_var)
 
     def definition(self, definition, ssa_var: SSAVariable, width: int) -> Optional[Expr]:
@@ -162,6 +168,20 @@ class _Lifter:
     def field(self, ssa_var: SSAVariable, offset: int, width: int) -> Optional[Expr]:
         """A read of `width` bits at byte `offset` of a variable's storage (spec section 6.1)."""
         declared = _declared_bits(ssa_var.var)
+        definition = self.ssa.get_ssa_var_definition(ssa_var)
+        if definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA_FIELD and self.budget > 0:
+            # Read over a partial write: x86 -O0 spills bytes into one slot (var_8:7.b = y; ...).
+            kind = read_over_write(offset, width // 8, definition.offset, definition.src.size)
+            saved = self.budget
+            if kind == "inside":
+                value = self.expr(definition.src, inlined=True)
+                if value is not None:
+                    return field_read(value, 8 * (offset - definition.offset), width)
+            elif kind == "disjoint":
+                found = self.field(definition.prev, offset, width)
+                if found is not None:
+                    return found
+            self.budget = saved
         if declared and contained(offset, width // 8, declared // 8):
             # Within the variable itself: its definition, if any, gives every bit.
             definition = self.ssa.get_ssa_var_definition(ssa_var)
@@ -171,10 +191,29 @@ class _Lifter:
                 if whole is not None:
                     return field_read(whole, 8 * offset, width)
                 self.budget = saved
-        backing = self.backing(ssa_var)
+        backing = self.backing(self.forward(ssa_var, offset, width // 8))
         if backing is None or not contained(offset, width // 8, backing.width // 8):
             return None
         return field_read(backing, 8 * offset, width)
+
+    def forward(self, ssa_var: SSAVariable, offset: int, size: int) -> SSAVariable:
+        """The current version of the variable, if no partial write since `ssa_var` touched these
+        bytes: Windows x64 -O0 spills x to var_8:6.b and then reuses rcx, so x#0 is dead at the
+        root while var_8's current version still holds the byte."""
+        if not self.check:
+            return ssa_var
+        current = self.root.get_ssa_var_version(ssa_var.var)
+        version = current
+        for _ in range(64):
+            if version == ssa_var.version:
+                return SSAVariable(ssa_var.var, current)
+            definition = self.ssa.get_ssa_var_definition(SSAVariable(ssa_var.var, version))
+            if (definition is None or definition.operation != Op.MLIL_SET_VAR_SSA_FIELD
+                    or definition.prev.var != ssa_var.var
+                    or read_over_write(offset, size, definition.offset, definition.src.size) != "disjoint"):
+                return ssa_var
+            version = definition.prev.version
+        return ssa_var
 
     def backing(self, ssa_var: SSAVariable) -> Optional[Var]:
         var = ssa_var.var
@@ -191,17 +230,24 @@ class _Lifter:
     def relate(self, e: Expr) -> Expr:
         """Express plain reads of a storage version that also has field reads through its backing
         value, so x and x.w0 are known to share their low byte."""
-        if not self.backings:
-            return e
-        mapping = {}
+        groups: dict[tuple, list[Var]] = {}
         for leaf in variables(e):
-            if not isinstance(leaf.ref, SSAVariable):
+            if isinstance(leaf.ref, SSAVariable):
+                key = (int(leaf.ref.var.source_type), leaf.ref.var.storage, leaf.ref.version)
+                groups.setdefault(key, []).append(leaf)
+        mapping = {}
+        for key, leaves in groups.items():
+            # A version also read through fields, or read at two widths (x as 32 and 64 bits):
+            # the reads share their low bits, and an IR variable has a single width.
+            if key not in self.backings and len({leaf.width for leaf in leaves}) < 2:
                 continue
-            key = (int(leaf.ref.var.source_type), leaf.ref.var.storage, leaf.ref.version)
-            backing = self.backings.get(key)
-            if backing is not None and leaf.width <= backing.width:
-                mapping[leaf.name] = field_read(backing, 0, leaf.width)
-        return substitute(e, mapping) if mapping else e
+            backing = self.backing(leaves[0].ref)
+            if backing is None:
+                continue
+            for leaf in leaves:
+                if leaf.width <= backing.width:
+                    mapping[(leaf.name, leaf.width)] = field_read(backing, 0, leaf.width)
+        return _substitute_leaves(e, mapping) if mapping else e
 
     def live(self, ssa_var: SSAVariable) -> bool:
         return not self.check or self.root.get_ssa_var_version(ssa_var.var) == ssa_var.version
@@ -214,6 +260,17 @@ class _Lifter:
                 name += "'"
             self.names[identity] = name
         return self.names[identity]
+
+
+def _substitute_leaves(e: Expr, mapping: dict[tuple[str, int], Expr]) -> Expr:
+    """Like ir.expr.substitute, keyed by (name, width): one name may be read at two widths."""
+    if isinstance(e, Var):
+        return mapping.get((e.name, e.width), e)
+    if isinstance(e, Const):
+        return e
+    if isinstance(e, UnOp):
+        return UnOp(e.op, _substitute_leaves(e.operand, mapping), e.width)
+    return BinOp(e.op, _substitute_leaves(e.left, mapping), _substitute_leaves(e.right, mapping), e.width)
 
 
 def _declared_bits(var) -> int:

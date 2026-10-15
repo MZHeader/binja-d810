@@ -61,3 +61,27 @@ def as_field(e: Expr) -> Optional[tuple[Var, int, int]]:
         if isinstance(inner, Var) and offset % 8 == 0 and offset + e.width <= inner.width:
             return inner, offset, e.width
     return None
+
+
+def read_over_write(read_offset: int, read_size: int, write_offset: int, write_size: int) -> str:
+    """How a read of bytes relates to the last partial write before it: "inside" (the written value
+    alone determines it), "disjoint" (the previous version alone does) or "partial" (both)."""
+    if write_offset <= read_offset and read_offset + read_size <= write_offset + write_size:
+        return "inside"
+    if read_offset + read_size <= write_offset or read_offset >= write_offset + write_size:
+        return "disjoint"
+    return "partial"
+
+
+def fit(e: Expr, width: int) -> Optional[Expr]:
+    """An operand of a `width`-bit +, -, *, &, | or ^ whose IL size differs from the operation's.
+
+    Wider: its low bits, exactly (those operations never look at higher bits). Narrower: None,
+    since the extension is not stated by the IL and is never guessed."""
+    if e.width == width:
+        return e
+    if e.width < width:
+        return None
+    if isinstance(e, Const):
+        return Const(e.value, width)
+    return UnOp("trunc", e, width)

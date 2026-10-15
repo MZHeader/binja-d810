@@ -18,11 +18,11 @@ def manifest() -> list[dict]:
     return json.loads((BUILD / "manifest.json").read_text())
 
 
-def open_sample(file_name: str, *, d810: bool):
+def open_sample(file_name: str, *, d810: bool, options: dict | None = None):
     path = BUILD / file_name
     if not path.exists():
         pytest.fail(f"{path} is missing; run tests/samples/build.sh")
-    return binaryninja.load(str(path), options={workflow.ACTIVITY_SETTING: d810})
+    return binaryninja.load(str(path), options={workflow.ACTIVITY_SETTING: d810, **(options or {})})
 
 
 def function_named(bv, name: str):

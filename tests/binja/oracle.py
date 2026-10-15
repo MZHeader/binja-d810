@@ -1,0 +1,316 @@
+"""Independent final-IL oracle (spec section 11): what does the function's final HLIL compute?
+
+This module imports nothing from binja_d810. It reads the final HLIL of a straight-line function,
+follows its assignments, and builds the returned value as an expression over the parameters with
+its own evaluator and its own Z3 encoding; the reference answer is parsed with Python's `ast`.
+
+Parameters are modelled as 64-bit values whose upper bits are unknown: a read of a narrow
+parameter, or a field read of it (`x.d`), takes the corresponding bits. A final HLIL that depends
+on bits the reference does not use is therefore reported as a mismatch, never assumed away.
+
+Shift counts follow Binary Ninja's IL as measured with its own dataflow (count modulo
+max(32, width); tests/binja/test_shift_reference.py).
+"""
+
+from __future__ import annotations
+
+import ast
+import itertools
+import random
+from dataclasses import dataclass
+from typing import Optional
+
+from binaryninja import HighLevelILOperation as H
+
+PARAM_BITS = 64
+_BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: "and", H.HLIL_OR: "or",
+           H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr"}
+_UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx", H.HLIL_LOW_PART: "low"}
+_SKIP = {H.HLIL_NOP, H.HLIL_VAR_DECLARE}
+
+
+class Unvalidated(Exception):
+    """The final HLIL uses something the oracle does not model."""
+
+
+# Oracle expressions are tuples: ("param", name) is a 64-bit parameter; ("const", value, width);
+# ("bits", expr, offset_bits, width); ("op", name, width, *args).
+
+def function_result(func) -> tuple:
+    """The value the function returns, as an oracle expression. Raises Unvalidated."""
+    hlil = func.hlil
+    if hlil is None:
+        raise Unvalidated("no HLIL")
+    params = {v.identifier for v in func.parameter_vars}
+    env: dict[int, tuple] = {}
+    result = None
+    for statement in _statements(hlil.root):
+        op = statement.operation
+        if op in _SKIP:
+            continue
+        if result is not None:
+            raise Unvalidated(f"statement after return: {statement}")
+        if op == H.HLIL_VAR_INIT:
+            env[statement.dest.identifier] = _expr(statement.src, env, params)
+        elif op == H.HLIL_ASSIGN and statement.dest.operation == H.HLIL_VAR:
+            env[statement.dest.var.identifier] = _expr(statement.src, env, params)
+        elif op == H.HLIL_RET and len(statement.src) == 1:
+            result = _expr(statement.src[0], env, params)
+        else:
+            raise Unvalidated(f"unsupported statement {op.name}: {statement}")
+    if result is None:
+        raise Unvalidated("no return value")
+    return result
+
+
+def _statements(node):
+    if node.operation == H.HLIL_BLOCK:
+        for item in node.body:
+            yield from _statements(item)
+    elif node.operation in (H.HLIL_IF, H.HLIL_WHILE, H.HLIL_DO_WHILE, H.HLIL_FOR, H.HLIL_SWITCH):
+        raise Unvalidated(f"control flow: {node.operation.name}")
+    else:
+        yield node
+
+
+def _expr(e, env, params) -> tuple:
+    op, width = e.operation, e.size * 8
+    if op in (H.HLIL_CONST, H.HLIL_CONST_PTR):
+        return ("const", e.constant & ((1 << width) - 1), width)
+    if op == H.HLIL_VAR:
+        return _read(e.var, 0, width, env, params)
+    if op == H.HLIL_STRUCT_FIELD and e.src.operation == H.HLIL_VAR and e.member_index is None:
+        return _read(e.src.var, e.offset, width, env, params)
+    if op in _BINARY:
+        return ("op", _BINARY[op], width, _expr(e.left, env, params), _expr(e.right, env, params))
+    if op in _UNARY:
+        return ("op", _UNARY[op], width, _expr(e.src, env, params))
+    if op == H.HLIL_SPLIT:
+        return ("op", "concat", width, _expr(e.high, env, params), _expr(e.low, env, params))
+    raise Unvalidated(f"unsupported expression {op.name}: {e}")
+
+
+def _read(var, offset: int, width: int, env, params) -> tuple:
+    if var.identifier in env:
+        value = env[var.identifier]
+        if offset == 0 and width == _width(value):
+            return value
+        if offset * 8 + width > _width(value):
+            raise Unvalidated(f"read of {var.name} beyond its assigned value")
+        return ("bits", value, offset * 8, width)
+    if var.identifier in params:
+        if offset * 8 + width > PARAM_BITS:
+            raise Unvalidated(f"read of {var.name} beyond {PARAM_BITS} bits")
+        return ("bits", ("param", var.name), offset * 8, width)
+    raise Unvalidated(f"read of unassigned variable {var.name}")
+
+
+def _width(x: tuple) -> int:
+    kind = x[0]
+    if kind == "param":
+        return PARAM_BITS
+    if kind == "const":
+        return x[2]
+    if kind == "bits":
+        return x[3]
+    return x[2]
+
+
+def _mask(width: int) -> int:
+    return (1 << width) - 1
+
+
+def _signed(value: int, width: int) -> int:
+    value &= _mask(width)
+    return value - (1 << width) if value >> (width - 1) else value
+
+
+def evaluate(x: tuple, env: dict[str, int]) -> int:
+    kind = x[0]
+    if kind == "param":
+        return env[x[1]] & _mask(PARAM_BITS)
+    if kind == "const":
+        return x[1]
+    if kind == "bits":
+        return (evaluate(x[1], env) >> x[2]) & _mask(x[3])
+    _, name, width, *args = x
+    m = _mask(width)
+    vals = [evaluate(a, env) for a in args]
+    if name == "neg":
+        return -vals[0] & m
+    if name == "not":
+        return ~vals[0] & m
+    if name == "zx":
+        return vals[0] & m
+    if name == "sx":
+        return _signed(vals[0], _width(args[0])) & m
+    if name == "low":
+        return vals[0] & m
+    if name == "concat":
+        return ((vals[0] << _width(args[1])) | vals[1]) & m
+    a, b = vals
+    if name in ("shl", "lshr", "ashr"):
+        count = b % max(32, width)
+        if name == "shl":
+            return (a << count) & m
+        if name == "lshr":
+            return a >> count
+        return (_signed(a, width) >> count) & m
+    return {"add": a + b, "sub": a - b, "mul": a * b, "and": a & b, "or": a | b, "xor": a ^ b}[name] & m
+
+
+def to_z3(x: tuple, symbols: dict):
+    import z3
+
+    kind = x[0]
+    if kind == "param":
+        return symbols[x[1]]
+    if kind == "const":
+        return z3.BitVecVal(x[1], x[2])
+    if kind == "bits":
+        inner = to_z3(x[1], symbols)
+        return z3.Extract(x[2] + x[3] - 1, x[2], inner)
+    _, name, width, *args = x
+    vals = [to_z3(a, symbols) for a in args]
+    if name == "neg":
+        return -vals[0]
+    if name == "not":
+        return ~vals[0]
+    if name in ("zx", "sx", "low"):
+        inner_width = vals[0].size()
+        if name == "low" or inner_width >= width:
+            return z3.Extract(width - 1, 0, vals[0]) if inner_width > width else vals[0]
+        return (z3.ZeroExt if name == "zx" else z3.SignExt)(width - inner_width, vals[0])
+    if name == "concat":
+        return z3.Concat(vals[0], vals[1])
+    a, b = vals
+    if name in ("shl", "lshr", "ashr"):
+        bw = b.size()
+        b = b & z3.BitVecVal(max(32, width) - 1, bw)
+        b = z3.ZeroExt(width - bw, b) if bw < width else z3.Extract(width - 1, 0, b) if bw > width else b
+        return a << b if name == "shl" else z3.LShR(a, b) if name == "lshr" else a >> b
+    return {"add": a + b, "sub": a - b, "mul": a * b, "and": a & b, "or": a | b, "xor": a ^ b}[name]
+
+
+def reference(text: str, width: int) -> tuple:
+    """Parse a C-like reference answer (+ - * & | ^ ~ << >> and parentheses) with Python's ast.
+    Every name is a parameter read at `width` bits."""
+    def build(node) -> tuple:
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return ("const", node.value & _mask(width), width)
+        if isinstance(node, ast.Name):
+            return ("bits", ("param", node.id), 0, width)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.Invert)):
+            return ("op", "neg" if isinstance(node.op, ast.USub) else "not", width, build(node.operand))
+        if isinstance(node, ast.BinOp):
+            names = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.BitAnd: "and", ast.BitOr: "or",
+                     ast.BitXor: "xor", ast.LShift: "shl", ast.RShift: "lshr"}
+            if type(node.op) in names:
+                return ("op", names[type(node.op)], width, build(node.left), build(node.right))
+        raise ValueError(f"unsupported reference syntax: {ast.dump(node)}")
+    return build(ast.parse(text, mode="eval").body)
+
+
+def params_of(*xs: tuple) -> list[str]:
+    found: set[str] = set()
+    stack = list(xs)
+    while stack:
+        x = stack.pop()
+        if x[0] == "param":
+            found.add(x[1])
+        elif x[0] == "bits":
+            stack.append(x[1])
+        elif x[0] == "op":
+            stack.extend(x[3:])
+    return sorted(found)
+
+
+def used_bits(x: tuple) -> dict[str, int]:
+    """Highest bit (exclusive) read of each parameter."""
+    out: dict[str, int] = {}
+    stack = [x]
+    while stack:
+        item = stack.pop()
+        if item[0] == "bits" and item[1][0] == "param":
+            out[item[1][1]] = max(out.get(item[1][1], 0), item[2] + item[3])
+        elif item[0] == "bits":
+            stack.append(item[1])
+        elif item[0] == "op":
+            stack.extend(item[3:])
+        elif item[0] == "param":
+            out[item[1]] = PARAM_BITS
+    return out
+
+
+@dataclass(frozen=True)
+class OracleResult:
+    kind: str  # "proven", "exhaustive", "sampled", "mismatch"
+    detail: str = ""
+
+
+def compare(final: tuple, expected: tuple, width: int, *, z3_timeout_ms: int = 2000, samples: int = 2000,
+            seed: int = 0) -> OracleResult:
+    """Compare the low `width` bits of the final value with the reference."""
+    final = ("bits", final, 0, width) if _width(final) != width else final
+    names = params_of(final, expected)
+    bits = {**used_bits(final)}
+    for name, top in used_bits(expected).items():
+        bits[name] = max(bits.get(name, 0), top)
+    total = sum(bits.get(n, 0) for n in names)
+    if total <= 16:
+        for values in itertools.product(*(range(1 << bits.get(n, 0)) for n in names)):
+            env = dict(zip(names, values))
+            if evaluate(final, env) != evaluate(expected, env):
+                return OracleResult("mismatch", f"at {env}")
+        return OracleResult("exhaustive")
+    rng = random.Random(seed)
+    for _ in range(samples):
+        env = {n: rng.getrandbits(PARAM_BITS) for n in names}
+        if evaluate(final, env) != evaluate(expected, env):
+            return OracleResult("mismatch", f"at {env}")
+    try:
+        import z3
+    except ImportError:
+        return OracleResult("sampled", "z3 unavailable")
+    symbols = {n: z3.BitVec(n, PARAM_BITS) for n in names}
+    solver = z3.Solver()
+    solver.set("timeout", z3_timeout_ms)
+    solver.add(to_z3(final, symbols) != to_z3(expected, symbols))
+    verdict = solver.check()
+    if verdict == z3.unsat:
+        return OracleResult("proven")
+    if verdict == z3.sat:
+        return OracleResult("mismatch", f"z3 model {solver.model()}")
+    return OracleResult("sampled", f"z3 {solver.reason_unknown()}")
+
+
+def mutations(x: tuple) -> list[tuple]:
+    """Single-point corruptions of an oracle expression: each constant + 1, and each binary op's
+    operands swapped (for non-commutative ops) or replaced by its left operand."""
+    out: list[tuple] = []
+
+    def rebuild(node: tuple, path: list[int], replacement: tuple) -> tuple:
+        if not path:
+            return replacement
+        head, rest = path[0], path[1:]
+        items = list(node)
+        items[head] = rebuild(node[head], rest, replacement)
+        return tuple(items)
+
+    def visit(node: tuple, path: list[int]) -> None:
+        kind = node[0]
+        if kind == "const":
+            out.append(rebuild(x, path, ("const", (node[1] + 1) & _mask(node[2]), node[2])))
+        elif kind == "bits":
+            visit(node[1], path + [1])
+        elif kind == "op":
+            name, args = node[1], node[3:]
+            if len(args) == 2:
+                out.append(rebuild(x, path, args[0] if _width(args[0]) == node[2] else node))
+                if name in ("sub", "shl", "lshr", "ashr"):
+                    out.append(rebuild(x, path, ("op", name, node[2], args[1], args[0])))
+            for i, arg in enumerate(args):
+                visit(arg, path + [3 + i])
+
+    visit(x, [])
+    return [m for m in out if m != x]

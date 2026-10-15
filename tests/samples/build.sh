@@ -10,6 +10,7 @@ for opt in O0 O2; do
   clang -arch arm64 "-$opt" -shared -o "$OUT/regression_$opt.dylib" "$HERE/src/regression.c"
   clang -arch arm64 "-$opt" -shared -o "$OUT/safety_$opt.dylib" "$HERE/src/safety.c"
   clang -arch arm64 "-$opt" -shared -o "$OUT/effects_$opt.dylib" "$HERE/src/effects.c"
+  clang -arch arm64 "-$opt" -shared -o "$OUT/hlil_fixtures_$opt.dylib" "$HERE/src/hlil_fixtures.c"
 done
 # Shift-boundary fixtures (spec section 6.5), as exact assembly.
 clang -target x86_64-linux-gnu -c "$HERE/src/shifts_x86_64.S" -o "$OUT/shifts_x86_64.o"

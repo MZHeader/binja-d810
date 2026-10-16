@@ -48,10 +48,16 @@ class Allowance:
 
 
 class Ledger:
-    def __init__(self, capacity: int = 4096):
+    def __init__(self, capacity: int = 4096, keep: int = 256):
         self.lock = threading.Lock()
         self._entries: "OrderedDict[Hashable, _Entry]" = OrderedDict()
         self._capacity = capacity
+        # Only the most recent entries hold their IL object: the token must stay unique between a
+        # function's MLIL and HLIL passes, but thousands of held IL objects kept closed binaries'
+        # analysis in memory. An older entry forgets its generation, so a later HLIL pass of it
+        # starts a fresh allowance (never inherits a reused address).
+        self._keep = keep
+        self._kept: "OrderedDict[Hashable, None]" = OrderedDict()
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -66,6 +72,13 @@ class Ledger:
             self._entries.move_to_end(key)
             while len(self._entries) > self._capacity:
                 self._entries.popitem(last=False)
+            self._kept[key] = None
+            self._kept.move_to_end(key)
+            while len(self._kept) > self._keep:
+                old, _ = self._kept.popitem(last=False)
+                stale = self._entries.get(old)
+                if stale is not None:
+                    stale.keepalive, stale.generation = None, -1
         return Allowance(self, entry, level, inherited and level == "hlil")
 
 

@@ -156,3 +156,24 @@ def test_allowance_stays_inside_binary_ninjas_own_analysis_limit():
     assert plugin_allowance(5, 20_000) == 5
     assert plugin_allowance(60, 20_000) == 10
     assert plugin_allowance(60, 0) == 60  # 0: Binary Ninja imposes no limit
+
+
+def test_the_ledger_keeps_only_recent_il_objects_alive():
+    # The keepalive guards a generation token (an IL object's address) between a function's MLIL
+    # and HLIL passes; holding thousands of IL objects kept closed binaries' analysis in memory.
+    import gc
+    import weakref
+
+    class IL:
+        pass
+
+    ledger = Ledger(capacity=4096)
+    refs = []
+    for i in range(1000):
+        il = IL()
+        refs.append(weakref.ref(il))
+        ledger.begin(("view", i), "mlil", generation=id(il), keepalive=il, allowance=1.0)
+        del il
+    gc.collect()
+    alive = sum(1 for r in refs if r() is not None)
+    assert alive <= 256 and refs[-1]() is not None

@@ -5,6 +5,7 @@ from binja_d810.ir.normalize import normalize
 from binja_d810.ir.parse import parse
 from binja_d810.rules.d810_adapter import D810Rule
 from binja_d810.rules.instantiate import instantiate
+from binja_d810.rules.prove import solve_constants
 from binja_d810.rules.registry import instance, load_rules
 from binja_d810.semantic.verify import Verdict, check_equivalent
 
@@ -59,11 +60,19 @@ def test_rule_matches_its_own_instantiated_pattern(name):
         pytest.xfail(SELF_MATCH_XFAIL[name])
     rule = RULES[name]
     width = 32 if 32 in rule.widths else max(rule.widths)
+    constants = None
     raw = instantiate(rule.pattern, width)
-    if raw is None:
-        pytest.skip("pattern needs constants satisfying its constraints")
+    if raw is None:  # symbolic constants: solve the rule's constraints for them (v2.1)
+        def matches(values):
+            candidate = instantiate(rule.pattern, width, constants=values)
+            return candidate is not None and rule.match(normalize(candidate)) is not None
+
+        constants = solve_constants(instance(name), width, accept=matches)
+        assert constants is not None, f"{name}: no constants satisfy its constraints at {width} bits"
+        raw = instantiate(rule.pattern, width, constants=constants)
+        assert raw is not None, f"{name}: pattern still has unsupported leaves"
     target = normalize(raw)
-    expected = instantiate(rule.replacement, width)
+    expected = instantiate(rule.replacement, width, constants=constants)
     if expected is not None and node_count(target) <= node_count(normalize(expected)):
         pytest.skip("normalize() already simplifies this pattern")
     rw = rule.match(target)

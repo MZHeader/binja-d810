@@ -19,7 +19,9 @@ from binja_d810.ir.expr import BinOp, Const, Expr, UnOp, Var, is_mba, ops, subst
 from binja_d810.ir.normalize import normalize  # noqa: E402
 from binja_d810.ir.parse import parse  # noqa: E402
 from binja_d810.rules.instantiate import instantiate  # noqa: E402
+from binja_d810.rules.prove import solve_constants  # noqa: E402
 from binja_d810.rules.registry import load_rules  # noqa: E402
+from binja_d810.third_party.d810.mba.rules import VerifiableRule  # noqa: E402
 from binja_d810.semantic.verify import Verdict, check_equivalent  # noqa: E402
 
 SEED = 1810
@@ -77,10 +79,20 @@ def _c_ok(e: Expr) -> bool:
 def generate() -> list[Sample]:
     rng = random.Random(SEED)
     samples: list[Sample] = []
+    instances = {type(r).__name__: r for r in VerifiableRule.instantiate_all()}
     for rule in load_rules():
         if 32 not in rule.widths:
             continue
         obf, repl = instantiate(rule.pattern, 32), instantiate(rule.replacement, 32)
+        if obf is None:  # symbolic constants: values that satisfy the rule's constraints (v2.1)
+            def matches(values, rule=rule):
+                candidate = instantiate(rule.pattern, 32, constants=values)
+                return candidate is not None and rule.match(normalize(candidate)) is not None
+
+            constants = solve_constants(instances[rule.name], 32, accept=matches)
+            if constants is not None:
+                obf = instantiate(rule.pattern, 32, constants=constants)
+                repl = instantiate(rule.replacement, 32, constants=constants)
         if obf is None or repl is None or not _c_ok(obf) or not is_mba(normalize(obf)):
             continue
         if is_mba(normalize(repl)):  # rule output is still MBA: not a deobfuscation sample

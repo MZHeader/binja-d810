@@ -65,3 +65,34 @@ def test_a_wrong_identity_is_refuted():
     Wrong.CONSTRAINTS = rule.CONSTRAINTS
     Wrong.get_constraints = lambda self, z3_vars: []
     assert prove_rule(Wrong(), 32).startswith("refuted")
+
+
+# --- constraint-satisfying instances (v2.1 Task 3) ------------------------------------------
+
+from binja_d810.ir.expr import Const as IRConst, walk  # noqa: E402
+from binja_d810.rules.instantiate import instantiate  # noqa: E402
+from binja_d810.rules.prove import solve_constants  # noqa: E402
+
+
+def test_constants_are_solved_from_the_constraints():
+    rule = instance("CstSimplificationRule7")  # (x & c_1) >> c_2 => (x >> c_2) & c_res, c_res == c_1 >> c_2
+    constants = solve_constants(rule, 32)
+    assert constants is not None and constants["c_res"] == constants["c_1"] >> constants["c_2"]
+    assert constants["c_2"] < 32
+    e = instantiate(rule.pattern, 32, constants=constants)
+    assert e is not None and any(isinstance(n, IRConst) for n in walk(e))
+
+
+def test_unsatisfiable_constraints_give_none():
+    class Impossible:
+        pattern = instance("Add_OllvmRule_4").pattern
+        replacement = instance("Add_OllvmRule_4").replacement
+        from binja_d810.third_party.d810.mba.dsl import Const as DslConst
+
+        c = DslConst("c")
+        CONSTRAINTS = [c == 1, c == 2]
+
+        def get_constraints(self, z3_vars):
+            return []
+
+    assert solve_constants(Impossible(), 32) is None

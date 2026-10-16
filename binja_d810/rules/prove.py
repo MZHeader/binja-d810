@@ -27,6 +27,79 @@ def prove_rule(rule: Any, width: int, *, timeout_ms: int = 60_000, tactic: str |
     """"proven", "refuted: <model>" or "unresolved: <reason>"."""
     import z3
 
+    built = _build(rule, width)
+    if isinstance(built, str):
+        return built
+    lhs, rhs, facts, _ = built
+    solver = (z3.Then("simplify", "bit-blast", "sat").solver() if tactic == "bitblast" else z3.Solver())
+    solver.set("timeout", timeout_ms)
+    solver.add(*facts)
+    solver.add(lhs != rhs)
+    result = solver.check()
+    if result == z3.unsat:
+        return "proven"
+    if result == z3.sat:
+        model = solver.model()
+        shown = {str(d): model[d].as_long() for d in model.decls() if hasattr(model[d], "as_long")}
+        return f"refuted: {shown}"
+    return f"unresolved: {solver.reason_unknown()}"
+
+
+def solve_constants(rule: Any, width: int, *, timeout_ms: int = 10_000, accept=None,
+                    attempts: int = 32) -> dict[str, int] | None:
+    """Values for the rule's pattern constants (and constants its constraints define) that satisfy
+    its declarative constraints at `width`, preferring values other than 0 and all-ones so the
+    instance is not folded away by normalization. Non-declarative constraints (Python lambdas)
+    cannot be solved for: `accept(constants)` checks each candidate (e.g. by matching the rule) and
+    further models are tried. None if no accepted values were found."""
+    import z3
+
+    built = _build(rule, width, declarative_only=True)
+    if isinstance(built, str):
+        return None
+    _, _, facts, z3_vars = built
+    constants = [name for name in z3_vars if name in _pattern_constant_names(rule)]
+    solver = z3.Solver()
+    solver.set("timeout", timeout_ms)
+    solver.add(*facts)
+    solver.push()
+    for name in constants:
+        solver.add(z3_vars[name] != 0, z3_vars[name] != (1 << width) - 1)
+    if solver.check() != z3.sat:
+        solver.pop()
+    for _ in range(attempts):
+        if solver.check() != z3.sat:
+            return None
+        model = solver.model()
+        values = {name: model.eval(z3_vars[name], model_completion=True).as_long() for name in constants}
+        if accept is None or accept(values):
+            return values
+        solver.add(z3.Or([z3_vars[name] != value for name, value in values.items()]))
+    return None
+
+
+def _pattern_constant_names(rule: Any) -> set[str]:
+    names: set[str] = set()
+    for side in (rule.pattern, rule.replacement):
+        stack = [side]
+        while stack:
+            node = stack.pop()
+            if node is None:
+                continue
+            if getattr(node, "operation", 1) is None and getattr(node, "is_pattern_constant", False):
+                names.add(node.name)
+            if type(node).__name__ == "DynamicConst":
+                names.add(node.name)
+            stack.extend([getattr(node, "left", None), getattr(node, "right", None)])
+    names |= set(getattr(rule, "DYNAMIC_CONSTS", None) or {})
+    return names
+
+
+def _build(rule: Any, width: int, *, declarative_only: bool = False):
+    """(pattern, replacement, facts, z3 variables) at `width`, or an "unresolved: ..." string.
+    `declarative_only` skips constraints that are Python lambdas instead of giving up (solving)."""
+    import z3
+
     from ..third_party.d810.mba.backends.z3 import (
         Z3VerificationVisitor, _collect_constraint_names, _collect_symbolic_names,
     )
@@ -51,6 +124,8 @@ def prove_rule(rule: Any, width: int, *, timeout_ms: int = 60_000, tactic: str |
     facts = []
     for constraint in constraints:
         if not isinstance(constraint, ConstraintExpr):
+            if declarative_only:
+                continue
             return f"unresolved: constraint {constraint!r} is not declarative"
         try:
             facts.append(_constraint(constraint, visitor, z3))
@@ -71,19 +146,7 @@ def prove_rule(rule: Any, width: int, *, timeout_ms: int = 60_000, tactic: str |
         facts += _shift_guards(pattern, z3_vars, width, z3) + _shift_guards(replacement, z3_vars, width, z3)
     except Exception as exc:
         return f"unresolved: {type(exc).__name__}: {exc}"
-
-    solver = (z3.Then("simplify", "bit-blast", "sat").solver() if tactic == "bitblast" else z3.Solver())
-    solver.set("timeout", timeout_ms)
-    solver.add(*facts)
-    solver.add(lhs != rhs)
-    result = solver.check()
-    if result == z3.unsat:
-        return "proven"
-    if result == z3.sat:
-        model = solver.model()
-        shown = {str(d): model[d].as_long() for d in model.decls() if hasattr(model[d], "as_long")}
-        return f"refuted: {shown}"
-    return f"unresolved: {solver.reason_unknown()}"
+    return lhs, rhs, facts, z3_vars
 
 
 def _constraint(constraint, visitor, z3):

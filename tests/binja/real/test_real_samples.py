@@ -40,6 +40,31 @@ SETTINGS_RECORDED = (
 )
 
 
+SPOT_CHECKS = Path(__file__).with_name("spot_checks.local.toml")
+
+
+def _spot_addresses(sample: str) -> list[int]:
+    if not SPOT_CHECKS.exists():
+        return []
+    import tomllib
+
+    entry = tomllib.loads(SPOT_CHECKS.read_text()).get(sample, {})
+    return [int(a, 16) if isinstance(a, str) else int(a) for a in entry.get("functions", [])]
+
+
+def _hlil_text(func) -> list[str]:
+    return [] if func is None or func.hlil is None else [str(i) for i in func.hlil.instructions]
+
+
+def _write_spot(out_dir: Path, address: int, before: list[str], after: list[str], reports: dict, note: str = "") -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    lines = [f"function {address:#x}" + (f": {note}" if note else ""), "", "=== HLIL, plugin off ===", *before, "",
+             "=== HLIL, plugin on ===", *after, ""]
+    for level, report in reports.items():
+        lines += [f"=== {level} report ===", log.render(report), ""]
+    (out_dir / f"{address:#x}.txt").write_text("\n".join(lines))
+
+
 def _sample() -> Path:
     directory = os.environ.get("BINJA_D810_SAMPLES")
     name = os.environ.get("BINJA_D810_SAMPLE")
@@ -234,6 +259,8 @@ def test_sample():
         result["functions_skipped_by_core"] = sum(1 for f in funcs if f.analysis_skipped)
 
         before: dict[int, RootCounts] = {f.start: hlil_counts(f) for f in funcs}
+        spots = _spot_addresses(path.name)
+        spot_before = {a: _hlil_text(bv.get_function_at(a)) for a in spots}
         total_before = RootCounts()
         for counts in before.values():
             total_before.add(counts)
@@ -246,7 +273,8 @@ def test_sample():
         result["mlil_scan_s"] = round(time.perf_counter() - scan_start, 1)
 
         candidates = sorted({f.start for f in funcs if before[f.start].mba_roots} |
-                            {start for start, found in per_func.items() if found.get("mba_roots_unchecked")})
+                            {start for start, found in per_func.items() if found.get("mba_roots_unchecked")} |
+                            {a for a in spots if bv.get_function_at(a) is not None})
         result["candidate_functions"] = len(candidates)
         result["plugin_functions_truncated"] = len(candidates) > MAX_PLUGIN_FUNCTIONS
         candidates = candidates[:MAX_PLUGIN_FUNCTIONS]
@@ -295,6 +323,14 @@ def test_sample():
                                      "rewrites": sum(len(r.rewrites) for r in reports.values()),
                                      "exhausted": any(getattr(r, "budget_exhausted", False) for r in reports.values()),
                                      "plugin_s": round(sum(timer.seconds.get(address, [])), 4)})
+        spot_dir = OUT / "spot" / path.name
+        for address in spots:
+            func = bv.get_function_at(address)
+            if func is None:
+                _write_spot(spot_dir, address, [], [], {}, note="not a function start in this binary")
+                continue
+            _write_spot(spot_dir, address, spot_before.get(address, []), _hlil_text(func), _reports(func))
+        result["spot_checks"] = [hex(a) for a in spots]
         plugin_s = [sum(v) for k, v in timer.seconds.items() if k in set(candidates)]
         result["candidates_before"] = before_c.to_json()
         result["candidates_after"] = after_c.to_json()

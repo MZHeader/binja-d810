@@ -208,3 +208,72 @@ def test_linear_mba_over_nested_sums_is_fully_simplified():
            " + ((e ^ f) + 2 * (e & f)) + ((g ^ h) + 2 * (g & h)) - ((e | g) - (e & ~g))")
     out = simplify_expression(e, [], LINEAR, Limits(max_vars=4))
     assert out.rewrite is not None and not is_mba(out.rewrite.replacement), out
+
+
+def test_tier2_steps_are_proven_once_at_the_end(monkeypatch):
+    # Each accepted Tier 2 step is checked by sampling (and signatures) only: the final check of
+    # original against result is the proof, so Z3 runs once, not once per step.
+    from binja_d810.semantic import verify
+
+    calls = []
+    real = verify._z3_prove
+    monkeypatch.setattr(verify, "_z3_prove", lambda *a, **k: calls.append(1) or real(*a, **k))
+    e = ir("(((x + 1) ^ x) & 1) + y")  # y + 1: (x + 1) ^ x always has bit 0 set
+
+    class Oracle:
+        name = "oracle"
+
+        def simplify(self, node, deadline=None):
+            return normalize(ir("y + 1")) if node == normalize(e) else None
+
+    out = simplify_expression(e, [], [Oracle()])
+    assert out.rewrite is not None and out.rewrite.verdict is Verdict.PROVEN
+    assert len(calls) == 1
+
+
+def test_other_backends_are_not_asked_about_linear_mbas_the_linear_backend_could_not_shrink():
+    # The linear backend decides linear MBAs by their signature; on 102 such real-sample queries
+    # CoBRA never found anything smaller and spent 1.6 s.
+    called = []
+
+    class Spy:
+        name = "spy"
+
+        def simplify(self, e, deadline=None):
+            called.append(e)
+            return None
+
+    out = simplify_expression(ir("(a & b) + c"), [], [LinearMBABackend(), Spy()])
+    assert out.rewrite is None and called == []
+    simplify_expression(ir("(a * b) ^ (a + c)"), [], [LinearMBABackend(), Spy()])
+    assert called  # not a linear MBA: other backends still run
+
+
+def test_tier1_results_are_reused_through_a_shared_cache():
+    calls = []
+
+    class Counting:
+        name = "counting"
+
+        def match(self, e):
+            calls.append(e)
+            return None
+
+    cache: dict = {}
+    e = ir("(a ^ b) + 2 * (a & b)")
+    first = simplify_expression(e, [Counting()], LINEAR, tier1_cache=cache)
+    seen = len(calls)
+    second = simplify_expression(e, [Counting()], LINEAR, tier1_cache=cache)
+    assert seen > 0 and len(calls) == seen
+    assert first.rewrite.replacement == second.rewrite.replacement
+
+
+def test_cached_tier1_results_carry_the_references_of_the_expression_asked_about():
+    from binja_d810.ir.expr import substitute
+
+    old, new = object(), object()
+    cache: dict = {}
+    e = ir("(a | b) - (a & b)")
+    simplify_expression(substitute(e, {"a": Var("a", 32, ref=old)}), RULES, [], tier1_cache=cache)
+    out = simplify_expression(substitute(e, {"a": Var("a", 32, ref=new)}), RULES, [], tier1_cache=cache)
+    assert next(v for v in variables(out.rewrite.replacement) if v.name == "a").ref is new

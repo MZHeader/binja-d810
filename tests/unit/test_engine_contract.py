@@ -214,3 +214,25 @@ def test_an_unchanged_candidate_that_did_not_simplify_is_not_planned_again():
     report = simplify_function(adapter, [], [backend], EngineConfig())
     assert [r.address for r in report.rewrites] == [0x1000]
     assert backend.calls[stuck] == 1
+
+
+def test_cheap_backends_reach_every_candidate_before_slow_ones_spend_the_budget():
+    # tigress_vm: one function with 248 candidates. CoBRA's slow failures on the first candidates
+    # left no budget for later ones the linear backend answers in milliseconds.
+    import time
+
+    from binja_d810.deadline import Deadline
+
+    class Slow:
+        name = "slow"
+
+        def simplify(self, e, deadline=None):
+            time.sleep(0.2)
+            return None
+
+    roots = {"n1": p("(x * y) ^ (x + z)"), "n2": p("(y * z) ^ (y + x)")}
+    roots.update({f"l{i}": p(f"(x ^ {i}) + 2 * (x & {i})") for i in range(1, 4)})
+    adapter = FakeAdapter(roots)
+    report = simplify_function(adapter, [], [LinearMBABackend(), Slow()], EngineConfig(), Deadline.after(0.3))
+    assert {r for r, e in adapter.roots.items() if e != roots[r]} == {"l1", "l2", "l3"}
+    assert report.budget_exhausted

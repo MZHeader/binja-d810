@@ -54,7 +54,7 @@ Settings are under **Settings > D-810**. All of them can be set globally or per 
 |---|---|---|
 | `binja_d810.enabled` | on | Kill switch. When off, nothing is rewritten. |
 | `binja_d810.tier2` | on | Use CoBRA and the linear-MBA simplifier. |
-| `binja_d810.maxVariables` | 4 | Tier 2 skips subexpressions with more distinct variables. |
+| `binja_d810.maxVariables` | 4 | CoBRA skips subexpressions with more distinct variables. The linear simplifier counts atoms instead (sub-expressions it treats as opaque), up to 6. |
 | `binja_d810.maxNodes` | 200 | Larger expressions are skipped and logged as "too complex". |
 | `binja_d810.maxIterations` | 10 | Maximum rewrite passes per function. |
 | `binja_d810.disabledRules` | none | d810 rule names to skip. |

@@ -91,3 +91,42 @@ def test_arithmetic_operands_of_bitwise_operations_are_atoms():
     result = backend.simplify(e)
     assert result is not None and not is_mba(result)
     assert check_equivalent(e, result) is Verdict.PROVEN
+
+
+def test_answers_are_reused_for_identical_expressions(monkeypatch):
+    from binja_d810.semantic import linear_mba
+
+    calls = []
+    real = linear_mba.signature
+    monkeypatch.setattr(linear_mba, "signature", lambda *a: calls.append(1) or real(*a))
+    b = LinearMBABackend()
+    e = ir("(x ^ y) + 2 * (x & y)")
+    first = b.simplify(e)
+    seen = len(calls)
+    assert b.simplify(e) == first and len(calls) == seen
+
+
+def test_reused_answers_carry_the_references_of_the_expression_asked_about():
+    # Equal expressions (equality ignores refs) from another pass or function have other Binary
+    # Ninja references; lowering uses them, so a cached answer must be relinked.
+    from binja_d810.ir.expr import Var, substitute, variables
+
+    old, new = object(), object()
+    b = LinearMBABackend()
+    e = ir("(x ^ y) + 2 * (x & y)")
+    b.simplify(substitute(e, {"x": Var("x", 32, ref=old)}))
+    again = b.simplify(substitute(e, {"x": Var("x", 32, ref=new)}))
+    assert next(v for v in variables(again) if v.name == "x").ref is new
+
+
+def test_the_answer_cache_keeps_no_binary_ninja_references():
+    # The backend lives as long as the plugin; references in its cache kept closed binaries'
+    # IL alive, and every later binary analyzed in the same process slowed down (3x by the
+    # sixth corpus build).
+    from binja_d810.ir.expr import Var, substitute, variables
+
+    b = LinearMBABackend()
+    b.simplify(substitute(ir("(x ^ y) + 2 * (x & y)"), {"x": Var("x", 32, ref=object())}))
+    for key, value in b._cache.items():
+        for e in (key, value):
+            assert e is None or all(v.ref is None for v in variables(e))

@@ -12,11 +12,13 @@ for, so (x * y) + (x ^ y) + 2 * (x & y) still simplifies, to (x * y) + x + y.
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from functools import lru_cache
 from typing import Iterator, Optional
 
 from ..ir.evaluate import evaluate
-from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, node_count, substitute, variables
+from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, node_count, relink, substitute, variables, without_refs
 from ..ir.normalize import normalize
 
 _DP_MAX_SIZE = 15
@@ -179,10 +181,28 @@ class LinearMBABackend:
     name = "linear"
     abstracts_atoms = True  # bounds its own atom count (max_vars), whatever the leaf variables
 
-    def __init__(self, max_vars: int = 6):
+    def __init__(self, max_vars: int = 6, cache_size: int = 4096):
         self.max_vars = max_vars
+        # Tier 2 asks again about the same subexpressions (each candidate of a chain, each pass).
+        self._cache: "OrderedDict[Expr, Optional[Expr]]" = OrderedDict()
+        self._cache_size = cache_size
+        self._lock = threading.Lock()
 
     def simplify(self, e: Expr, deadline=None) -> Optional[Expr]:
+        with self._lock:
+            if e in self._cache:
+                self._cache.move_to_end(e)
+                cached = self._cache[e]
+                return None if cached is None else relink(cached, e)
+        result = self._simplify(e)
+        with self._lock:
+            # No Binary Ninja references in a cache that outlives the binary (relinked on reuse).
+            self._cache[without_refs(e)] = None if result is None else without_refs(result)
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+        return result
+
+    def _simplify(self, e: Expr) -> Optional[Expr]:
         # Bounded by max_vars (at most 2**6 signature entries): no deadline checks needed.
         atoms: dict[Expr, Var] = {}
         linear = _abstract(e, atoms, {v.name for v in variables(e)})

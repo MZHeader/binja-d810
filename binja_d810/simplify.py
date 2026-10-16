@@ -6,10 +6,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence, Union
 
-from .ir.expr import BinOp, Const, Expr, UnOp, is_mba, node_count, to_str, variables
+from .ir.expr import BinOp, Const, Expr, UnOp, is_mba, node_count, relink, to_str, variables
 from .ir.normalize import normalize
 from .rules.base import Rewrite, Rule
 from .semantic.backend import Tier2Backend
+from .semantic.linear_mba import is_linear_mba
 from .deadline import Deadline
 from .semantic.verify import Check, Verdict
 from .semantic.verify import check as verify_check
@@ -51,12 +52,19 @@ def simplify_expression(
     disabled: frozenset[str] = frozenset(),
     check: Optional[Checker] = None,
     deadline: Deadline = Deadline.never(),
+    tier1_cache: Optional[dict] = None,
 ) -> Outcome:
     """`deadline` is the function's shared allowance: once it passes, no new rule, backend or
-    proof work starts. `check` replaces the verifier (tests); by default it honours the deadline."""
+    proof work starts. `check` replaces the verifier (tests); by default it honours the deadline.
+    `tier1_cache` (shared by the calls of one function's run) reuses Tier 1 results: the engine
+    asks again about candidates that cheap backends did not simplify, and in later passes."""
     out = Outcome()
+    step_check = check
     if check is None:
         check = lambda a, b: verify_check(a, b, deadline=deadline)  # noqa: E731
+        # Each Tier 2 step is checked without Z3 (sampling, signatures): a wrong step is rejected
+        # there almost always, and the final check of original against result is the proof.
+        step_check = lambda a, b: verify_check(a, b, use_z3=False)  # noqa: E731
     if deadline.expired():
         out.skipped = "budget exhausted"
         return out
@@ -66,9 +74,19 @@ def simplify_expression(
         return out
     dead = set(disabled)
     sources: list[str] = []
-    current = _tier1(normalize(expr), rules, dead, sources, out.errors, deadline)
+    start = normalize(expr)
+    key = (start, frozenset(dead))
+    cached = tier1_cache.get(key) if tier1_cache is not None else None
+    if cached is not None:
+        current, found = cached
+        current = relink(current, start)  # the cached result may carry another expression's refs
+        sources.extend(found)
+    else:
+        current = _tier1(start, rules, dead, sources, out.errors, deadline)
+        if tier1_cache is not None and not deadline.expired():
+            tier1_cache[key] = (current, tuple(sources))
     if is_mba(current) and backends and not deadline.expired():
-        current, exhausted = _tier2(current, backends, limits, dead, sources, out, check, deadline)
+        current, exhausted = _tier2(current, backends, limits, dead, sources, out, step_check, deadline)
         if exhausted:
             out.skipped = ("budget exhausted" if deadline.expired()
                            else f"too complex: Tier 2 time budget ({limits.tier2_seconds:g} s) exhausted")
@@ -220,6 +238,7 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
     """Simplify MBA subtrees top-down. Returns (result, whether a time budget ran out)."""
     deadline = Deadline.after(limits.tier2_seconds).earlier(shared)
     exhausted = False
+    has_linear = any(getattr(b, "abstracts_atoms", False) for b in backends)
 
     def attempt(node: Expr, abstracting_only: bool) -> Optional[Expr]:
         """The first backend result that is better and not refuted. Backends that bound their own
@@ -227,9 +246,14 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
         others only within the variable limit."""
         nonlocal exhausted
         within_limit = len(variables(node)) <= limits.max_vars
+        # The linear backend decides linear MBAs by their signature; on 102 such real-sample
+        # queries CoBRA never found anything smaller (1.6 s spent).
+        linear_decided = has_linear and is_linear_mba(node)
         for backend in backends:
             abstracting = getattr(backend, "abstracts_atoms", False)
             if (abstracting_only and not abstracting) or not (within_limit or abstracting):
+                continue
+            if linear_decided and not abstracting:
                 continue
             source = f"tier2:{backend.name}"
             if source in dead:

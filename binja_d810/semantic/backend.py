@@ -20,9 +20,10 @@ def default_backends() -> list[Tier2Backend]:
     from .cobra_shim import load
     from .linear_mba import LinearMBABackend
 
-    backends: list[Tier2Backend] = []
+    # Linear first: it answers linear MBAs over atoms in milliseconds ((A ^ B) + 2 * (A & B) with
+    # sums A, B in tigress_vm), where CoBRA spent up to its whole 2 s; CoBRA gets what is left.
+    backends: list[Tier2Backend] = [LinearMBABackend()]
     solve = load()
     if solve is not None:
         backends.append(CobraBackend(solve))
-    backends.append(LinearMBABackend())
     return backends

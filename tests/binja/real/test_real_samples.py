@@ -28,7 +28,7 @@ from binaryninja import Settings
 from measure import RootCounts, hlil_counts
 
 import binja_d810
-from binja_d810.binja import log, workflow
+from binja_d810.binja import log, settings, workflow
 
 OUT = Path(os.environ.get("BINJA_D810_PYTEST_OUT", ".binja-test")) / "real"
 MLIL_SCAN_SECONDS = 600
@@ -251,6 +251,8 @@ def test_sample():
     start = time.perf_counter()
     bv = binaryninja.load(str(path), options={workflow.ACTIVITY_SETTING: False})
     assert bv is not None, f"Binary Ninja could not load {path.name}"
+    if os.environ.get("BINJA_D810_FUNCTION_SECONDS"):  # explore budgets (capped at half of BN's limit)
+        Settings().set_integer(settings.FUNCTION_SECONDS, int(os.environ["BINJA_D810_FUNCTION_SECONDS"]), bv)
     try:
         result.update(arch=str(bv.arch), platform=str(bv.platform), view_type=bv.view_type,
                       load_s=round(time.perf_counter() - start, 1), settings=_settings(bv))

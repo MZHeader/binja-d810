@@ -64,9 +64,9 @@ def test_cobra_backend_handles_solver_failure():
     assert CobraBackend(lambda t, w: None).simplify(ir("(x ^ y) + 2 * (x & y)")) is None
 
 
-def test_default_backends_always_include_linear():
+def test_default_backends_always_include_linear_first():
     names = [b.name for b in default_backends()]
-    assert names[-1] == "linear"
+    assert names[0] == "linear"
     assert ("cobra" in names) == (cobra_shim.load() is not None)
 
 

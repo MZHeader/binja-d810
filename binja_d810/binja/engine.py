@@ -105,32 +105,36 @@ def simplify_function(adapter: ILAdapter, rules: Sequence[Rule], backends: Seque
     return report
 
 
-def _run(adapter, rules, backends, config, deadline, report) -> None:
+def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip) -> None:
+    """Plan, apply and clean up until nothing changes, the iteration cap or the deadline.
+
+    Each pass tries every candidate with the cheap backends (rules and the atom-abstracting linear
+    backend) first, and only then the others on what is left: in tigress_vm's one 248-candidate
+    function, CoBRA's slow failures on the first candidates otherwise used up the budget before
+    later candidates the linear backend answers in milliseconds were reached.
+    """
     level = adapter.level
-    if deadline.expired():
-        report.budget_exhausted = True
-        return
-    if not adapter.has_candidates():
-        return
-    shape = adapter.cfg_shape()
-    dead = set(config.disabled_rules)
-    # Outcomes without a rewrite, by lifted expression: a pure function of it (names are symbols),
-    # so an unchanged candidate is not planned again in later iterations. Outcomes cut short by
-    # the shared deadline are not kept.
+    cheap = [b for b in backends if getattr(b, "abstracts_atoms", False)]
+    rounds = [cheap, list(backends)] if cheap and len(cheap) < len(backends) else [list(backends)]
+    # Outcomes of the last round without a rewrite, by lifted expression: a pure function of it
+    # (names are symbols), so an unchanged candidate is not planned again in later passes.
+    # Outcomes cut short by the shared deadline are not kept.
     stuck: dict = {}
-
-    def skip(address: int, reason: str) -> None:
-        report.skipped.append(SkipRecord(address, reason, level))
-
-    try:
-        for _ in range(config.max_iterations):
-            planning = time.monotonic()
-            planned = []
-            consumed: set = set()
-            # Last first (the adapter's order): a later candidate that inlines a single-use definition
-            # makes rewriting that definition on its own wasted work (it is dead once the later one is
-            # applied). Candidates are lifted lazily, so the deadline also bounds lifting.
-            for candidate in adapter.candidates(skip):
+    tier1_cache: dict = {}  # both rounds and every pass ask about the same expressions
+    last_sources: list = []
+    for _ in range(config.max_iterations):
+        planning = time.monotonic()
+        planned = []
+        consumed: set = set()
+        # Last first (the adapter's order): a later candidate that inlines a single-use definition
+        # makes rewriting that definition on its own wasted work (it is dead once the later one is
+        # applied). Candidates are lifted lazily, so the deadline also bounds lifting.
+        order: dict = {}  # candidate -> position in the adapter's (last first) order
+        pending = _numbered(adapter.candidates(skip), order)
+        for number, round_backends in enumerate(rounds):
+            final = number == len(rounds) - 1
+            deferred = []
+            for candidate in pending:
                 if candidate.single_use and candidate.defines is not None and candidate.defines in consumed:
                     report.subsumed += 1
                     continue
@@ -140,13 +144,16 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
                     break
                 if candidate.ir in stuck:
                     continue
-                outcome = simplify_expression(candidate.ir, rules, backends, config.limits, frozenset(dead),
-                                              deadline=deadline)
+                outcome = simplify_expression(candidate.ir, rules, round_backends, config.limits, frozenset(dead),
+                                              deadline=deadline, tier1_cache=tier1_cache)
                 report.refuted += outcome.refuted
                 for source, message in outcome.errors:
                     if source != "verify":
                         dead.add(source)
                     report.errors.append(ErrorRecord(source, message, level))
+                if outcome.rewrite is None and not final:
+                    deferred.append(candidate)
+                    continue
                 if outcome.skipped:
                     skip(candidate.address, outcome.skipped)
                 if outcome.rewrite is None and outcome.skipped != "budget exhausted" and not deadline.expired():
@@ -156,34 +163,61 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
                 elif outcome.rewrite is not None:
                     planned.append((candidate, outcome.rewrite))
                     consumed |= candidate.consumes
-            now = time.monotonic()
-            report.plan_seconds += now - planning
-            report.overrun_seconds = max(report.overrun_seconds, now - deadline.at)
-            if deadline.expired():
-                report.budget_exhausted = True
-            if not planned:
-                break
-            committing = time.monotonic()
-            dead_before = adapter.dead_assignments()
-            planned.reverse()  # apply in instruction order, as before
-            for candidate, rewrite in planned:
-                adapter.replace(candidate, rewrite.replacement)
-                report.rewrites.append(RewriteRecord(
-                    candidate.address, rewrite.source, to_str(rewrite.original), to_str(rewrite.replacement),
-                    rewrite.verdict.name if rewrite.verdict else "UNCHECKED", rewrite.method, rewrite.reason, level))
+            pending = deferred
+        now = time.monotonic()
+        report.plan_seconds += now - planning
+        report.overrun_seconds = max(report.overrun_seconds, now - deadline.at)
+        if deadline.expired():
+            report.budget_exhausted = True
+        if not planned:
+            return
+        committing = time.monotonic()
+        dead_before = adapter.dead_assignments()
+        planned.sort(key=lambda item: -order[id(item[0])])  # apply in instruction order, as before
+        for candidate, rewrite in planned:
+            adapter.replace(candidate, rewrite.replacement)
+            report.rewrites.append(RewriteRecord(
+                candidate.address, rewrite.source, to_str(rewrite.original), to_str(rewrite.replacement),
+                rewrite.verdict.name if rewrite.verdict else "UNCHECKED", rewrite.method, rewrite.reason, level))
+        adapter.finish()
+        # Only what these rewrites made dead: ordinary dead stores (z_1 = z at -O0) stay.
+        newly_dead = adapter.dead_assignments() - dead_before
+        if newly_dead:
+            adapter.remove(newly_dead)
             adapter.finish()
-            # Only what these rewrites made dead: ordinary dead stores (z_1 = z at -O0) stay.
-            newly_dead = adapter.dead_assignments() - dead_before
-            if newly_dead:
-                adapter.remove(newly_dead)
-                adapter.finish()
-            report.commit_seconds += time.monotonic() - committing
-            last_sources = sorted({rewrite.source for _, rewrite in planned})
-            if report.budget_exhausted:
-                break
-        else:
-            report.capped = True
-            report.still_firing = last_sources
+        report.commit_seconds += time.monotonic() - committing
+        last_sources = sorted({rewrite.source for _, rewrite in planned})
+        if report.budget_exhausted:
+            return
+    report.capped = True
+    report.still_firing = last_sources
+
+
+def _numbered(candidates, order: dict):
+    for position, candidate in enumerate(candidates):
+        order[id(candidate)] = position
+        yield candidate
+
+
+def _run(adapter, rules, backends, config, deadline, report) -> None:
+    level = adapter.level
+    if deadline.expired():
+        report.budget_exhausted = True
+        return
+    if not adapter.has_candidates():
+        return
+    shape = adapter.cfg_shape()
+    dead = set(config.disabled_rules)
+
+    def skip(address: int, reason: str) -> None:
+        record = SkipRecord(address, reason, level)
+        if record not in seen_skips:  # each pass meets the same candidates again
+            seen_skips.add(record)
+            report.skipped.append(record)
+
+    seen_skips: set = set()
+    try:
+        _passes(adapter, rules, backends, config, deadline, report, dead, skip)
         if adapter.cfg_shape() != shape:
             raise RuntimeError("control flow changed by expression rewrites")
     except Exception as exc:

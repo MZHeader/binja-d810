@@ -45,6 +45,9 @@ class RootCounts:
     mba_roots_with_effects: int = 0
     mba_roots_with_unsupported: int = 0
     mba_nodes: int = 0
+    # Reads of a local variable's entry value (HLIL SSA version 0, not a parameter): an uninitialized
+    # read, or a definition Binary Ninja's HLIL dropped. A rise after the plugin is a finding.
+    undefined_reads: int = 0
     unsupported_in_mba: Counter = field(default_factory=Counter)
     unsupported_in_mixed_statements: Counter = field(default_factory=Counter)
 
@@ -139,4 +142,21 @@ def hlil_counts(func) -> RootCounts:
             if supported and not parent_supported:
                 _root(node, counts)
             stack.extend((child, supported) for child in children(node))
+    counts.undefined_reads = _undefined_reads(func)
     return counts
+
+
+def _undefined_reads(func) -> int:
+    try:
+        ssa = func.hlil.ssa_form
+        params = {v.identifier for v in func.parameter_vars}
+    except Exception:
+        return 0
+    if ssa is None:
+        return 0
+    found = 0
+    for statement in statements(ssa):
+        for node in subtree(statement):
+            if node.operation == H.HLIL_VAR_SSA and node.var.version == 0 and node.var.var.identifier not in params:
+                found += 1
+    return found

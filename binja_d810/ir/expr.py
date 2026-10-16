@@ -140,6 +140,36 @@ def to_str(e: Expr) -> str:
     return f"({to_str(e.left)} {_SYMBOLS[e.op]} {to_str(e.right)})"
 
 
+def without_refs(e: Expr) -> Expr:
+    """`e` with every leaf's reference dropped, for caches that outlive a binary."""
+    if isinstance(e, Var):
+        return e if e.ref is None else Var(e.name, e.width)
+    if isinstance(e, Const):
+        return e
+    if isinstance(e, UnOp):
+        return UnOp(e.op, without_refs(e.operand), e.width)
+    return BinOp(e.op, without_refs(e.left), without_refs(e.right), e.width)
+
+
+def relink(e: Expr, source: Expr) -> Expr:
+    """`e` with each leaf replaced by the leaf of `source` with the same name and width, which
+    carries `source`'s reference (Binary Ninja variable or IL expression). Expressions compare
+    equal whatever their references, so a cached result computed for an equal expression from
+    another pass or function must take the references of the one asked about."""
+    leaves = {(v.name, v.width): v for v in variables(source)}
+
+    def visit(node: Expr) -> Expr:
+        if isinstance(node, Var):
+            return leaves.get((node.name, node.width), node)
+        if isinstance(node, Const):
+            return node
+        if isinstance(node, UnOp):
+            return UnOp(node.op, visit(node.operand), node.width)
+        return BinOp(node.op, visit(node.left), visit(node.right), node.width)
+
+    return visit(e)
+
+
 def substitute(e: Expr, mapping: Mapping[str, Expr]) -> Expr:
     if isinstance(e, Var):
         return mapping.get(e.name, e)

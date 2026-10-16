@@ -25,7 +25,7 @@ _SPECS = {
     TIER2: {"title": "Generic MBA simplifier (Tier 2)", "type": "boolean", "default": True,
             "description": "Use CoBRA (if installed) and the built-in linear-MBA simplifier."},
     MAX_VARS: {"title": "Tier 2 variable limit", "type": "number", "default": 4, "minValue": 1, "maxValue": 6,
-               "description": "Tier 2 skips subexpressions with more distinct variables."},
+               "description": "CoBRA skips subexpressions with more distinct variables (the linear simplifier counts atoms instead, up to 6)."},
     MAX_NODES: {"title": "Expression node limit", "type": "number", "default": 200, "minValue": 10, "maxValue": 5000,
                 "description": "Expressions larger than this are skipped and logged."},
     MAX_ITERATIONS: {"title": "Iteration cap", "type": "number", "default": 10, "minValue": 1, "maxValue": 100,

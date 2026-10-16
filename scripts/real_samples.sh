@@ -3,6 +3,7 @@
 # Usage: BINJA_D810_SAMPLES=<dir> scripts/real_samples.sh LABEL [sample ...]
 # Results: .local/real/LABEL/<sample>.json (git-ignored). Set BINJA_D810_PLUGIN to measure another
 # plugin revision (e.g. a v1.0 worktree). BINJA_D810_SAMPLE_TIMEOUT: seconds per sample (default 1500).
+# BINJA_D810_FUNCTION_SECONDS: the plugin's per-function budget for this run (default: the setting's).
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${BINJA_D810_SAMPLES:?set BINJA_D810_SAMPLES to the samples directory}"

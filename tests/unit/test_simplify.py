@@ -190,3 +190,21 @@ def test_normalization_that_removes_the_mix_is_a_rewrite():
 
 def test_normalization_that_keeps_the_mix_is_still_not_a_rewrite():
     assert simplify_expression(ir("(x & y) + ~~z"), [], []).rewrite is None
+
+
+def test_linear_mba_over_atoms_is_simplified_beyond_the_variable_limit():
+    # Six leaf variables, two atoms: the variable limit is CoBRA's; the linear backend bounds its
+    # own atom count.
+    e = ir("((a + b + c) ^ (d - e + f)) + 2 * (~(a + b + c) | (d - e + f))")
+    out = simplify_expression(e, [], LINEAR, Limits(max_vars=4))
+    assert out.rewrite is not None and not is_mba(out.rewrite.replacement)
+    assert out.rewrite.verdict is Verdict.PROVEN
+
+
+def test_linear_mba_over_nested_sums_is_fully_simplified():
+    # The root has too many atoms until its children are simplified: each (u ^ v) + 2 * (u & v)
+    # is u + v, after which the root is a linear MBA over three sums.
+    e = ir("(((a ^ b) + 2 * (a & b)) ^ ((c ^ d) + 2 * (c & d))) + 2 * (((a ^ b) + 2 * (a & b)) & ((c ^ d) + 2 * (c & d)))"
+           " + ((e ^ f) + 2 * (e & f)) + ((g ^ h) + 2 * (g & h)) - ((e | g) - (e & ~g))")
+    out = simplify_expression(e, [], LINEAR, Limits(max_vars=4))
+    assert out.rewrite is not None and not is_mba(out.rewrite.replacement), out

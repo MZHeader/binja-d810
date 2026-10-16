@@ -140,3 +140,18 @@ def test_z3_semantics_match_evaluate():
         for env in sample_envs(widths, 12, seed=1):
             pairs = [(symbols[n], z3.BitVecVal(env[n], widths[n])) for n in widths]
             assert z3.simplify(z3.substitute(term, *pairs)).as_long() == evaluate(e, env), to_str(e)
+
+
+def test_linear_identities_over_shared_atoms_are_proven_without_z3(monkeypatch):
+    # (A ^ B) + 2 * (~A | B) == B - A - 2 for every A and B, so for the sums A = x + y, B = z - w;
+    # Z3 does not prove the mixed form within its budget.
+    _without_z3(monkeypatch)
+    a = p("((x + y) ^ (z - w)) + 2 * (~(x + y) | (z - w))")
+    assert check_equivalent(a, p("(z - w) - (x + y) - 2")) is Verdict.PROVEN
+
+
+def test_atom_signatures_never_refute():
+    # The atom x + 1 is related to x: ((x + 1) ^ x) & 1 is 1, but over an independent atom it is
+    # not. A mismatch over atoms is no verdict: sampling and Z3 decide.
+    a, b = p("((x + 1) ^ x) & 1"), p("1")
+    assert check_equivalent(a, b, samples=0, use_z3=False) is Verdict.TESTED

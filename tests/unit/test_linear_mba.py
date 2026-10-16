@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from binja_d810.ir.expr import node_count
+from binja_d810.ir.expr import node_count, is_mba
 from binja_d810.ir.normalize import normalize
 from binja_d810.ir.parse import parse
 from binja_d810.semantic.linear_mba import LinearMBABackend, is_linear_mba
@@ -82,3 +82,12 @@ def test_random_linear_mbas_simplify_to_equivalent_smaller_forms():
                 # counterexamples fast; 100 ms keeps this test at seconds instead of ~90 s at 2000 ms.
                 assert check_equivalent(e, result, z3_timeout_ms=100) is not Verdict.REFUTED
                 assert node_count(result) < node_count(e)
+
+
+def test_arithmetic_operands_of_bitwise_operations_are_atoms():
+    # tigress_vm: (A ^ B) + 2 * (~A | B) with A, B sums; as a whole, A ^ B is not one atom, or the
+    # relation between A ^ B and ~A | B would be lost. It is B - A - 2.
+    e = normalize(ir("((x + y) ^ (z - w)) + 2 * (~(x + y) | (z - w))"))
+    result = backend.simplify(e)
+    assert result is not None and not is_mba(result)
+    assert check_equivalent(e, result) is Verdict.PROVEN

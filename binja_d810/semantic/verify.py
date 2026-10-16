@@ -17,7 +17,7 @@ from ..deadline import Deadline
 from ..ir.evaluate import evaluate
 from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, variables
 from ..ir.normalize import normalize
-from .linear_mba import is_linear_mba, signature
+from .linear_mba import abstract_atoms, is_linear_mba, signature
 
 _SIGNATURE_MAX_VARS = 12
 _Z3_LOCAL = threading.local()
@@ -84,6 +84,8 @@ def check(
     by_signature = _signature_proof(a, b)
     if by_signature is not None:
         return Check(Verdict.PROVEN if by_signature else Verdict.REFUTED, "signature")
+    if _atom_signature_proof(a, b):
+        return Check(Verdict.PROVEN, "signature")
     if not use_z3:
         return Check(Verdict.TESTED, "sampling", "z3 disabled")
     if deadline is not None and deadline.at != float("inf"):
@@ -117,6 +119,31 @@ def _signature_proof(a: Expr, b: Expr) -> Optional[bool]:
     if not (is_linear_mba(a) and is_linear_mba(b)):
         return None
     return signature(a, vs) == signature(b, vs)
+
+
+def _atom_signature_proof(a: Expr, b: Expr) -> bool:
+    """True if both sides, with non-linear subterms replaced by shared fresh variables (atoms), are
+    linear MBAs with the same signature: the identity then holds for every value of every atom, so
+    for the subterms too ((A ^ B) + 2 * (~A | B) == B - A - 2 with A, B sums, which Z3 does not
+    prove quickly). False proves nothing: atoms can be related (x + 1 and x)."""
+    atoms: dict = {}
+    taken = {v.name for v in variables(a) + variables(b)}
+    abstract_atoms(a, atoms, taken)
+    abstract_atoms(b, atoms, taken)
+    if not atoms:
+        return False  # no atom: _signature_proof already decided whatever it could
+    # Every occurrence of an atom's subterm, also where it is linear ((z - w) - (x + y) - 2).
+    return _signature_proof(_replace_atoms(a, atoms), _replace_atoms(b, atoms)) is True
+
+
+def _replace_atoms(e: Expr, atoms: dict) -> Expr:
+    if e in atoms:
+        return atoms[e]
+    if isinstance(e, BinOp):
+        return BinOp(e.op, _replace_atoms(e.left, atoms), _replace_atoms(e.right, atoms), e.width)
+    if isinstance(e, UnOp):
+        return UnOp(e.op, _replace_atoms(e.operand, atoms), e.width)
+    return e
 
 
 def _z3_prove(a: Expr, b: Expr, var_widths: Mapping[str, int], timeout_ms: int) -> tuple[Optional[bool], str]:

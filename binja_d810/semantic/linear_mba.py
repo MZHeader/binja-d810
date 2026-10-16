@@ -48,7 +48,9 @@ def is_linear_mba(e: Expr) -> bool:
 
 
 def _abstract(e: Expr, atoms: dict[Expr, Var], taken: set[str]) -> Expr:
-    """Replace maximal non-linear subterms by variables; equal subterms share one variable."""
+    """Replace maximal non-linear subterms by variables; equal subterms share one variable. An
+    operand of a bitwise operation that is not itself bitwise (a sum: (A ^ B) + 2 * (~A | B)) is an
+    atom, so A ^ B and ~A | B keep their relation."""
     if isinstance(e, (Var, Const)):
         return e
     if isinstance(e, UnOp) and e.op == "neg":
@@ -57,13 +59,18 @@ def _abstract(e: Expr, atoms: dict[Expr, Var], taken: set[str]) -> Expr:
             e.op == "mul" and (isinstance(e.left, Const) or isinstance(e.right, Const)))):
         return BinOp(e.op, _abstract(e.left, atoms, taken), _abstract(e.right, atoms, taken), e.width)
     if isinstance(e, UnOp) and e.op == "not":
-        candidate: Expr = UnOp("not", _abstract(e.operand, atoms, taken), e.width)
-        if _is_bitwise(candidate):
-            return candidate
+        return UnOp("not", _bitwise_operand(e.operand, atoms, taken), e.width)
     if isinstance(e, BinOp) and e.op in ("and", "or", "xor"):
-        candidate = BinOp(e.op, _abstract(e.left, atoms, taken), _abstract(e.right, atoms, taken), e.width)
-        if _is_bitwise(candidate):
-            return candidate
+        return BinOp(e.op, _bitwise_operand(e.left, atoms, taken), _bitwise_operand(e.right, atoms, taken), e.width)
+    return _atom(e, atoms, taken)
+
+
+def _bitwise_operand(e: Expr, atoms: dict[Expr, Var], taken: set[str]) -> Expr:
+    abstracted = _abstract(e, atoms, taken)
+    return abstracted if _is_bitwise(abstracted) else _atom(e, atoms, taken)
+
+
+def _atom(e: Expr, atoms: dict[Expr, Var], taken: set[str]) -> Var:
     if e not in atoms:
         name = f"atom@{len(atoms)}"
         while name in taken:
@@ -71,6 +78,11 @@ def _abstract(e: Expr, atoms: dict[Expr, Var], taken: set[str]) -> Expr:
         taken.add(name)
         atoms[e] = Var(name, e.width)
     return atoms[e]
+
+
+def abstract_atoms(e: Expr, atoms: dict[Expr, Var], taken: set[str]) -> Expr:
+    """`e` with maximal non-linear subterms replaced by variables shared through `atoms`."""
+    return _abstract(e, atoms, taken)
 
 
 def signature(e: Expr, vs: list[Var]) -> tuple[int, ...]:
@@ -165,6 +177,7 @@ def _plus(acc: Optional[Expr], term: Expr, width: int) -> Expr:
 
 class LinearMBABackend:
     name = "linear"
+    abstracts_atoms = True  # bounds its own atom count (max_vars), whatever the leaf variables
 
     def __init__(self, max_vars: int = 6):
         self.max_vars = max_vars

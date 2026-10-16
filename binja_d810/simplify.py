@@ -221,34 +221,52 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
     deadline = Deadline.after(limits.tier2_seconds).earlier(shared)
     exhausted = False
 
-    def visit(node: Expr) -> Expr:
+    def attempt(node: Expr, abstracting_only: bool) -> Optional[Expr]:
+        """The first backend result that is better and not refuted. Backends that bound their own
+        atom count (the linear one: (A ^ B) + 2 * (~A | B) over sums A and B) run on any node; the
+        others only within the variable limit."""
         nonlocal exhausted
+        within_limit = len(variables(node)) <= limits.max_vars
+        for backend in backends:
+            abstracting = getattr(backend, "abstracts_atoms", False)
+            if (abstracting_only and not abstracting) or not (within_limit or abstracting):
+                continue
+            source = f"tier2:{backend.name}"
+            if source in dead:
+                continue
+            if deadline.expired():
+                exhausted = True
+                return None
+            try:
+                result = backend.simplify(node, deadline=deadline)
+            except Exception as exc:
+                dead.add(source)
+                out.errors.append((source, f"{type(exc).__name__}: {exc}"))
+                continue
+            if result is None or not _better(result, node):
+                continue
+            if _checked(check, node, result).verdict is Verdict.REFUTED:
+                out.refuted += 1
+                out.errors.append((source, f"refuted {to_str(node)} -> {to_str(result)}"))
+                continue
+            sources.append(source)
+            return result
+        return None
+
+    def visit(node: Expr) -> Expr:
         if not is_mba(node):
             return node
-        if len(variables(node)) <= limits.max_vars:
-            for backend in backends:
-                source = f"tier2:{backend.name}"
-                if source in dead:
-                    continue
-                if deadline.expired():
-                    exhausted = True
-                    return node
-                try:
-                    result = backend.simplify(node, deadline=deadline)
-                except Exception as exc:
-                    dead.add(source)
-                    out.errors.append((source, f"{type(exc).__name__}: {exc}"))
-                    continue
-                if result is None or not _better(result, node):
-                    continue
-                if _checked(check, node, result).verdict is Verdict.REFUTED:
-                    out.refuted += 1
-                    out.errors.append((source, f"refuted {to_str(node)} -> {to_str(result)}"))
-                    continue
-                sources.append(source)
-                # A backend may stop short (CoBRA leaves x + y - 2 * (x & y) beside x * y); each
-                # accepted step is strictly better, so revisiting terminates.
+        result = attempt(node, abstracting_only=False)
+        if result is not None:
+            # A backend may stop short (CoBRA leaves x + y - 2 * (x & y) beside x * y); each
+            # accepted step is strictly better, so revisiting terminates.
+            return visit(result)
+        rebuilt = _rebuild(node, visit)
+        if rebuilt != node and is_mba(rebuilt) and not exhausted:
+            # Simplified children can leave few enough atoms for the linear backend.
+            result = attempt(rebuilt, abstracting_only=True)
+            if result is not None:
                 return visit(result)
-        return _rebuild(node, visit)
+        return rebuilt
 
     return visit(e), exhausted

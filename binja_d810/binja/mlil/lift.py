@@ -65,12 +65,14 @@ def candidate_roots(instr: MediumLevelILInstruction, rejected: Optional[list] = 
 def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruction,
          check_versions: bool = True, max_nodes: int = 200, effect_leaves: bool = False,
          inlined: Optional[set] = None, stats: Optional[dict] = None,
-         definitions: Optional[dict] = None) -> Optional[Expr]:
+         definitions: Optional[dict] = None, keep: frozenset = frozenset()) -> Optional[Expr]:
     """`effect_leaves` is for diagnostics only: effectful sub-expressions of the root become leaves
     without a Binary Ninja ref, so the result can be classified but never lowered. `stats` receives
     the number of IL nodes visited ("visits"), failed inlining attempts included. `definitions`
-    memoizes SSA definitions across lifts of one SSA form."""
+    memoizes SSA definitions across lifts of one SSA form. `keep` holds (identifier, version) keys of
+    SSA values left as leaves when live at the root (ILAdapter.shallow)."""
     lifter = _Lifter(ssa_expr.function, root_instr, check_versions, max_nodes, effect_leaves, definitions)
+    lifter.keep = keep
     e = lifter.expr(ssa_expr, inlined=False)
     if stats is not None:
         stats["visits"] = lifter.visits
@@ -107,6 +109,7 @@ class _Lifter:
         self.failed: dict[tuple, int] = {}  # (identifier, version, width) -> largest budget that failed
         self.done: dict[tuple, tuple] = {}  # (identifier, version, width) -> (expr, nodes, inlined)
         self.definitions = {} if definitions is None else definitions
+        self.keep: frozenset = frozenset()
         self.effect_leaves = effect_leaves
         self.names: dict[tuple, str] = {}  # leaf identity -> IR name; names are labels, not identities
         self.backings: dict[tuple, Var] = {}
@@ -167,7 +170,8 @@ class _Lifter:
         if reused is not None:
             return reused
         definition = self.definition_of(ssa_var)
-        if definition is not None and self.may_inline(key):
+        kept = key[:2] in self.keep and self.live(ssa_var)
+        if definition is not None and not kept and self.may_inline(key):
             saved, saved_inlined = self.budget, dict(self.inlined)
             inner = self.definition(definition, ssa_var, width)
             if inner is not None:
@@ -256,8 +260,9 @@ class _Lifter:
         """A read of `width` bits at byte `offset` of a variable's storage (spec section 6.1)."""
         declared = _declared_bits(ssa_var.var)
         definition = self.definition_of(ssa_var)
+        kept = (ssa_var.var.identifier, ssa_var.version) in self.keep
         if (definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA_FIELD and self.budget > 0
-                and self.visits < self.max_visits):
+                and self.visits < self.max_visits and not kept):
             # Read over a partial write: x86 -O0 spills bytes into one slot (var_8:7.b = y; ...).
             kind = read_over_write(offset, width // 8, definition.offset, _written_bytes(definition))
             saved = self.budget
@@ -274,7 +279,7 @@ class _Lifter:
         if declared and contained(offset, width // 8, declared // 8):
             # Within the variable itself: its definition, if any, gives every bit.
             definition = self.definition_of(ssa_var)
-            if definition is not None and self.budget > 0 and self.visits < self.max_visits:
+            if definition is not None and self.budget > 0 and self.visits < self.max_visits and not kept:
                 saved = self.budget
                 whole = self.definition(definition, ssa_var, declared)
                 if whole is not None:

@@ -81,3 +81,11 @@ EXPORT uint32_t bool_wide(uint32_t x, uint32_t y) {
     uint32_t b = t != 0; B(b);
     return ((x | b) ^ y) + 2 * ((x | b) & y);
 }
+
+// A value used twice and kept (tigress_vm's handlers): a is stored and also combined, so a rewrite
+// of the return over a's definition would copy it; over a itself, (a ^ z) + 2 * (a & z) is a + z.
+EXPORT uint32_t shared_value(uint32_t x, uint32_t y, uint32_t z, uint32_t *out) {
+    uint32_t a = (x * y) - (x | y) + (x & 7); B(a);
+    *out = a;
+    return (a ^ z) + 2 * (a & z);
+}

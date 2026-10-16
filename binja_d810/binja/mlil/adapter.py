@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Hashable, Iterator
+from typing import Hashable, Iterator, Optional
 
 from binaryninja import (
     ILSourceLocation, MediumLevelILFunction, MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable,
@@ -17,6 +17,7 @@ from .lower import lower
 _ARITH = frozenset({Op.MLIL_ADD, Op.MLIL_SUB, Op.MLIL_MUL, Op.MLIL_NEG, Op.MLIL_LSL})
 _BITWISE = frozenset({Op.MLIL_AND, Op.MLIL_OR, Op.MLIL_XOR, Op.MLIL_NOT})
 _PURE_LEAVES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_VAR_SSA_FIELD, Op.MLIL_CONST, Op.MLIL_CONST_PTR})
+_COPIES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_VAR_SSA_FIELD})
 # Flags a rewrite may leave dead (cond:0 = t != 0 once t's 0/1 value is inlined): pure, never trap.
 _PURE_FLAGS = frozenset({Op.MLIL_CMP_E, Op.MLIL_CMP_NE, Op.MLIL_BOOL_TO_INT})
 
@@ -57,8 +58,22 @@ class MLILAdapter:
                           definitions=definitions)
                 if ir is not None and is_mba(ir):
                     defines, single = self._defines(instr, root)
-                    nodes, mixed = self._visible(instr, root, inlined)
-                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed)
+                    nodes, mixed, dying = self._visible(instr, root, inlined)
+                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,
+                                    instr, frozenset(inlined) - dying)
+
+    def shallow(self, candidate: Candidate) -> Optional[Candidate]:
+        """The root lifted with the definitions that stay alive as leaves (ILAdapter.shallow)."""
+        if not candidate.shared or candidate.context is None:
+            return None
+        instr, root = candidate.context, candidate.root
+        inlined: dict = {}
+        ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes, inlined=inlined, keep=candidate.shared)
+        if ir is None or not is_mba(ir):
+            return None
+        defines, single = self._defines(instr, root)
+        nodes, mixed, _ = self._visible(instr, root, inlined)
+        return Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed, instr)
 
     def _visible(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction, inlined: dict):
         """Size and mix of what the user sees: the root plus the definitions that die with it."""
@@ -68,9 +83,11 @@ class MLILAdapter:
         uses = {key: [u.instr_index for u in ssa.get_ssa_var_uses(inlined[key])] for key in definitions}
         dying = dying_with_root(uses, {key: d.instr_index for key, d in definitions.items()},
                                 instr.ssa_form.instr_index)
-        trees = [root] + [definitions[key].src for key in dying]
+        # Copies (rax_6 = var_24 at -O0) are not counted: HLIL propagates them away, so a rewrite
+        # that only removes copies while duplicating a kept value's definition grows the code shown.
+        trees = [root] + [definitions[key].src for key in dying if definitions[key].src.operation not in _COPIES]
         ops = set().union(*(set(_operations(tree)) for tree in trees))
-        return sum(_size(tree) for tree in trees), bool(ops & _ARITH) and bool(ops & _BITWISE)
+        return sum(_size(tree) for tree in trees), bool(ops & _ARITH) and bool(ops & _BITWISE), dying
 
     def _defines(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction):
         """The SSA value the root is the whole definition of, and whether it has one use."""

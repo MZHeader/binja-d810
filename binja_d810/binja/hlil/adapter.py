@@ -9,7 +9,7 @@ original aliased variables.
 
 from __future__ import annotations
 
-from typing import Hashable, Iterator
+from typing import Hashable, Iterator, Optional
 
 from binaryninja import (
     HighLevelILFunction, HighLevelILInstruction, HighLevelILOperation as H, ILSourceLocation, SSAVariable,
@@ -69,8 +69,23 @@ class HLILAdapter:
                           definitions=definitions)
                 if ir is not None and is_mba(ir):
                     defines, single = self._defines(statement, root)
-                    nodes, mixed = self._visible(root, inlined)
-                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed)
+                    nodes, mixed, dying = self._visible(root, inlined)
+                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,
+                                    statement, frozenset(inlined) - dying)
+
+    def shallow(self, candidate: Candidate) -> Optional[Candidate]:
+        """The root lifted with the definitions that stay alive as leaves (ILAdapter.shallow)."""
+        if not candidate.shared or candidate.context is None:
+            return None
+        statement, root = candidate.context, candidate.root
+        inlined: dict = {}
+        ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, inlined=inlined,
+                  keep=candidate.shared)
+        if ir is None or not is_mba(ir):
+            return None
+        defines, single = self._defines(statement, root)
+        nodes, mixed, _ = self._visible(root, inlined)
+        return Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed, statement)
 
     def _visible(self, root: HighLevelILInstruction, inlined: dict):
         """Size and mix of what the user sees: the root plus the definitions that die with it."""
@@ -87,7 +102,7 @@ class HLILAdapter:
             for node in _expression_nodes(tree):
                 ops.add(node.operation)
                 size += 1
-        return size, bool(ops & _ARITH) and bool(ops & _BITWISE)
+        return size, bool(ops & _ARITH) and bool(ops & _BITWISE), dying
 
     def _defines(self, statement: HighLevelILInstruction, root: HighLevelILInstruction):
         """The SSA value the root is the whole definition of, and whether it has one use."""

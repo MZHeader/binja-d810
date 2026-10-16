@@ -24,6 +24,10 @@ class Candidate:
     # their uses are in this root). None: unknown, no visible-cost check.
     visible_nodes: Optional[int] = None
     visible_mixed: Optional[bool] = None
+    # For ILAdapter.shallow: the root's instruction or statement, and the inlined definitions that
+    # stay alive after a rewrite (used elsewhere too).
+    context: object = None
+    shared: frozenset = frozenset()
 
 
 Skip = Callable[[int, str], None]
@@ -38,6 +42,10 @@ class ILAdapter(Protocol):
     def candidates(self, skip: Skip) -> Iterator[Candidate]:
         """Every candidate whose lift is an MBA, last first (a candidate before the definitions it
         inlines), lifted lazily; roots split by effects are reported to `skip`."""
+
+    def shallow(self, candidate: Candidate) -> Optional[Candidate]:
+        """Optional. The same root lifted without inlining definitions that other instructions also
+        use (they stay visible); None if that changes nothing or is not possible."""
 
     def replace(self, candidate: Candidate, replacement: Expr) -> None:
         """Lower `replacement` and put it in place of the candidate's root, keeping a backup."""

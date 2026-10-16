@@ -130,3 +130,22 @@ def test_lift_work_is_bounded_when_definitions_are_shared(build, level):
         assert max(worst.values()) <= 4 * 200, worst
     finally:
         bv.file.close()
+
+
+@pytest.mark.parametrize("build,level", MATRIX, ids=IDS)
+def test_a_root_over_a_value_that_stays_visible_is_simplified_over_that_value(build, level):
+    """shared_value: a is stored and combined. Inlining a's definition would copy it into the
+    return (the visible-cost gate refuses); the root over a itself is a + z."""
+    bv = open_sample(sample("hlil_fixtures", build, level), d810=True)
+    try:
+        func = function_named(bv, "shared_value")
+        func.set_user_type("uint32_t shared_value(uint32_t x, uint32_t y, uint32_t z, uint32_t* out)")
+        bv.update_analysis_and_wait()
+        returns = [i for i in func.hlil.instructions if i.operation.name == "HLIL_RET"]
+        text = "\n".join(map(str, func.hlil.instructions))
+        assert len(returns) == 1 and "^" not in str(returns[0]) and "<<" not in str(returns[0]), text
+        if f"{build}-{level}" == "i686-pe-O2":
+            return  # ecx (a) is reused before the return: MLIL can only inline a; the MBA is gone
+        assert "&" not in str(returns[0]), text  # a + z, not a copy of a's definition
+    finally:
+        bv.file.close()

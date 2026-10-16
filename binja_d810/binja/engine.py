@@ -144,25 +144,44 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     break
                 if candidate.ir in stuck:
                     continue
-                outcome = simplify_expression(candidate.ir, rules, round_backends, config.limits, frozenset(dead),
-                                              deadline=deadline, tier1_cache=tier1_cache)
-                report.refuted += outcome.refuted
-                for source, message in outcome.errors:
-                    if source != "verify":
-                        dead.add(source)
-                    report.errors.append(ErrorRecord(source, message, level))
-                if outcome.rewrite is None and not final:
+                def attempt(target):
+                    result = simplify_expression(target.ir, rules, round_backends, config.limits, frozenset(dead),
+                                                 deadline=deadline, tier1_cache=tier1_cache)
+                    report.refuted += result.refuted
+                    for source, message in result.errors:
+                        if source != "verify":
+                            dead.add(source)
+                        report.errors.append(ErrorRecord(source, message, level))
+                    return result
+
+                outcome = attempt(candidate)
+                chosen, rewrite, grows = candidate, outcome.rewrite, False
+                if rewrite is not None and _grows_visible_code(candidate, rewrite.replacement):
+                    rewrite, grows = None, True
+                if candidate.shared and hasattr(adapter, "shallow") and not deadline.expired():
+                    # The lift inlined definitions that stay alive (values used several times, as in
+                    # tigress_vm's handlers): a result over those shared values may be smaller, and
+                    # never copies them. The smaller visible result wins.
+                    local = adapter.shallow(candidate)
+                    if local is not None and local.ir != candidate.ir:
+                        found = attempt(local).rewrite
+                        if (found is not None and not _grows_visible_code(local, found.replacement)
+                                and (rewrite is None
+                                     or visible_size(found.replacement) < visible_size(rewrite.replacement))):
+                            chosen, rewrite, grows = local, found, False
+                if rewrite is None and not final:
                     deferred.append(candidate)
                     continue
-                if outcome.skipped:
+                if outcome.skipped and rewrite is None:
                     skip(candidate.address, outcome.skipped)
                 if outcome.rewrite is None and outcome.skipped != "budget exhausted" and not deadline.expired():
                     stuck[candidate.ir] = outcome
-                if outcome.rewrite is not None and _grows_visible_code(candidate, outcome.rewrite.replacement):
+                if grows:
                     skip(candidate.address, "would make the visible code larger or newly mixed")
-                elif outcome.rewrite is not None:
-                    planned.append((candidate, outcome.rewrite))
-                    consumed |= candidate.consumes
+                elif rewrite is not None:
+                    order[id(chosen)] = order[id(candidate)]
+                    planned.append((chosen, rewrite))
+                    consumed |= chosen.consumes
             pending = deferred
         now = time.monotonic()
         report.plan_seconds += now - planning

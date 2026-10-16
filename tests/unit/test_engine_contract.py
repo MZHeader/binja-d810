@@ -236,3 +236,41 @@ def test_cheap_backends_reach_every_candidate_before_slow_ones_spend_the_budget(
     report = simplify_function(adapter, [], [LinearMBABackend(), Slow()], EngineConfig(), Deadline.after(0.3))
     assert {r for r, e in adapter.roots.items() if e != roots[r]} == {"l1", "l2", "l3"}
     assert report.budget_exhausted
+
+
+class SharedAdapter(FakeAdapter):
+    """r = (a ^ z) + 2 * (a & z) where a = (x * y) - (x | y) + (x & 7) is also used elsewhere: the
+    deep lift inlines a, and its result a + z copies a's definition into r (tigress_vm)."""
+
+    def __init__(self):
+        super().__init__({"r": p("((((x * y) - (x | y)) + (x & 7)) ^ z) + 2 * ((((x * y) - (x | y)) + (x & 7)) & z)")})
+        self.shallow_asked = []
+
+    def candidates(self, skip):
+        if is_mba(self.roots["r"]):  # as the real adapters: only MBA roots are candidates
+            yield Candidate("r", 0x40, self.roots["r"], visible_nodes=7, visible_mixed=True, shared=frozenset({"a"}))
+
+    def shallow(self, candidate):
+        self.shallow_asked.append(candidate.root)
+        return Candidate("r", 0x40, p("(a ^ z) + 2 * (a & z)"), visible_nodes=7, visible_mixed=True)
+
+
+def test_a_root_whose_deep_lift_grows_the_visible_code_is_simplified_over_its_shared_values():
+    from binja_d810.semantic.backend import default_backends
+
+    adapter = SharedAdapter()
+    report = simplify_function(adapter, [], default_backends(), EngineConfig())
+    assert adapter.shallow_asked == ["r"]
+    assert adapter.roots["r"] == p("a + z") or adapter.roots["r"] == p("z + a")
+    assert len(report.rewrites) == 1 and not any("visible" in s.reason for s in report.skipped)
+
+
+def test_a_smaller_result_over_shared_values_wins_even_when_the_deep_one_shrinks():
+    # i686 -O2: the deep rewrite shrank the root (11 -> 9 nodes) but copied a's definition.
+    from binja_d810.semantic.backend import default_backends
+
+    adapter = SharedAdapter()
+    adapter.candidates = lambda skip: iter([Candidate("r", 0x40, adapter.roots["r"], visible_nodes=40,
+                                                      visible_mixed=True, shared=frozenset({"a"}))])
+    simplify_function(adapter, [], default_backends(), EngineConfig(max_iterations=1))
+    assert adapter.roots["r"] in (p("a + z"), p("z + a"))

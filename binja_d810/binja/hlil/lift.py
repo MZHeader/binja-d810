@@ -84,13 +84,16 @@ def candidate_roots(statement: HighLevelILInstruction, aliased: frozenset,
 
 def lift(ssa_expr: HighLevelILInstruction, *, aliased: frozenset = frozenset(), check_versions: bool = True,
          max_nodes: int = 200, effect_leaves: bool = False, inlined: Optional[set] = None,
-         stats: Optional[dict] = None, definitions: Optional[dict] = None) -> Optional[Expr]:
+         stats: Optional[dict] = None, definitions: Optional[dict] = None,
+         keep: frozenset = frozenset()) -> Optional[Expr]:
     """`aliased` holds the address-taken variables (HighLevelILFunction.aliased_vars): their reads
     are never moved. `effect_leaves` is for diagnostics only: other operations become leaves
     without a ref, so the result can be classified but never lowered. `stats` receives the number of
     IL nodes visited ("visits"), failed inlining attempts included. `definitions` memoizes SSA
-    definitions across lifts of one SSA form."""
+    definitions across lifts of one SSA form. `keep` holds (identifier, version) keys of SSA values
+    left as leaves when live at the root (ILAdapter.shallow)."""
     lifter = _Lifter(ssa_expr, aliased, check_versions, max_nodes, effect_leaves, definitions)
+    lifter.keep = keep
     e = lifter.expr(ssa_expr, inlined=False)
     if stats is not None:
         stats["visits"] = lifter.visits
@@ -163,6 +166,7 @@ class _Lifter:
         self.failed: dict[tuple, int] = {}
         self.done: dict[tuple, tuple] = {}
         self.definitions = {} if definitions is None else definitions
+        self.keep: frozenset = frozenset()
         self.effect_leaves = effect_leaves
         self.names: dict[tuple, str] = {}
         self.inlined: dict[tuple[int, int], object] = {}  # (identifier, version) -> SSA variable
@@ -217,6 +221,8 @@ class _Lifter:
             self.inlined.update(inlined)
             return expr
         definition = self.definition_of(ssa_var)
+        if key[:2] in self.keep and self.live(ssa_var):
+            definition = None  # a value that stays visible elsewhere (ILAdapter.shallow)
         src = definition.src if definition is not None and definition.operation in _DEFINITIONS else None
         compared = _compared(src) if src is not None else None  # r15_1 = rax_1 != 0
         if (src is not None and (compared is not None or src.size * 8 == width)

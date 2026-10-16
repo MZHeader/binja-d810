@@ -252,7 +252,10 @@ def test_sample():
     bv = binaryninja.load(str(path), options={workflow.ACTIVITY_SETTING: False})
     assert bv is not None, f"Binary Ninja could not load {path.name}"
     if os.environ.get("BINJA_D810_FUNCTION_SECONDS"):  # explore budgets (capped at half of BN's limit)
-        Settings().set_integer(settings.FUNCTION_SECONDS, int(os.environ["BINJA_D810_FUNCTION_SECONDS"]), bv)
+        seconds = int(os.environ["BINJA_D810_FUNCTION_SECONDS"])
+        Settings().set_integer(settings.FUNCTION_SECONDS, seconds, bv)
+        limit = "analysis.limits.maxFunctionAnalysisTime"
+        Settings().set_integer(limit, max(Settings().get_integer(limit, bv), 2000 * seconds + 10_000), bv)
     try:
         result.update(arch=str(bv.arch), platform=str(bv.platform), view_type=bv.view_type,
                       load_s=round(time.perf_counter() - start, 1), settings=_settings(bv))

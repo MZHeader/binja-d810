@@ -9,12 +9,14 @@ The plugin rewrites MBA expressions during analysis, in two passes enabled by on
 
 Each candidate is simplified in two tiers:
 
-- **Tier 1:** d810's rule corpus. 156 of 179 rules are Z3-proven at one or more bit widths, and a rule only fires at the widths where it was proven.
-- **Tier 2:** generic MBA simplifiers. That means CoBRA when it is installed, plus a built-in linear-MBA simplifier.
+- **Tier 1:** d810's rule corpus. 156 of 179 rules are Z3-proven at one or more bit widths (153 at all of 8, 16, 32 and 64), and a rule only fires at the widths where it was proven.
+- **Tier 2:** generic MBA simplifiers. First a built-in linear-MBA simplifier, which treats non-linear sub-expressions (sums under a bitwise operation, products, extensions) as opaque atoms, so `(A ^ B) + 2 * (~A | B)` becomes `B - A - 2` whatever A and B are. Then CoBRA, when it is installed, for what is left.
 
-Every rewrite is checked for equivalence before it is applied: random evaluation always, plus an exact signature proof for linear MBAs and a Z3 proof for everything else. Each rewrite records whether it was proven or only tested by sampling, and why. Expressions containing loads, calls or other effects are never rewritten through: only their pure parts are. Nothing is written to the binary or the database.
+Each function's candidates first go through the rules and the linear simplifier, and only the ones still unsimplified go to CoBRA, so one slow expression cannot use up a function's time budget. Supported operations are `+ - * & | ^ ~`, shifts, rotates, extensions and truncations. A comparison with zero of a value that can only be 0 or 1 (x86 `setcc`, ARM64 `cset`), as in `r15 = (x & 1) != 0`, is read as that value.
 
-Design: `docs/design/specs/2026-10-15-binja-d810-v2-design.md` (v1: `docs/design/specs/2026-10-15-binja-d810-core-framework-design.md`). Coverage and known gaps: `docs/design/reports/2026-10-15-v2.0-coverage.md`.
+Every rewrite is checked for equivalence before it is applied: random evaluation always, plus an exact proof by signature for linear MBAs (also over atoms) and a Z3 proof for everything else. Each rewrite records whether it was proven or only tested by sampling, and why. Expressions containing loads, calls or other effects are never rewritten through: only their pure parts are. A rewrite never makes the code you see larger, and never adds a mix of arithmetic and bitwise operations where there was none: when an expression's inputs are values that stay visible elsewhere, it is simplified over those values rather than over copies of their definitions. Nothing is written to the binary or the database.
+
+Design: `docs/design/specs/2026-10-15-binja-d810-v2-design.md` (v1: `docs/design/specs/2026-10-15-binja-d810-core-framework-design.md`). Coverage and known gaps: `docs/design/reports/2026-10-15-v2.0-coverage.md` and `docs/design/reports/2026-10-15-v2.1-coverage.md`. Next (draft, not started): `docs/design/specs/2026-10-16-binja-d810-v3-design.md`.
 
 ## Install
 
@@ -87,7 +89,7 @@ The Binary Ninja tests build the samples, then run pytest inside a fresh Binary 
 
 ```bash
 tests/samples/build.sh                       # ARM64 Mach-O, x64 PE, i686 PE, x64 ELF, each at -O0 and -O2
-scripts/binja_pytest.sh                      # everything (about 25 minutes)
+scripts/binja_pytest.sh                      # everything (about 15 minutes)
 scripts/binja_pytest.sh tests/binja -k x86_64-pe   # one architecture: arm64, x86_64-pe, i686-pe, x86_64-elf
 ```
 
@@ -96,7 +98,8 @@ scripts/binja_pytest.sh tests/binja -k x86_64-pe   # one architecture: arm64, x8
 Opt-in suites, skipped by default:
 
 - `BINJA_D810_SPIKE=1 scripts/binja_pytest.sh tests/binja/spikes` reruns the HLIL and formats spikes.
-- Real samples, static analysis only: `BINJA_D810_SAMPLES=<dir> scripts/real_samples.sh <label>` loads each binary in its own Binary Ninja process and writes `.local/real/<label>/<sample>.json`. `BINJA_D810_PLUGIN=<dir>` measures another plugin revision (for example a `v1.0` worktree) in an isolated Binary Ninja user directory. Nothing under `.local/` is committed.
+- Real samples, static analysis only: `BINJA_D810_SAMPLES=<dir> scripts/real_samples.sh <label>` loads each binary in its own Binary Ninja process and writes `.local/real/<label>/<sample>.json`. `BINJA_D810_PLUGIN=<dir>` measures another plugin revision (for example a `v1.0` worktree) in an isolated Binary Ninja user directory; `BINJA_D810_FUNCTION_SECONDS` sets the per-function budget for the run. Nothing under `.local/` is committed.
+- Spot checks: list function addresses per sample in `tests/binja/real/spot_checks.local.toml` (git-ignored; see `spot_checks.example.toml`). Each real-sample run then writes `<out>/real/spot/<sample>/<address>.txt` with the function's HLIL with the plugin off and on, and both passes' reports.
 
 ## Rules
 

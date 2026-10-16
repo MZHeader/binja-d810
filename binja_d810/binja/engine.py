@@ -158,10 +158,13 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                 chosen, rewrite, grows = candidate, outcome.rewrite, False
                 if rewrite is not None and _grows_visible_code(candidate, rewrite.replacement):
                     rewrite, grows = None, True
-                if candidate.shared and hasattr(adapter, "shallow") and not deadline.expired():
+                worth = outcome.rewrite is not None or (outcome.skipped or "").startswith("too complex")
+                if candidate.shared and worth and hasattr(adapter, "shallow") and not deadline.expired():
                     # The lift inlined definitions that stay alive (values used several times, as in
                     # tigress_vm's handlers): a result over those shared values may be smaller, and
-                    # never copies them. The smaller visible result wins.
+                    # never copies them. The smaller visible result wins. Only worth a second
+                    # simplification when the first found a rewrite (which may copy them) or gave up
+                    # on size; most roots of ordinary code simplify neither way.
                     local = adapter.shallow(candidate)
                     if local is not None and local.ir != candidate.ir:
                         found = attempt(local).rewrite

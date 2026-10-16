@@ -274,3 +274,12 @@ def test_a_smaller_result_over_shared_values_wins_even_when_the_deep_one_shrinks
                                                       visible_mixed=True, shared=frozenset({"a"}))])
     simplify_function(adapter, [], default_backends(), EngineConfig(max_iterations=1))
     assert adapter.roots["r"] in (p("a + z"), p("z + a"))
+
+
+def test_roots_that_do_not_simplify_are_not_lifted_again_over_their_shared_values():
+    # Ordinary code: most roots with shared definitions do not simplify at all; lifting each again
+    # over its shared values doubled planning time on halflife_keygen (median 0.06 -> 0.26 s).
+    adapter = SharedAdapter()
+    adapter.roots["r"] = p("(x * y) ^ (x + z)")  # no deep rewrite, not too complex
+    simplify_function(adapter, [], [LinearMBABackend()], EngineConfig())
+    assert adapter.shallow_asked == []

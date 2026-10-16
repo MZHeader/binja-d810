@@ -123,8 +123,9 @@ def _build(node, width: int, var_widths: Mapping[str, int]) -> Expr:
         return UnOp("neg" if node[1] == "-" else "not", _build(node[2], width, var_widths), width)
     if kind == "call":
         name, args = node[1], node[2]
-        if name == "sar" and len(args) == 2:
-            return BinOp("ashr", _build(args[0], width, var_widths), _build(args[1], width, var_widths), width)
+        if name in ("sar", "rol", "ror") and len(args) == 2:
+            op = "ashr" if name == "sar" else name
+            return BinOp(op, _build(args[0], width, var_widths), _build(args[1], width, var_widths), width)
         m = _EXTENSION.match(name)
         if m is None or len(args) != 1:
             raise ParseError(f"unknown function {name}")

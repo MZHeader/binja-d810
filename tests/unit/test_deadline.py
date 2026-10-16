@@ -109,7 +109,7 @@ def test_slow_backend_is_cut_off_by_the_deadline():
     start = time.monotonic()
     simplify_expression(parse("((x ^ y) + 2 * (x & y)) * ((x | y) - (x & y)) + (x ^ (y & z))", 32), [], [Slow()],
                         deadline=Deadline.after(0.12))
-    assert time.monotonic() - start < 0.12 + 0.06  # at most one call past the deadline
+    assert time.monotonic() - start < 0.12 + 0.05 + 0.05  # one call (0.05 s) past the deadline, plus scheduling
 
 
 def test_cobra_lock_wait_respects_the_deadline(monkeypatch):

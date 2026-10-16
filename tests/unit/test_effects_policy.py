@@ -77,7 +77,7 @@ def test_hlil_effects_bound_candidates(op):
 
 
 def test_hlil_pure_unsupported_operations_bound_candidates_too():
-    assert effects.hlil_effect(Node("HLIL_ADD", [_HVar("x"), Node("HLIL_ROL", [_HVar("y")])])) == "unsupported: HLIL_ROL"
+    assert effects.hlil_effect(Node("HLIL_ADD", [_HVar("x"), Node("HLIL_POPCNT", [_HVar("y")])])) == "unsupported: HLIL_POPCNT"
 
 
 def test_hlil_aliased_variable_reads_are_effects():

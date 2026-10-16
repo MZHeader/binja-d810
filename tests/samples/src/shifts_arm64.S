@@ -1,7 +1,7 @@
 // Shift-boundary fixtures (spec section 6.5): ARM64 variable shifts take the count modulo the
 // register width (LSLV/LSRV/ASRV).
     .text
-    .globl _lsl64_by65, _lsr32_by32, _lsl32_var, _lsr32_var, _asr32_var, _lsl64_var, _lsl32_by33, _lsr64_by65, _asr32_by32
+    .globl _ror32_var, _ror32_by33, _ror64_var, _ror64_by65, _lsl64_by65, _lsr32_by32, _lsl32_var, _lsr32_var, _asr32_var, _lsl64_var, _lsl32_by33, _lsr64_by65, _asr32_by32
     .p2align 2
 _lsl32_var:  lsl w0, w0, w1
              ret
@@ -30,4 +30,16 @@ _lsl64_by65: mov x0, #1
 _lsr32_by32: mov w0, #0x80000000
              mov w1, #32
              lsr w0, w0, w1
+             ret
+_ror32_var:  ror w0, w0, w1
+             ret
+_ror32_by33: mov w0, #1
+             mov w1, #33
+             ror w0, w0, w1
+             ret
+_ror64_var:  ror x0, x0, x1
+             ret
+_ror64_by65: mov x0, #1
+             mov x1, #65
+             ror x0, x0, x1
              ret

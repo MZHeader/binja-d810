@@ -14,12 +14,13 @@ from typing import Iterator, Optional
 
 from binaryninja import MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable, VariableSourceType
 
-from ...ir.expr import BinOp, Const, Expr, UnOp, Var, variables
+from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ..effects import mlil_effect
 from ..storage import contained, field_read, fit, merge_partial_write, read_over_write
 
 _BINARY = {Op.MLIL_ADD: "add", Op.MLIL_SUB: "sub", Op.MLIL_MUL: "mul", Op.MLIL_AND: "and",
-           Op.MLIL_OR: "or", Op.MLIL_XOR: "xor", Op.MLIL_LSL: "shl", Op.MLIL_LSR: "lshr", Op.MLIL_ASR: "ashr"}
+           Op.MLIL_OR: "or", Op.MLIL_XOR: "xor", Op.MLIL_LSL: "shl", Op.MLIL_LSR: "lshr", Op.MLIL_ASR: "ashr",
+           Op.MLIL_ROL: "rol", Op.MLIL_ROR: "ror"}
 _UNARY = {Op.MLIL_NEG: "neg", Op.MLIL_NOT: "not", Op.MLIL_ZX: "zx", Op.MLIL_SX: "sx", Op.MLIL_LOW_PART: "trunc"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY)
 
@@ -114,7 +115,7 @@ class _Lifter:
             right = self.expr(e.right, inlined=inlined)
             if left is None or right is None:
                 return None
-            if _BINARY[op] not in ("shl", "lshr", "ashr"):
+            if _BINARY[op] not in COUNT_OPS:
                 # HLIL folds lea into x * 5 with an 8-byte constant under a 4-byte multiply.
                 left, right = fit(left, width), fit(right, width)
                 if left is None or right is None:

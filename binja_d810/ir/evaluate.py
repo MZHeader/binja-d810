@@ -36,6 +36,8 @@ def evaluate(e: Expr, env: Mapping[str, int]) -> int:
         return x | y
     if e.op == "xor":
         return x ^ y
+    if e.op in ("rol", "ror"):
+        return _rotate(e.op, x, y, e.width)
     return _shift(e.op, x, y, e.width)
 
 
@@ -45,6 +47,16 @@ def shift_count(count: int, width: int) -> int:
     with Binary Ninja's dataflow, see tests/unit/test_shifts.py). x86's own count masks are explicit
     `and` nodes in the IL."""
     return count % max(32, width)
+
+
+def _rotate(op: str, x: int, count: int, width: int) -> int:
+    """Rotates take the count modulo the width (Binary Ninja's dataflow, x86 and ARM64 alike)."""
+    c, m = count % width, mask(width)
+    if c == 0:
+        return x & m
+    if op == "rol":
+        return ((x << c) | (x >> (width - c))) & m
+    return ((x >> c) | (x << (width - c))) & m
 
 
 def _shift(op: str, x: int, count: int, width: int) -> int:

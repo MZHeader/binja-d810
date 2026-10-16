@@ -10,7 +10,8 @@ from .lift import FieldRef, HLILBacking
 
 _UNARY = {"neg": "neg_expr", "not": "not_expr", "zx": "zero_extend", "sx": "sign_extend", "trunc": "low_part"}
 _BINARY = {"add": "add", "sub": "sub", "mul": "mult", "and": "and_expr", "or": "or_expr", "xor": "xor_expr",
-           "shl": "shift_left", "lshr": "logical_shift_right", "ashr": "arith_shift_right"}
+           "shl": "shift_left", "lshr": "logical_shift_right", "ashr": "arith_shift_right", "rol": "rotate_left",
+           "ror": "rotate_right"}
 
 
 def lower(hlil: HighLevelILFunction, e: Expr, loc: ILSourceLocation) -> ExpressionIndex:

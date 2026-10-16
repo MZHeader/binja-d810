@@ -160,6 +160,15 @@ def to_z3(e: Expr, z3_vars: dict, ctx=None):
     assert isinstance(e, BinOp)
     x = to_z3(e.left, z3_vars, ctx)
     y = to_z3(e.right, z3_vars, ctx)
+    if e.op in ("rol", "ror"):
+        # ir.evaluate._rotate: the count modulo the width, taken at the count's own width.
+        cw = e.right.width
+        if cw < e.width:
+            y = z3.ZeroExt(e.width - cw, y)
+        elif cw > e.width:
+            y = z3.Extract(e.width - 1, 0, z3.URem(y, z3.BitVecVal(e.width, cw, ctx)))
+        y = z3.URem(y, z3.BitVecVal(e.width, e.width, ctx))
+        return z3.RotateLeft(x, y) if e.op == "rol" else z3.RotateRight(x, y)
     if e.op in ("shl", "lshr", "ashr"):
         # ir.evaluate.shift_count: the count modulo max(32, width), taken at the count's own width.
         # The reduced count is at most 63, so resizing it to the result width is lossless; Z3's

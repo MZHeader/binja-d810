@@ -15,12 +15,13 @@ from typing import Iterator, Optional
 
 from binaryninja import HighLevelILInstruction, HighLevelILOperation as H
 
-from ...ir.expr import BinOp, Const, Expr, UnOp, Var, variables
+from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ..effects import hlil_effect
 from ..storage import contained, field_read, fit
 
 _BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: "and", H.HLIL_OR: "or",
-           H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr"}
+           H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr", H.HLIL_ROL: "rol",
+           H.HLIL_ROR: "ror"}
 _UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx", H.HLIL_LOW_PART: "trunc"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY)
 STRUCTURE = frozenset({H.HLIL_BLOCK, H.HLIL_IF, H.HLIL_WHILE, H.HLIL_DO_WHILE, H.HLIL_FOR, H.HLIL_SWITCH,
@@ -157,7 +158,7 @@ class _Lifter:
             left, right = self.expr(e.left, inlined=inlined), self.expr(e.right, inlined=inlined)
             if left is None or right is None:
                 return None
-            if _BINARY[op] not in ("shl", "lshr", "ashr"):
+            if _BINARY[op] not in COUNT_OPS:
                 # HLIL folds lea into x * 5 with an 8-byte constant under a 4-byte multiply.
                 left, right = fit(left, width), fit(right, width)
                 if left is None or right is None:

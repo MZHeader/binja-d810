@@ -24,7 +24,8 @@ from binaryninja import HighLevelILOperation as H
 
 PARAM_BITS = 64
 _BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: "and", H.HLIL_OR: "or",
-           H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr"}
+           H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr", H.HLIL_ROL: "rol",
+           H.HLIL_ROR: "ror"}
 _UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx", H.HLIL_LOW_PART: "low"}
 _SKIP = {H.HLIL_NOP, H.HLIL_VAR_DECLARE}
 
@@ -96,7 +97,7 @@ def _expr(e, env, params) -> tuple:
         return ("bits", inner, 8 * e.offset, width)
     if op in _BINARY:
         left, right = _expr(e.left, env, params), _expr(e.right, env, params)
-        if op not in (H.HLIL_LSL, H.HLIL_LSR, H.HLIL_ASR):
+        if op not in (H.HLIL_LSL, H.HLIL_LSR, H.HLIL_ASR, H.HLIL_ROL, H.HLIL_ROR):
             left, right = _fit(left, width, e), _fit(right, width, e)
         else:
             left = _fit(left, width, e)
@@ -190,6 +191,11 @@ def evaluate(x: tuple, env: dict[str, int]) -> int:
     if name == "concat":
         return ((vals[0] << _width(args[1])) | vals[1]) & m
     a, b = vals
+    if name in ("rol", "ror"):  # count modulo the width (Binary Ninja's dataflow)
+        c = b % width
+        if c == 0:
+            return a & m
+        return ((a << c) | (a >> (width - c))) & m if name == "rol" else ((a >> c) | (a << (width - c))) & m
     if name in ("shl", "lshr", "ashr"):
         count = b % max(32, width)
         if name == "shl":
@@ -225,6 +231,11 @@ def to_z3(x: tuple, symbols: dict):
     if name == "concat":
         return z3.Concat(vals[0], vals[1])
     a, b = vals
+    if name in ("rol", "ror"):
+        bw = b.size()
+        b = z3.ZeroExt(width - bw, b) if bw < width else z3.Extract(width - 1, 0, z3.URem(b, z3.BitVecVal(width, bw))) if bw > width else b
+        b = z3.URem(b, z3.BitVecVal(width, width))
+        return z3.RotateLeft(a, b) if name == "rol" else z3.RotateRight(a, b)
     if name in ("shl", "lshr", "ashr"):
         bw = b.size()
         b = b & z3.BitVecVal(max(32, width) - 1, bw)

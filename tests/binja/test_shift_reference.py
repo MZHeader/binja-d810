@@ -16,13 +16,18 @@ from binja_d810.ir.expr import mask, to_signed, variables
 
 
 def hardware(arch: str, op: str, x: int, count: int, width: int) -> int:
-    """Intel SDM SHL/SHR/SAR: count masked to 5 bits (6 for 64-bit operands), any operand size.
-    ARM ARM LSLV/LSRV/ASRV: count modulo the register width (32 or 64)."""
+    """Intel SDM SHL/SHR/SAR/ROL/ROR: count masked to 5 bits (6 for 64-bit operands); rotates then
+    take it modulo the operand size. ARM ARM LSLV/LSRV/ASRV/RORV: count modulo the register width."""
     if arch == "x86":
         c = count & (0x3F if width == 64 else 0x1F)
     else:
         c = count % width
     m = mask(width)
+    if op in ("rol", "ror"):
+        c %= width
+        if c == 0:
+            return x & m
+        return ((x << c) | (x >> (width - c))) & m if op == "rol" else ((x >> c) | (x << (width - c))) & m
     if op == "shl":
         return (x << c) & m
     if op == "lshr":
@@ -41,6 +46,11 @@ CASES = [
     ("shifts_arm64.dylib", "lsl64_var", "lsl64_by65", "shl", 1, 65, 64),
     ("shifts_arm64.dylib", "asr32_var", "asr32_by32", "ashr", 0x80000000, 32, 32),
     ("shifts_arm64.dylib", "lsr32_var", "lsr32_by32", "lshr", 0x80000000, 32, 32),
+    ("shifts_x86_64.so", "rol8_var", "rol8_by9", "rol", 0x81, 9, 8),
+    ("shifts_x86_64.so", "ror32_var", "ror32_by33", "ror", 1, 33, 32),
+    ("shifts_x86_64.so", "rol64_var", "rol64_by65", "rol", 0x8000000000000001, 65, 64),
+    ("shifts_arm64.dylib", "ror32_var", "ror32_by33", "ror", 1, 33, 32),
+    ("shifts_arm64.dylib", "ror64_var", "ror64_by65", "ror", 1, 65, 64),
 ]
 # Constant-only fixtures: Binary Ninja's folded value against the manual.
 FOLDED = [

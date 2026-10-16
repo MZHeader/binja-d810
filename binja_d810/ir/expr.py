@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterator, Mapping, Union
 
-BINARY_OPS = frozenset({"add", "sub", "mul", "and", "or", "xor", "shl", "lshr", "ashr"})
+BINARY_OPS = frozenset({"add", "sub", "mul", "and", "or", "xor", "shl", "lshr", "ashr", "rol", "ror"})
 UNARY_OPS = frozenset({"neg", "not", "zx", "sx", "trunc"})
 SHIFT_OPS = frozenset({"shl", "lshr", "ashr"})
+ROTATE_OPS = frozenset({"rol", "ror"})  # count modulo the width; neither arithmetic nor bitwise for is_mba
+COUNT_OPS = SHIFT_OPS | ROTATE_OPS  # the right operand is a count of its own width
 COMMUTATIVE_OPS = frozenset({"add", "mul", "and", "or", "xor"})
 ARITH_OPS = frozenset({"add", "sub", "mul", "neg"})
 BITWISE_OPS = frozenset({"and", "or", "xor", "not"})
@@ -48,7 +50,7 @@ class BinOp:
     def __post_init__(self) -> None:
         if self.op not in BINARY_OPS:
             raise ValueError(f"unknown binary op {self.op!r}")
-        if self.left.width != self.width or (self.op not in SHIFT_OPS and self.right.width != self.width):
+        if self.left.width != self.width or (self.op not in COUNT_OPS and self.right.width != self.width):
             raise ValueError(f"width mismatch in {self.op}: {self.left.width}/{self.right.width} -> {self.width}")
 
 
@@ -133,6 +135,8 @@ def to_str(e: Expr) -> str:
         return f"{e.op}{e.width}({inner})"
     if e.op == "ashr":
         return f"sar({to_str(e.left)}, {to_str(e.right)})"
+    if e.op in ROTATE_OPS:
+        return f"{e.op}({to_str(e.left)}, {to_str(e.right)})"
     return f"({to_str(e.left)} {_SYMBOLS[e.op]} {to_str(e.right)})"
 
 

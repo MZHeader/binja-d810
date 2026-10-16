@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Mapping, Optional
 
-from .expr import BinOp, Const, Expr, UnOp, Var
+from .expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var
 
 _TOKEN = re.compile(r"\s*(?:(0[xX][0-9a-fA-F]+|\d+)|([A-Za-z_][A-Za-z0-9_#@]*)|(<<|>>|[-+*&|^~(),]))")
 _LEVELS = [("|",), ("^",), ("&",), ("<<", ">>"), ("+", "-"), ("*",)]
@@ -107,6 +107,8 @@ def _natural_width(node, var_widths: Mapping[str, int]) -> Optional[int]:
         m = _EXTENSION.match(node[1])
         if m:
             return int(m.group(2))
+        if node[1] in CMP_OPS:
+            return 1
         return _natural_width(node[2][0], var_widths)
     if node[1] in ("<<", ">>"):
         return _natural_width(node[2], var_widths)
@@ -123,6 +125,13 @@ def _build(node, width: int, var_widths: Mapping[str, int]) -> Expr:
         return UnOp("neg" if node[1] == "-" else "not", _build(node[2], width, var_widths), width)
     if kind == "call":
         name, args = node[1], node[2]
+        if name in CMP_OPS and len(args) == 2:
+            # Operands of the width either one has, else 32 bits.
+            inner = _natural_width(args[0], var_widths) or _natural_width(args[1], var_widths) or 32
+            try:
+                return BinOp(name, _build(args[0], inner, var_widths), _build(args[1], inner, var_widths), 1)
+            except ValueError as exc:
+                raise ParseError(str(exc)) from exc
         if name in ("sar", "rol", "ror") and len(args) == 2:
             op = "ashr" if name == "sar" else name
             return BinOp(op, _build(args[0], width, var_widths), _build(args[1], width, var_widths), width)

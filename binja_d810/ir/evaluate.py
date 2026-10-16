@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from .expr import BinOp, Const, Expr, UnOp, Var, mask, to_signed
+from .expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var, mask, to_signed
 
 
 def evaluate(e: Expr, env: Mapping[str, int]) -> int:
@@ -38,7 +38,16 @@ def evaluate(e: Expr, env: Mapping[str, int]) -> int:
         return x ^ y
     if e.op in ("rol", "ror"):
         return _rotate(e.op, x, y, e.width)
+    if e.op in CMP_OPS:
+        return _compare(e.op, x, y, e.left.width)
     return _shift(e.op, x, y, e.width)
+
+
+def _compare(op: str, x: int, y: int, width: int) -> int:
+    if op[0] == "s":
+        x, y = to_signed(x, width), to_signed(y, width)
+    return int({"eq": x == y, "ne": x != y, "ult": x < y, "ule": x <= y, "ugt": x > y, "uge": x >= y,
+                "slt": x < y, "sle": x <= y, "sgt": x > y, "sge": x >= y}[op])
 
 
 def shift_count(count: int, width: int) -> int:

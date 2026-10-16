@@ -15,7 +15,7 @@ from typing import Iterator, Mapping, Optional
 
 from ..deadline import Deadline
 from ..ir.evaluate import evaluate
-from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, variables
+from ..ir.expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var, mask, variables
 from ..ir.normalize import normalize
 from .linear_mba import abstract_atoms, is_linear_mba, signature
 
@@ -187,6 +187,11 @@ def to_z3(e: Expr, z3_vars: dict, ctx=None):
     assert isinstance(e, BinOp)
     x = to_z3(e.left, z3_vars, ctx)
     y = to_z3(e.right, z3_vars, ctx)
+    if e.op in CMP_OPS:
+        cond = {"eq": lambda: x == y, "ne": lambda: x != y, "ult": lambda: z3.ULT(x, y),
+                "ule": lambda: z3.ULE(x, y), "ugt": lambda: z3.UGT(x, y), "uge": lambda: z3.UGE(x, y),
+                "slt": lambda: x < y, "sle": lambda: x <= y, "sgt": lambda: x > y, "sge": lambda: x >= y}[e.op]()
+        return z3.If(cond, z3.BitVecVal(1, 1, ctx), z3.BitVecVal(0, 1, ctx))
     if e.op in ("rol", "ror"):
         # ir.evaluate._rotate: the count modulo the width, taken at the count's own width.
         cw = e.right.width

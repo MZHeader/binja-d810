@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from .bits import possible_ones
+from .bits import compare_with_zero, possible_ones
 from .evaluate import evaluate
-from .expr import COMMUTATIVE_OPS, BinOp, Const, Expr, UnOp, Var, mask, to_signed, to_str
+from .expr import CMP_OPS, COMMUTATIVE_OPS, BinOp, Const, Expr, UnOp, Var, mask, to_signed, to_str
 
 _TRUNC_THROUGH = frozenset({"add", "sub", "mul", "and", "or", "xor"})
 
@@ -33,6 +33,13 @@ def _unary(op: str, a: Expr, w: int) -> Expr:
         return _truncate(a, w)
     if op in ("zx", "sx") and isinstance(a, UnOp) and a.op == op:
         return UnOp(op, a.operand, w)
+    if op == "zx" and isinstance(a, BinOp) and a.op in ("eq", "ne"):
+        # bool_to_int of a 0/1 value tested against zero is the value or its complement
+        for value, other in ((a.left, a.right), (a.right, a.left)):
+            if isinstance(other, Const) and other.value == 0:
+                found = compare_with_zero(value, a.op, w)
+                if found is not None:
+                    return _norm(found)
     if op == "zx":
         widened = _widen(a, w)
         if widened is not None and possible_ones(widened) >> a.width == 0:
@@ -81,6 +88,18 @@ def _truncate(a: Expr, w: int) -> Expr:
     return UnOp("trunc", a, w)
 
 
+def _compare(op: str, a: Expr, b: Expr) -> Expr:
+    """Comparisons decided by their form: equal operands, and unsigned bounds 0 and all-ones."""
+    if a == b:
+        return Const(int(op in ("eq", "ule", "uge", "sle", "sge")), 1)
+    if isinstance(b, Const):
+        m = mask(b.width)
+        decided = {("ult", 0): 0, ("uge", 0): 1, ("ugt", m): 0, ("ule", m): 1}.get((op, b.value))
+        if decided is not None:
+            return Const(decided, 1)
+    return BinOp(op, a, b, 1)
+
+
 def _key(e: Expr) -> tuple[int, str]:
     rank = 0 if isinstance(e, Const) else 1 if isinstance(e, Var) else 2
     return rank, to_str(e)
@@ -95,6 +114,8 @@ def _binary(op: str, a: Expr, b: Expr, w: int) -> Expr:
     m = mask(w)
     if isinstance(a, Const) and isinstance(b, Const):
         return Const(evaluate(BinOp(op, a, b, w), {}), w)
+    if op in CMP_OPS:
+        return _compare(op, a, b)
     if op == "shl" and isinstance(b, Const) and b.value < w:
         return _binary("mul", Const(1 << b.value, w), a, w)
     if op == "sub":

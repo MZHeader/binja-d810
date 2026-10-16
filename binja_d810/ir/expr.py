@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterator, Mapping, Union
 
-BINARY_OPS = frozenset({"add", "sub", "mul", "and", "or", "xor", "shl", "lshr", "ashr", "rol", "ror"})
+# Comparisons: 1-bit results of two operands of equal width (signed ones use two's complement).
+CMP_OPS = frozenset({"eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge"})
+BINARY_OPS = frozenset({"add", "sub", "mul", "and", "or", "xor", "shl", "lshr", "ashr", "rol", "ror"}) | CMP_OPS
 UNARY_OPS = frozenset({"neg", "not", "zx", "sx", "trunc"})
 SHIFT_OPS = frozenset({"shl", "lshr", "ashr"})
 ROTATE_OPS = frozenset({"rol", "ror"})  # count modulo the width; neither arithmetic nor bitwise for is_mba
@@ -50,6 +52,10 @@ class BinOp:
     def __post_init__(self) -> None:
         if self.op not in BINARY_OPS:
             raise ValueError(f"unknown binary op {self.op!r}")
+        if self.op in CMP_OPS:
+            if self.width != 1 or self.left.width != self.right.width:
+                raise ValueError(f"comparison {self.op} of {self.left.width}/{self.right.width} bits -> {self.width}")
+            return
         if self.left.width != self.width or (self.op not in COUNT_OPS and self.right.width != self.width):
             raise ValueError(f"width mismatch in {self.op}: {self.left.width}/{self.right.width} -> {self.width}")
 
@@ -135,9 +141,22 @@ def to_str(e: Expr) -> str:
         return f"{e.op}{e.width}({inner})"
     if e.op == "ashr":
         return f"sar({to_str(e.left)}, {to_str(e.right)})"
-    if e.op in ROTATE_OPS:
+    if e.op in ROTATE_OPS or e.op in CMP_OPS:
         return f"{e.op}({to_str(e.left)}, {to_str(e.right)})"
     return f"({to_str(e.left)} {_SYMBOLS[e.op]} {to_str(e.right)})"
+
+
+def is_candidate(e: Expr) -> bool:
+    """Worth simplifying: an MBA, or a comparison over a bitwise operation or a product of two
+    non-constants (opaque predicates). Plain comparisons (i < n - 1) are left to Binary Ninja."""
+    if is_mba(e):
+        return True
+    nodes = list(walk(e))
+    if not any(isinstance(n, BinOp) and n.op in CMP_OPS for n in nodes):
+        return False
+    return any((isinstance(n, (BinOp, UnOp)) and n.op in BITWISE_OPS)
+               or (isinstance(n, BinOp) and n.op == "mul" and not isinstance(n.left, Const)
+                   and not isinstance(n.right, Const)) for n in nodes)
 
 
 def without_refs(e: Expr) -> Expr:

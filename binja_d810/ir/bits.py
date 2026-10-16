@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .evaluate import shift_count
-from .expr import BinOp, Const, Expr, UnOp, Var, mask
+from .expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var, mask
 
 
 def possible_ones(e: Expr) -> int:
@@ -24,6 +24,8 @@ def possible_ones(e: Expr) -> int:
             return inner | (m & ~mask(e.operand.width)) if inner & sign else inner
         return m  # neg, not
     assert isinstance(e, BinOp)
+    if e.op in CMP_OPS:
+        return 1
     left, right = possible_ones(e.left), possible_ones(e.right)
     if e.op == "and":
         return left & right

@@ -17,7 +17,7 @@ from binaryninja import (
 
 from ...ir.expr import Expr, is_mba
 from ..adapter import Candidate, Skip
-from ..deadcode import dead_definitions
+from ..deadcode import dead_definitions, dying_with_root
 from ..effects import hlil_effect
 from .lift import SUPPORTED_OPS, candidate_roots, children, expression_roots, lift
 from .lower import lower
@@ -58,11 +58,29 @@ class HLILAdapter:
                 if seen is not None and is_mba(seen):
                     skip(expr.address, reason)
             for root in roots:
-                inlined: set = set()
+                inlined: dict = {}
                 ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, inlined=inlined)
                 if ir is not None and is_mba(ir):
                     defines, single = self._defines(statement, root)
-                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined))
+                    nodes, mixed = self._visible(root, inlined)
+                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed)
+
+    def _visible(self, root: HighLevelILInstruction, inlined: dict):
+        """Size and mix of what the user sees: the root plus the definitions that die with it."""
+        ssa = self.hlil.ssa_form
+        definitions = {key: ssa.get_ssa_var_definition(var) for key, var in inlined.items()}
+        definitions = {key: d for key, d in definitions.items() if d is not None and hasattr(d, "src")}
+        uses = {key: [u.instr_index for u in ssa.get_ssa_var_uses(inlined[key])] for key in definitions}
+        dying = dying_with_root(uses, {key: d.instr_index for key, d in definitions.items()},
+                                root.ssa_form.instr_index)
+        trees = [root] + [definitions[key].src for key in dying]
+        ops = set()
+        size = 0
+        for tree in trees:
+            for node in _expression_nodes(tree):
+                ops.add(node.operation)
+                size += 1
+        return size, bool(ops & _ARITH) and bool(ops & _BITWISE)
 
     def _defines(self, statement: HighLevelILInstruction, root: HighLevelILInstruction):
         """The SSA value the root is the whole definition of, and whether it has one use."""
@@ -141,6 +159,14 @@ def shallow_copy(hlil: HighLevelILFunction, e: HighLevelILInstruction) -> int:
     raw = list(e.core_operands) + [0] * 5
     return hlil.expr(e.operation, raw[0], raw[1], raw[2], raw[3], raw[4], size=e.size,
                      source_location=e.source_location)
+
+
+def _expression_nodes(e: HighLevelILInstruction):
+    stack = [e]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(child for child in children(node) if child.operation not in _STRUCTURE)
 
 
 def _walk_structure(root: HighLevelILInstruction):

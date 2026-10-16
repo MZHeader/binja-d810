@@ -85,3 +85,15 @@ def fit(e: Expr, width: int) -> Optional[Expr]:
     if isinstance(e, Const):
         return Const(e.value, width)
     return UnOp("trunc", e, width)
+
+
+def visible_size(e: Expr) -> int:
+    """Nodes as they will appear in the IL: a read of part of a variable (trunc(b >> 8), lowered as
+    one field read) counts once."""
+    if as_field(e) is not None:
+        return 1
+    if isinstance(e, BinOp):
+        return 1 + visible_size(e.left) + visible_size(e.right)
+    if isinstance(e, UnOp):
+        return 1 + visible_size(e.operand)
+    return 1

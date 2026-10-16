@@ -20,6 +20,10 @@ class Candidate:
     defines: Optional[Hashable] = None
     single_use: bool = False
     consumes: frozenset = frozenset()
+    # What the user sees today: the root as written plus the definitions that die with it (all of
+    # their uses are in this root). None: unknown, no visible-cost check.
+    visible_nodes: Optional[int] = None
+    visible_mixed: Optional[bool] = None
 
 
 Skip = Callable[[int, str], None]

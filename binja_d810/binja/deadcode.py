@@ -21,3 +21,20 @@ def dead_definitions(pure: Mapping[Hashable, Iterable[Hashable]], roots: Iterabl
         live.add(key)
         work.extend(pure.get(key, ()))
     return {key for key in pure if key not in live}
+
+
+def dying_with_root(uses: Mapping[Hashable, Iterable[int]], defined_at: Mapping[Hashable, int],
+                    root_statement: int) -> set[Hashable]:
+    """The inlined definitions a rewrite of the root would leave dead: every use is in the root's
+    statement or in another such definition. Used to measure the code a rewrite really replaces."""
+    dying: set = set()
+    changed = True
+    while changed:
+        changed = False
+        allowed = {root_statement} | {defined_at[d] for d in dying}
+        for key, statements in uses.items():
+            statements = list(statements)
+            if key not in dying and statements and all(s in allowed for s in statements):
+                dying.add(key)
+                changed = True
+    return dying

@@ -118,3 +118,10 @@ def test_wider_operands_of_modular_operations_are_truncated_exactly():
             assert evaluate(narrow, env) == evaluate(wide, env) & 0xFFFFFFFF
     assert storage.fit(Const(5, 64), 32) == Const(5, 32)
     assert storage.fit(Var("a", 8), 32) is None  # a narrower operand needs an extension the IL did not give
+
+
+def test_visible_size_counts_a_field_read_as_one_node():
+    b = Var("@rax#0", 64)
+    read = storage.field_read(b, 8, 8)  # rax.ah: one IL node once lowered
+    assert storage.visible_size(BinOp("add", read, storage.field_read(Var("@rdx#0", 64), 8, 8), 8)) == 3
+    assert storage.visible_size(BinOp("add", Var("x", 32), Const(1, 32), 32)) == 3

@@ -87,7 +87,7 @@ def lift(ssa_expr: HighLevelILInstruction, *, aliased: frozenset = frozenset(), 
     lifter = _Lifter(ssa_expr, aliased, check_versions, max_nodes, effect_leaves)
     e = lifter.expr(ssa_expr, inlined=False)
     if e is not None and inlined is not None:
-        inlined.update(lifter.inlined)
+        inlined.update(lifter.inlined)  # (variable identifier, version) -> SSA variable
     return None if e is None else _relate(e)
 
 
@@ -138,7 +138,7 @@ class _Lifter:
         self.budget = max_nodes
         self.effect_leaves = effect_leaves
         self.names: dict[tuple, str] = {}
-        self.inlined: set[tuple[int, int]] = set()
+        self.inlined: dict[tuple[int, int], object] = {}  # (identifier, version) -> SSA variable
 
     def expr(self, e: HighLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
         self.budget -= 1
@@ -182,11 +182,11 @@ class _Lifter:
         definition = self.ssa.get_ssa_var_definition(ssa_var)
         if (definition is not None and definition.operation in _DEFINITIONS and definition.src.size * 8 == width
                 and self.budget > 0 and ssa_var.var not in self.aliased):
-            saved, saved_inlined = self.budget, set(self.inlined)
+            saved, saved_inlined = self.budget, dict(self.inlined)
             if hlil_effect(definition.src, self.aliased) is None:
                 inner = self.expr(definition.src, inlined=True)
                 if inner is not None:
-                    self.inlined.add((ssa_var.var.identifier, ssa_var.version))
+                    self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
                     return inner
             self.budget, self.inlined = saved, saved_inlined
         if not self.live(ssa_var) or ssa_var.var in self.aliased:

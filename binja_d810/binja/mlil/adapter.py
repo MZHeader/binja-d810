@@ -10,7 +10,7 @@ from binaryninja import (
 
 from ...ir.expr import Expr, is_mba
 from ..adapter import Candidate, Skip
-from ..deadcode import dead_definitions
+from ..deadcode import dead_definitions, dying_with_root
 from .lift import SUPPORTED_OPS, candidate_roots, lift
 from .lower import lower
 
@@ -48,11 +48,24 @@ class MLILAdapter:
                 if seen is not None and is_mba(seen):
                     skip(expr.address, reason)
             for root in roots:
-                inlined: set = set()
+                inlined: dict = {}
                 ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes, inlined=inlined)
                 if ir is not None and is_mba(ir):
                     defines, single = self._defines(instr, root)
-                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined))
+                    nodes, mixed = self._visible(instr, root, inlined)
+                    yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed)
+
+    def _visible(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction, inlined: dict):
+        """Size and mix of what the user sees: the root plus the definitions that die with it."""
+        ssa = self.mlil.ssa_form
+        definitions = {key: ssa.get_ssa_var_definition(var) for key, var in inlined.items()}
+        definitions = {key: d for key, d in definitions.items() if d is not None and hasattr(d, "src")}
+        uses = {key: [u.instr_index for u in ssa.get_ssa_var_uses(inlined[key])] for key in definitions}
+        dying = dying_with_root(uses, {key: d.instr_index for key, d in definitions.items()},
+                                instr.ssa_form.instr_index)
+        trees = [root] + [definitions[key].src for key in dying]
+        ops = set().union(*(set(_operations(tree)) for tree in trees))
+        return sum(_size(tree) for tree in trees), bool(ops & _ARITH) and bool(ops & _BITWISE)
 
     def _defines(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction):
         """The SSA value the root is the whole definition of, and whether it has one use."""
@@ -115,6 +128,10 @@ def _operations(e: MediumLevelILInstruction):
         node = stack.pop()
         yield node.operation
         stack.extend(op for op in node.operands if isinstance(op, MediumLevelILInstruction))
+
+
+def _size(e: MediumLevelILInstruction) -> int:
+    return sum(1 for _ in _operations(e))
 
 
 def _pure(e: MediumLevelILInstruction) -> bool:

@@ -12,12 +12,13 @@ from dataclasses import dataclass, field
 from typing import NamedTuple, Sequence
 
 from ..deadline import Deadline
-from ..ir.expr import to_str
+from ..ir.expr import is_mba, to_str
 from ..semantic import cobra_shim
 from ..rules.base import Rule
 from ..semantic.backend import Tier2Backend
 from ..simplify import Limits, simplify_expression
 from .adapter import ILAdapter
+from .storage import visible_size
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,19 @@ class FunctionReport:
         return Counter(r.verdict for r in self.rewrites)
 
 
+def _grows_visible_code(candidate, replacement) -> bool:
+    """The size gate (simplify._worth_applying) compares with the lifted form, which inlines
+    definitions. When those definitions stay alive, the rewrite only copies them into the root:
+    `arg2 - arg1 + rdi_1` (rdi_1 = arg1 & ~0x7f, used elsewhere) became `arg2 - (0x7f & arg1)`. A
+    rewrite must not grow what is visible, nor mix arithmetic and bitwise operations where the
+    visible code did not."""
+    if candidate.visible_nodes is None:
+        return False
+    if visible_size(replacement) > candidate.visible_nodes:
+        return True
+    return not candidate.visible_mixed and is_mba(replacement)
+
+
 def simplify_function(adapter: ILAdapter, rules: Sequence[Rule], backends: Sequence[Tier2Backend],
                       config: EngineConfig, deadline: Deadline = Deadline.never()) -> FunctionReport:
     start = time.monotonic()
@@ -128,7 +142,9 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
                     report.errors.append(ErrorRecord(source, message, level))
                 if outcome.skipped:
                     skip(candidate.address, outcome.skipped)
-                if outcome.rewrite is not None:
+                if outcome.rewrite is not None and _grows_visible_code(candidate, outcome.rewrite.replacement):
+                    skip(candidate.address, "would make the visible code larger or newly mixed")
+                elif outcome.rewrite is not None:
                     planned.append((candidate, outcome.rewrite))
                     consumed |= candidate.consumes
             now = time.monotonic()

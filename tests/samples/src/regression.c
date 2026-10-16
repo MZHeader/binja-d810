@@ -26,3 +26,16 @@ EXPORT uint32_t reg_rotl(uint32_t x, uint32_t r) { return (x << (r & 31)) | (x >
 EXPORT uint32_t reg_clear_lowest(uint32_t x) { return x & (x - 1u); }
 EXPORT uint32_t reg_average(uint32_t x, uint32_t y) { return (x & y) + ((x ^ y) >> 1); }
 EXPORT uint32_t reg_abs_diff(int32_t x, int32_t y) { int32_t d = x - y; int32_t m = d >> 31; return (uint32_t)((d ^ m) - m); }
+// glibc's AVX2 strcasecmp: an aligned base reused, so inlining it into the window offset only
+// copies it (v2.0 rewrote b - a + base into b - (a & 0x7f)).
+EXPORT uint64_t reg_align_window(uint64_t a, uint64_t b, uint64_t n) {
+    uint64_t base = a & ~(uint64_t)0x7f;
+    uint64_t off = b - a + base;
+    return off ^ (base * n);
+}
+// Constant chains: ((x & 4095) - 3968) - 96 is constant folding, not deobfuscation.
+EXPORT uint32_t reg_window_bound(uint32_t x, uint32_t y) {
+    uint32_t r = x & 4095u;
+    uint32_t i = r - 0xfe0u;
+    return (r - 0xf80u > 0x60u) ? i : y;
+}

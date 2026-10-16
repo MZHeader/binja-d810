@@ -87,3 +87,25 @@ def test_redundant_shift_count_mask_is_not_worth_a_rewrite():
 
     e = parse("x >> (((32 - r) & 31) & 31)", 32)
     assert simplify_expression(e, [], default_backends()).rewrite is None
+
+
+def test_constant_chains_through_subtraction_are_folded():
+    # ((x & 4095) - 3968) - 96 in ordinary code: folding is normalization, not a rewrite.
+    for text, expected in [("((x & 4095) - 3968) - 96", "(x & 4095) - 4064"), ("(x - 3) + 10", "x + 7"),
+                           ("(x + 10) - 3", "x + 7"), ("(x - 3) - (-3)", "x")]:
+        assert normalize(parse(text, 32)) == normalize(parse(expected, 32)), text
+
+
+def test_a_field_of_a_field_is_one_field_read():
+    # rdx = x.di; rdx.dh  ->  byte 1 of x's register: trunc8(trunc16(b) >> 8) == trunc8(b >> 8).
+    b = Var("b", 64)
+    nested = UnOp("trunc", BinOp("lshr", UnOp("trunc", b, 16), Const(8, 16), 16), 8)
+    flat = UnOp("trunc", BinOp("lshr", b, Const(8, 64), 64), 8)
+    assert normalize(nested) == normalize(flat)
+    rng = random.Random(1)
+    for _ in range(200):
+        v = rng.getrandbits(64)
+        assert evaluate(nested, {"b": v}) == evaluate(flat, {"b": v})
+    # Not when the shifted window leaves the inner truncation: trunc8(trunc12(b) >> 8) keeps 4 bits.
+    partial = UnOp("trunc", BinOp("lshr", UnOp("trunc", Var("c", 64), 16), Const(12, 16), 16), 8)
+    assert normalize(partial) != normalize(UnOp("trunc", BinOp("lshr", Var("c", 64), Const(12, 64), 64), 8))

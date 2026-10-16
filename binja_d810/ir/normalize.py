@@ -53,6 +53,11 @@ def _truncate(a: Expr, w: int) -> Expr:
         return UnOp(a.op, _truncate(a.operand, w), w)
     if isinstance(a, BinOp) and a.op in _TRUNC_THROUGH:
         return BinOp(a.op, _truncate(a.left, w), _truncate(a.right, w), w)
+    if (isinstance(a, BinOp) and a.op == "lshr" and isinstance(a.right, Const) and isinstance(a.left, UnOp)
+            and a.left.op == "trunc" and a.right.value + w <= a.width):
+        # trunc_w(trunc_v(x) >> c) with the window inside v: the same bits of x (rdx = x.di; rdx.dh).
+        inner = a.left.operand
+        return _truncate(BinOp("lshr", inner, Const(a.right.value, inner.width), inner.width), w)
     return UnOp("trunc", a, w)
 
 
@@ -75,6 +80,10 @@ def _binary(op: str, a: Expr, b: Expr, w: int) -> Expr:
     if op == "sub":
         if a == b:
             return Const(0, w)
+        if isinstance(b, Const) and isinstance(a, BinOp) and a.op == "sub" and isinstance(a.right, Const):
+            return _binary("sub", a.left, Const(a.right.value + b.value, w), w)  # (x - c1) - c2
+        if isinstance(b, Const) and isinstance(a, BinOp) and a.op == "add" and isinstance(a.left, Const):
+            return _binary("add", Const(a.left.value - b.value, w), a.right, w)  # (c1 + x) - c2
         if isinstance(a, Const) and a.value == 0:
             return UnOp("neg", b, w)
         if isinstance(b, Const) and b.value == 0:
@@ -105,6 +114,8 @@ def _binary(op: str, a: Expr, b: Expr, w: int) -> Expr:
             return UnOp("neg", b, w)
         if op == "add" and _is_negative(a):
             return BinOp("sub", b, Const(-c, w), w)
+    if op == "add" and isinstance(a, Const) and isinstance(b, BinOp) and b.op == "sub" and isinstance(b.right, Const):
+        return _binary("sub", b.left, Const(b.right.value - a.value, w), w)  # c2 + (x - c1)
     if op == "add":
         if isinstance(b, UnOp) and b.op == "neg":
             return BinOp("sub", a, b.operand, w)

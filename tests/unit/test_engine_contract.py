@@ -158,3 +158,32 @@ def test_a_consumer_that_does_not_simplify_leaves_its_inputs_to_be_simplified():
     adapter = ChainAdapter(consumer_simplifies=False)
     report = simplify_function(adapter, [], [LinearMBABackend()], EngineConfig(max_iterations=1))
     assert [r.address for r in report.rewrites] == [0x10] and report.subsumed == 0
+
+
+class VisibleAdapter(FakeAdapter):
+    """One root whose lift inlined definitions that stay alive (visible form: 5 nodes, unmixed)."""
+
+    def __init__(self, visible_nodes, visible_mixed):
+        super().__init__({"r": p("(b - a) + (a & 0xffffff80)")})
+        self.visible = (visible_nodes, visible_mixed)
+
+    def candidates(self, skip):
+        yield Candidate("r", 0x30, self.roots["r"], visible_nodes=self.visible[0], visible_mixed=self.visible[1])
+
+
+def test_a_rewrite_never_introduces_a_mix_the_visible_code_did_not_have():
+    # strcasecmp: rsi_2 = arg2 - arg1 + rdi_1 with rdi_1 = arg1 & ~0x7f still used elsewhere. The lift
+    # is mixed and shrinks to arg2 - (0x7f & arg1), but what the user sees was unmixed.
+    from binja_d810.semantic.backend import default_backends
+
+    adapter = VisibleAdapter(visible_nodes=5, visible_mixed=False)
+    report = simplify_function(adapter, [], default_backends(), EngineConfig())
+    assert report.rewrites == [] and any("visible" in s.reason for s in report.skipped)
+
+
+def test_a_rewrite_that_shrinks_the_visible_code_is_applied():
+    from binja_d810.semantic.backend import default_backends
+
+    adapter = VisibleAdapter(visible_nodes=9, visible_mixed=True)
+    report = simplify_function(adapter, [], default_backends(), EngineConfig())
+    assert len(report.rewrites) == 1

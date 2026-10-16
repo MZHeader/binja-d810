@@ -67,7 +67,7 @@ def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruc
     lifter = _Lifter(ssa_expr.function, root_instr, check_versions, max_nodes, effect_leaves)
     e = lifter.expr(ssa_expr, inlined=False)
     if e is not None and inlined is not None:
-        inlined.update(lifter.inlined)  # (variable identifier, version) of each definition followed
+        inlined.update(lifter.inlined)  # (variable identifier, version) -> SSA variable, each definition followed
     return None if e is None else lifter.relate(e)
 
 
@@ -92,7 +92,7 @@ class _Lifter:
         self.effect_leaves = effect_leaves
         self.names: dict[tuple, str] = {}  # leaf identity -> IR name; names are labels, not identities
         self.backings: dict[tuple, Var] = {}
-        self.inlined: set[tuple[int, int]] = set()
+        self.inlined: dict[tuple[int, int], object] = {}  # (identifier, version) -> SSA variable
 
     def expr(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
         self.budget -= 1
@@ -141,10 +141,10 @@ class _Lifter:
     def var(self, ssa_var: SSAVariable, width: int) -> Optional[Expr]:
         definition = self.ssa.get_ssa_var_definition(ssa_var)
         if definition is not None and self.budget > 0:
-            saved, saved_inlined = self.budget, set(self.inlined)
+            saved, saved_inlined = self.budget, dict(self.inlined)
             inner = self.definition(definition, ssa_var, width)
             if inner is not None:
-                self.inlined.add((ssa_var.var.identifier, ssa_var.version))
+                self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
                 return inner
             self.budget, self.inlined = saved, saved_inlined
         if not self.live(ssa_var):
@@ -181,6 +181,7 @@ class _Lifter:
             if kind == "inside":
                 value = self.expr(definition.src, inlined=True)
                 if value is not None:
+                    self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
                     return field_read(value, 8 * (offset - definition.offset), width)
             elif kind == "disjoint":
                 found = self.field(definition.prev, offset, width)
@@ -194,6 +195,7 @@ class _Lifter:
                 saved = self.budget
                 whole = self.definition(definition, ssa_var, declared)
                 if whole is not None:
+                    self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
                     return field_read(whole, 8 * offset, width)
                 self.budget = saved
         backing = self.backing(self.forward(ssa_var, offset, width // 8))

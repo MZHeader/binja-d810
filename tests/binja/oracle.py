@@ -26,6 +26,7 @@ PARAM_BITS = 64
 _BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: "and", H.HLIL_OR: "or",
            H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr", H.HLIL_ROL: "rol",
            H.HLIL_ROR: "ror"}
+_COMPARE = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne"}  # 0 or 1, at the operands' width
 _UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx", H.HLIL_LOW_PART: "low"}
 _SKIP = {H.HLIL_NOP, H.HLIL_VAR_DECLARE}
 
@@ -104,6 +105,13 @@ def _expr(e, env, params) -> tuple:
         return ("op", _BINARY[op], width, left, right)
     if op in _UNARY:
         return ("op", _UNARY[op], width, _expr(e.src, env, params))
+    if op == H.HLIL_BOOL_TO_INT:  # (x & 1) != 0 ? 1 : 0
+        inner = _expr(e.src, env, params)
+        have = _width(inner)
+        return inner if have == width else ("bits", inner, 0, width) if have > width else ("op", "zx", width, inner)
+    if op in _COMPARE:
+        return ("op", _COMPARE[op], width, _fit(_expr(e.left, env, params), width, e),
+                _fit(_expr(e.right, env, params), width, e))
     if op == H.HLIL_SPLIT:
         return ("op", "concat", width, _expr(e.high, env, params), _expr(e.low, env, params))
     raise Unvalidated(f"unsupported expression {op.name}: {e}")
@@ -191,6 +199,8 @@ def evaluate(x: tuple, env: dict[str, int]) -> int:
     if name == "concat":
         return ((vals[0] << _width(args[1])) | vals[1]) & m
     a, b = vals
+    if name in ("eq", "ne"):
+        return int((a == b) == (name == "eq"))
     if name in ("rol", "ror"):  # count modulo the width (Binary Ninja's dataflow)
         c = b % width
         if c == 0:
@@ -231,6 +241,9 @@ def to_z3(x: tuple, symbols: dict):
     if name == "concat":
         return z3.Concat(vals[0], vals[1])
     a, b = vals
+    if name in ("eq", "ne"):
+        one, zero = z3.BitVecVal(1, width), z3.BitVecVal(0, width)
+        return z3.If(a == b, one, zero) if name == "eq" else z3.If(a == b, zero, one)
     if name in ("rol", "ror"):
         bw = b.size()
         b = z3.ZeroExt(width - bw, b) if bw < width else z3.Extract(width - 1, 0, z3.URem(b, z3.BitVecVal(width, bw))) if bw > width else b
@@ -245,8 +258,8 @@ def to_z3(x: tuple, symbols: dict):
 
 
 def reference(text: str, width: int) -> tuple:
-    """Parse a C-like reference answer (+ - * & | ^ ~ << >> and parentheses) with Python's ast.
-    Every name is a parameter read at `width` bits."""
+    """Parse a C-like reference answer (+ - * & | ^ ~ << >> == != and parentheses) with Python's ast.
+    Every name is a parameter read at `width` bits; a comparison is 0 or 1 at `width` bits."""
     def build(node) -> tuple:
         if isinstance(node, ast.Constant) and isinstance(node.value, int):
             return ("const", node.value & _mask(width), width)
@@ -259,6 +272,10 @@ def reference(text: str, width: int) -> tuple:
                      ast.BitXor: "xor", ast.LShift: "shl", ast.RShift: "lshr"}
             if type(node.op) in names:
                 return ("op", names[type(node.op)], width, build(node.left), build(node.right))
+        if (isinstance(node, ast.Compare) and len(node.ops) == 1
+                and isinstance(node.ops[0], (ast.Eq, ast.NotEq))):
+            name = "eq" if isinstance(node.ops[0], ast.Eq) else "ne"
+            return ("op", name, width, build(node.left), build(node.comparators[0]))
         raise ValueError(f"unsupported reference syntax: {ast.dump(node)}")
     return build(ast.parse(text, mode="eval").body)
 

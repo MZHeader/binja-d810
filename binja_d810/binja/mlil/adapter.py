@@ -17,6 +17,8 @@ from .lower import lower
 _ARITH = frozenset({Op.MLIL_ADD, Op.MLIL_SUB, Op.MLIL_MUL, Op.MLIL_NEG, Op.MLIL_LSL})
 _BITWISE = frozenset({Op.MLIL_AND, Op.MLIL_OR, Op.MLIL_XOR, Op.MLIL_NOT})
 _PURE_LEAVES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_VAR_SSA_FIELD, Op.MLIL_CONST, Op.MLIL_CONST_PTR})
+# Flags a rewrite may leave dead (cond:0 = t != 0 once t's 0/1 value is inlined): pure, never trap.
+_PURE_FLAGS = frozenset({Op.MLIL_CMP_E, Op.MLIL_CMP_NE, Op.MLIL_BOOL_TO_INT})
 
 
 class MLILAdapter:
@@ -40,16 +42,19 @@ class MLILAdapter:
     def candidates(self, skip: Skip) -> Iterator[Candidate]:
         if self.mlil.ssa_form is None:
             self.mlil.generate_ssa_form()
-        for instr in list(self.mlil.instructions):
+        definitions: dict = {}  # SSA definitions, shared by every lift of this SSA form
+        for instr in reversed(list(self.mlil.instructions)):
             rejected: list = []
             roots = list(candidate_roots(instr, rejected))
             for expr, reason in rejected:
-                seen = lift(expr.ssa_form, root_instr=instr, max_nodes=self.max_nodes, effect_leaves=True)
+                seen = lift(expr.ssa_form, root_instr=instr, max_nodes=self.max_nodes, effect_leaves=True,
+                            definitions=definitions)
                 if seen is not None and is_mba(seen):
                     skip(expr.address, reason)
-            for root in roots:
+            for root in reversed(roots):
                 inlined: dict = {}
-                ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes, inlined=inlined)
+                ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes, inlined=inlined,
+                          definitions=definitions)
                 if ir is not None and is_mba(ir):
                     defines, single = self._defines(instr, root)
                     nodes, mixed = self._visible(instr, root, inlined)
@@ -137,7 +142,7 @@ def _size(e: MediumLevelILInstruction) -> int:
 def _pure(e: MediumLevelILInstruction) -> bool:
     if e.operation in _PURE_LEAVES:
         return True
-    if e.operation not in SUPPORTED_OPS:
+    if e.operation not in SUPPORTED_OPS and e.operation not in _PURE_FLAGS:
         return False
     return all(_pure(op) for op in e.operands if isinstance(op, MediumLevelILInstruction))
 

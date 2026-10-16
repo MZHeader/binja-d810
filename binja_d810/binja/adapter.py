@@ -36,7 +36,8 @@ class ILAdapter(Protocol):
         """Cheap pre-check: does the function mix arithmetic and bitwise operations at all?"""
 
     def candidates(self, skip: Skip) -> Iterator[Candidate]:
-        """Every candidate whose lift is an MBA; roots split by effects are reported to `skip`."""
+        """Every candidate whose lift is an MBA, last first (a candidate before the definitions it
+        inlines), lifted lazily; roots split by effects are reported to `skip`."""
 
     def replace(self, candidate: Candidate, replacement: Expr) -> None:
         """Lower `replacement` and put it in place of the candidate's root, keeping a backup."""

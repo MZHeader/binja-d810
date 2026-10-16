@@ -14,6 +14,7 @@ from typing import Iterator, Optional
 
 from binaryninja import MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable, VariableSourceType
 
+from ...ir.bits import compare_with_zero
 from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ..effects import mlil_effect
 from ..storage import contained, field_read, fit, merge_partial_write, read_over_write
@@ -23,6 +24,7 @@ _BINARY = {Op.MLIL_ADD: "add", Op.MLIL_SUB: "sub", Op.MLIL_MUL: "mul", Op.MLIL_A
            Op.MLIL_ROL: "rol", Op.MLIL_ROR: "ror"}
 _UNARY = {Op.MLIL_NEG: "neg", Op.MLIL_NOT: "not", Op.MLIL_ZX: "zx", Op.MLIL_SX: "sx", Op.MLIL_LOW_PART: "trunc"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY)
+_COMPARE_ZERO = {Op.MLIL_CMP_E: "eq", Op.MLIL_CMP_NE: "ne"}
 
 
 @dataclass(frozen=True)
@@ -62,11 +64,16 @@ def candidate_roots(instr: MediumLevelILInstruction, rejected: Optional[list] = 
 
 def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruction,
          check_versions: bool = True, max_nodes: int = 200, effect_leaves: bool = False,
-         inlined: Optional[set] = None) -> Optional[Expr]:
+         inlined: Optional[set] = None, stats: Optional[dict] = None,
+         definitions: Optional[dict] = None) -> Optional[Expr]:
     """`effect_leaves` is for diagnostics only: effectful sub-expressions of the root become leaves
-    without a Binary Ninja ref, so the result can be classified but never lowered."""
-    lifter = _Lifter(ssa_expr.function, root_instr, check_versions, max_nodes, effect_leaves)
+    without a Binary Ninja ref, so the result can be classified but never lowered. `stats` receives
+    the number of IL nodes visited ("visits"), failed inlining attempts included. `definitions`
+    memoizes SSA definitions across lifts of one SSA form."""
+    lifter = _Lifter(ssa_expr.function, root_instr, check_versions, max_nodes, effect_leaves, definitions)
     e = lifter.expr(ssa_expr, inlined=False)
+    if stats is not None:
+        stats["visits"] = lifter.visits
     if e is not None and inlined is not None:
         inlined.update(lifter.inlined)  # (variable identifier, version) -> SSA variable, each definition followed
     return None if e is None else lifter.relate(e)
@@ -85,17 +92,28 @@ class Backing:
 
 
 class _Lifter:
-    def __init__(self, ssa_func, root, check_versions: bool, max_nodes: int, effect_leaves: bool = False):
+    def __init__(self, ssa_func, root, check_versions: bool, max_nodes: int, effect_leaves: bool = False,
+                 definitions: Optional[dict] = None):
         self.ssa = ssa_func
         self.root = root
         self.check = check_versions
         self.budget = max_nodes
+        # Bounded work (v2.1): when values are read several times (VM handlers), the fully inlined
+        # tree is exponential and a failed inlining attempt, undone, was retried at every read.
+        # Failed attempts are remembered with their budget, inlined values are reused, and no new
+        # attempt starts after 3 * max_nodes visits.
+        self.visits = 0
+        self.max_visits = 3 * max_nodes
+        self.failed: dict[tuple, int] = {}  # (identifier, version, width) -> largest budget that failed
+        self.done: dict[tuple, tuple] = {}  # (identifier, version, width) -> (expr, nodes, inlined)
+        self.definitions = {} if definitions is None else definitions
         self.effect_leaves = effect_leaves
         self.names: dict[tuple, str] = {}  # leaf identity -> IR name; names are labels, not identities
         self.backings: dict[tuple, Var] = {}
         self.inlined: dict[tuple[int, int], object] = {}  # (identifier, version) -> SSA variable
 
     def expr(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
+        self.visits += 1
         self.budget -= 1
         if self.budget < 0:
             return None
@@ -132,6 +150,10 @@ class _Lifter:
                 return UnOp(_UNARY[op], operand, width)
             except ValueError:
                 return None
+        elif op == Op.MLIL_BOOL_TO_INT:
+            found = self.flag(e.src, width, inlined=inlined)
+            if found is not None:
+                return found
         if inlined:
             return None  # never move loads or other unsupported expressions across instructions
         if mlil_effect(e) is not None:
@@ -140,13 +162,19 @@ class _Lifter:
         return Var(f"opaque@{e.expr_index}", width, ref=Opaque(e.non_ssa_form))
 
     def var(self, ssa_var: SSAVariable, width: int) -> Optional[Expr]:
-        definition = self.ssa.get_ssa_var_definition(ssa_var)
-        if definition is not None and self.budget > 0:
+        key = (ssa_var.var.identifier, ssa_var.version, width)
+        reused = self.reuse(key)
+        if reused is not None:
+            return reused
+        definition = self.definition_of(ssa_var)
+        if definition is not None and self.may_inline(key):
             saved, saved_inlined = self.budget, dict(self.inlined)
             inner = self.definition(definition, ssa_var, width)
             if inner is not None:
                 self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
+                self.remember(key, inner, saved, saved_inlined)
                 return inner
+            self.failed[key] = max(self.failed.get(key, 0), saved)
             self.budget, self.inlined = saved, saved_inlined
         if not self.live(ssa_var):
             return None  # overwritten before the root and not rebuildable from live values
@@ -154,12 +182,59 @@ class _Lifter:
         return Var(self.name(("var", ssa_var.var.identifier, ssa_var.version, width), f"{ssa_var.var.name}#{ssa_var.version}"),
                    width, ref=ssa_var)
 
+    def definition_of(self, ssa_var: SSAVariable):
+        key = (ssa_var.var.identifier, ssa_var.version)
+        if key not in self.definitions:
+            self.definitions[key] = self.ssa.get_ssa_var_definition(ssa_var)
+        return self.definitions[key]
+
+    def may_inline(self, key: tuple) -> bool:
+        return self.budget > self.failed.get(key, 0) and self.visits < self.max_visits
+
+    def reuse(self, key: tuple) -> Optional[Expr]:
+        found = self.done.get(key)
+        if found is None or found[1] > self.budget:
+            return None
+        expr, nodes, inlined = found
+        self.budget -= nodes
+        self.inlined.update(inlined)
+        return expr
+
+    def remember(self, key: tuple, expr: Expr, saved_budget: int, saved_inlined: dict) -> None:
+        added = {k: v for k, v in self.inlined.items() if k not in saved_inlined}
+        self.done[key] = (expr, saved_budget - self.budget, added)
+
+    def flag(self, e: MediumLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
+        """A boolean as a `width`-bit 0 or 1 (x86 setcc, ARM64 cset): a flag variable (cond:0 = t != 0)
+        or a comparison with zero of a value that can only be 0 or 1 (ir.bits.compare_with_zero)."""
+        if e.operation == Op.MLIL_VAR_SSA and e.size == 0:
+            definition = self.definition_of(e.src)
+            if definition is None or definition.operation != Op.MLIL_SET_VAR_SSA or not _is_flag(definition.src):
+                return None
+            found = self.flag(definition.src, width, inlined=True)
+            if found is not None:
+                self.inlined[(e.src.var.identifier, e.src.version)] = e.src
+            return found
+        kind = _COMPARE_ZERO.get(e.operation)
+        if kind is None:
+            return None
+        if _is_zero(e.right):
+            operand = e.left
+        elif _is_zero(e.left):
+            operand = e.right
+        else:
+            return None
+        value = self.expr(operand, inlined=inlined)
+        return None if value is None else compare_with_zero(value, kind, width)
+
     def definition(self, definition, ssa_var: SSAVariable, width: int) -> Optional[Expr]:
+        if definition.operation == Op.MLIL_SET_VAR_SSA and _is_flag(definition.src):
+            return self.flag(definition.src, width, inlined=True)  # r15 = cond:0
         if definition.operation == Op.MLIL_SET_VAR_SSA and definition.src.size * 8 == width:
             return self.expr(definition.src, inlined=True)
         if definition.operation == Op.MLIL_SET_VAR_SSA_FIELD and _declared_bits(ssa_var.var) == width:
             # A write of part of the variable that keeps the rest of it: rax#2 = rax#1 with .al = e.
-            value = self.expr(definition.src, inlined=True)
+            value = self.written(definition)
             if value is None or 8 * definition.offset + value.width > width:
                 return None
             old = self.var(definition.prev, width)
@@ -171,16 +246,23 @@ class _Lifter:
                 return None
         return None
 
+    def written(self, definition) -> Optional[Expr]:
+        """The value a partial write (SET_VAR_SSA_FIELD) stores: rcx#2.cl = rax#2 != 0 @ rcx#1."""
+        if _is_flag(definition.src):
+            return self.flag(definition.src, 8 * _written_bytes(definition), inlined=True)
+        return self.expr(definition.src, inlined=True)
+
     def field(self, ssa_var: SSAVariable, offset: int, width: int) -> Optional[Expr]:
         """A read of `width` bits at byte `offset` of a variable's storage (spec section 6.1)."""
         declared = _declared_bits(ssa_var.var)
-        definition = self.ssa.get_ssa_var_definition(ssa_var)
-        if definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA_FIELD and self.budget > 0:
+        definition = self.definition_of(ssa_var)
+        if (definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA_FIELD and self.budget > 0
+                and self.visits < self.max_visits):
             # Read over a partial write: x86 -O0 spills bytes into one slot (var_8:7.b = y; ...).
-            kind = read_over_write(offset, width // 8, definition.offset, definition.src.size)
+            kind = read_over_write(offset, width // 8, definition.offset, _written_bytes(definition))
             saved = self.budget
             if kind == "inside":
-                value = self.expr(definition.src, inlined=True)
+                value = self.written(definition)
                 if value is not None:
                     self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
                     return field_read(value, 8 * (offset - definition.offset), width)
@@ -191,8 +273,8 @@ class _Lifter:
             self.budget = saved
         if declared and contained(offset, width // 8, declared // 8):
             # Within the variable itself: its definition, if any, gives every bit.
-            definition = self.ssa.get_ssa_var_definition(ssa_var)
-            if definition is not None and self.budget > 0:
+            definition = self.definition_of(ssa_var)
+            if definition is not None and self.budget > 0 and self.visits < self.max_visits:
                 saved = self.budget
                 whole = self.definition(definition, ssa_var, declared)
                 if whole is not None:
@@ -215,10 +297,10 @@ class _Lifter:
         for _ in range(64):
             if version == ssa_var.version:
                 return SSAVariable(ssa_var.var, current)
-            definition = self.ssa.get_ssa_var_definition(SSAVariable(ssa_var.var, version))
+            definition = self.definition_of(SSAVariable(ssa_var.var, version))
             if (definition is None or definition.operation != Op.MLIL_SET_VAR_SSA_FIELD
                     or definition.prev.var != ssa_var.var
-                    or read_over_write(offset, size, definition.offset, definition.src.size) != "disjoint"):
+                    or read_over_write(offset, size, definition.offset, _written_bytes(definition)) != "disjoint"):
                 return ssa_var
             version = definition.prev.version
         return ssa_var
@@ -279,6 +361,19 @@ def _substitute_leaves(e: Expr, mapping: dict[tuple[str, int], Expr]) -> Expr:
     if isinstance(e, UnOp):
         return UnOp(e.op, _substitute_leaves(e.operand, mapping), e.width)
     return BinOp(e.op, _substitute_leaves(e.left, mapping), _substitute_leaves(e.right, mapping), e.width)
+
+
+def _is_flag(e: MediumLevelILInstruction) -> bool:
+    return e.operation in _COMPARE_ZERO or (e.operation == Op.MLIL_VAR_SSA and e.size == 0)
+
+
+def _written_bytes(definition) -> int:
+    """Bytes a partial write stores: its own size (a comparison's size is its operands')."""
+    return definition.size if _is_flag(definition.src) else definition.src.size
+
+
+def _is_zero(e: MediumLevelILInstruction) -> bool:
+    return e.operation in (Op.MLIL_CONST, Op.MLIL_CONST_PTR) and e.constant == 0
 
 
 def _declared_bits(var) -> int:

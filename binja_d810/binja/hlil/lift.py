@@ -15,6 +15,7 @@ from typing import Iterator, Optional
 
 from binaryninja import HighLevelILInstruction, HighLevelILOperation as H
 
+from ...ir.bits import compare_with_zero
 from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ..effects import hlil_effect
 from ..storage import contained, field_read, fit
@@ -24,6 +25,7 @@ _BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: 
            H.HLIL_ROR: "ror"}
 _UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx", H.HLIL_LOW_PART: "trunc"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY)
+_COMPARE_ZERO = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne"}
 STRUCTURE = frozenset({H.HLIL_BLOCK, H.HLIL_IF, H.HLIL_WHILE, H.HLIL_DO_WHILE, H.HLIL_FOR, H.HLIL_SWITCH,
                        H.HLIL_CASE})
 _DEFINITIONS = frozenset({H.HLIL_VAR_INIT_SSA, H.HLIL_ASSIGN})
@@ -81,12 +83,17 @@ def candidate_roots(statement: HighLevelILInstruction, aliased: frozenset,
 
 
 def lift(ssa_expr: HighLevelILInstruction, *, aliased: frozenset = frozenset(), check_versions: bool = True,
-         max_nodes: int = 200, effect_leaves: bool = False, inlined: Optional[set] = None) -> Optional[Expr]:
+         max_nodes: int = 200, effect_leaves: bool = False, inlined: Optional[set] = None,
+         stats: Optional[dict] = None, definitions: Optional[dict] = None) -> Optional[Expr]:
     """`aliased` holds the address-taken variables (HighLevelILFunction.aliased_vars): their reads
     are never moved. `effect_leaves` is for diagnostics only: other operations become leaves
-    without a ref, so the result can be classified but never lowered."""
-    lifter = _Lifter(ssa_expr, aliased, check_versions, max_nodes, effect_leaves)
+    without a ref, so the result can be classified but never lowered. `stats` receives the number of
+    IL nodes visited ("visits"), failed inlining attempts included. `definitions` memoizes SSA
+    definitions across lifts of one SSA form."""
+    lifter = _Lifter(ssa_expr, aliased, check_versions, max_nodes, effect_leaves, definitions)
     e = lifter.expr(ssa_expr, inlined=False)
+    if stats is not None:
+        stats["visits"] = lifter.visits
     if e is not None and inlined is not None:
         inlined.update(lifter.inlined)  # (variable identifier, version) -> SSA variable
     return None if e is None else _relate(e)
@@ -99,6 +106,18 @@ class HLILBacking:
 
     var: object
     version: int
+
+
+def _compared(e: HighLevelILInstruction) -> Optional[HighLevelILInstruction]:
+    """The value a comparison with zero (possibly under BOOL_TO_INT) tests, else None."""
+    if e.operation == H.HLIL_BOOL_TO_INT:
+        e = e.src
+    if e.operation not in _COMPARE_ZERO:
+        return None
+    for value, other in ((e.left, e.right), (e.right, e.left)):
+        if other.operation in (H.HLIL_CONST, H.HLIL_CONST_PTR) and other.constant == 0:
+            return value
+    return None
 
 
 def _relate(e: Expr) -> Expr:
@@ -131,17 +150,25 @@ def _substitute_leaves(e: Expr, mapping: dict) -> Expr:
 
 class _Lifter:
     def __init__(self, root: HighLevelILInstruction, aliased: frozenset, check: bool, max_nodes: int,
-                 effect_leaves: bool):
+                 effect_leaves: bool, definitions: Optional[dict] = None):
         self.root = root
         self.aliased = aliased
         self.ssa = root.function
         self.check = check
         self.budget = max_nodes
+        # Bounded work: as in binja_d810.binja.mlil.lift (failed attempts remembered, inlined values
+        # reused, no new attempt after 3 * max_nodes visits).
+        self.visits = 0
+        self.max_visits = 3 * max_nodes
+        self.failed: dict[tuple, int] = {}
+        self.done: dict[tuple, tuple] = {}
+        self.definitions = {} if definitions is None else definitions
         self.effect_leaves = effect_leaves
         self.names: dict[tuple, str] = {}
         self.inlined: dict[tuple[int, int], object] = {}  # (identifier, version) -> SSA variable
 
     def expr(self, e: HighLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
+        self.visits += 1
         self.budget -= 1
         if self.budget < 0:
             return None
@@ -175,26 +202,57 @@ class _Lifter:
                 return UnOp(_UNARY[op], operand, width)
             except ValueError:
                 return None
+        if inlined and (op in _COMPARE_ZERO or op == H.HLIL_BOOL_TO_INT):
+            return self.flag(e, width)  # inside a definition: t = ((x & 1) != 0) & 1
         if self.effect_leaves and not inlined:
             return Var(f"effect@{e.expr_index}", width)
         return None
 
     def var(self, ssa_var, width: int) -> Optional[Expr]:
-        definition = self.ssa.get_ssa_var_definition(ssa_var)
-        if (definition is not None and definition.operation in _DEFINITIONS and definition.src.size * 8 == width
-                and self.budget > 0 and ssa_var.var not in self.aliased):
+        key = (ssa_var.var.identifier, ssa_var.version, width)
+        found = self.done.get(key)
+        if found is not None and found[1] <= self.budget:
+            expr, nodes, inlined = found
+            self.budget -= nodes
+            self.inlined.update(inlined)
+            return expr
+        definition = self.definition_of(ssa_var)
+        src = definition.src if definition is not None and definition.operation in _DEFINITIONS else None
+        compared = _compared(src) if src is not None else None  # r15_1 = rax_1 != 0
+        if (src is not None and (compared is not None or src.size * 8 == width)
+                and self.budget > self.failed.get(key, 0) and self.visits < self.max_visits
+                and ssa_var.var not in self.aliased):
             saved, saved_inlined = self.budget, dict(self.inlined)
-            if hlil_effect(definition.src, self.aliased) is None:
-                inner = self.expr(definition.src, inlined=True)
+            if hlil_effect(src if compared is None else compared, self.aliased) is None:
+                inner = self.expr(src, inlined=True) if compared is None else self.flag(src, width)
                 if inner is not None:
                     self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
+                    added = {k: v for k, v in self.inlined.items() if k not in saved_inlined}
+                    self.done[key] = (inner, saved - self.budget, added)
                     return inner
+            self.failed[key] = max(self.failed.get(key, 0), saved)
             self.budget, self.inlined = saved, saved_inlined
         if not self.live(ssa_var) or ssa_var.var in self.aliased:
             return None  # redefined before the root and not rebuildable from live values
         label = f"{ssa_var.var.name}#{ssa_var.version}"
         return Var(self.name(("var", ssa_var.var.identifier, ssa_var.version, width), label), width,
                    ref=ssa_var)
+
+    def flag(self, e: HighLevelILInstruction, width: int) -> Optional[Expr]:
+        """A comparison with zero of a value that can only be 0 or 1, as a `width`-bit 0 or 1
+        (ir.bits.compare_with_zero); other comparisons are not modelled."""
+        operand = _compared(e)
+        if operand is None:
+            return None
+        value = self.expr(operand, inlined=True)
+        kind = _COMPARE_ZERO[(e.src if e.operation == H.HLIL_BOOL_TO_INT else e).operation]
+        return None if value is None else compare_with_zero(value, kind, width)
+
+    def definition_of(self, ssa_var):
+        key = (ssa_var.var.identifier, ssa_var.version)
+        if key not in self.definitions:
+            self.definitions[key] = self.ssa.get_ssa_var_definition(ssa_var)
+        return self.definitions[key]
 
     def field(self, e: HighLevelILInstruction, width: int) -> Optional[Expr]:
         ssa_var = e.src.var

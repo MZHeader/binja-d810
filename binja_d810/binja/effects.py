@@ -54,9 +54,10 @@ def mlil_effect(tree) -> Optional[str]:
 HLIL_LEAVES = frozenset({"HLIL_VAR", "HLIL_VAR_SSA", "HLIL_CONST", "HLIL_CONST_PTR", "HLIL_STRUCT_FIELD"})
 
 
-def hlil_effect(tree, aliased: frozenset = frozenset()) -> Optional[str]:
+def hlil_effect(tree, aliased: frozenset = frozenset(), allowed: frozenset = frozenset()) -> Optional[str]:
     """None if the tree only reads variables (not address-taken ones), fields of them and
-    constants through supported operations; else the reason it is not a candidate."""
+    constants through supported operations (and the operation names in `allowed`); else the reason
+    it is not a candidate."""
     for node in _nodes(tree):
         name = node.operation.name
         if name in ("HLIL_VAR", "HLIL_VAR_SSA"):
@@ -68,7 +69,7 @@ def hlil_effect(tree, aliased: frozenset = frozenset()) -> Optional[str]:
             if node.src.operation.name not in ("HLIL_VAR", "HLIL_VAR_SSA"):
                 return "effect: HLIL_STRUCT_FIELD of a non-variable"
             continue
-        if name in HLIL_LEAVES or name in _HLIL_SUPPORTED:
+        if name in HLIL_LEAVES or name in _HLIL_SUPPORTED or name in allowed:
             continue
         return f"effect: {name}" if name not in _HLIL_PURE_UNSUPPORTED else f"unsupported: {name}"
     return None

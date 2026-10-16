@@ -109,3 +109,33 @@ def test_a_field_of_a_field_is_one_field_read():
     # Not when the shifted window leaves the inner truncation: trunc8(trunc12(b) >> 8) keeps 4 bits.
     partial = UnOp("trunc", BinOp("lshr", UnOp("trunc", Var("c", 64), 16), Const(12, 16), 16), 8)
     assert normalize(partial) != normalize(UnOp("trunc", BinOp("lshr", Var("c", 64), Const(12, 64), 64), 8))
+
+
+def test_extending_a_truncation_that_dropped_no_possible_ones_gives_the_value():
+    # x86 setne r15b; movzx r15d, r15b: zx32(trunc8(x & 1)) is x & 1.
+    t = normalize(BinOp("and", a, Const(1, 32), 32))
+    assert normalize(UnOp("zx", UnOp("trunc", t, 8), 32)) == t
+    assert normalize(UnOp("zx", UnOp("trunc", t, 8), 16)) == normalize(UnOp("trunc", t, 16))
+    wide = UnOp("zx", UnOp("trunc", a, 8), 32)
+    assert normalize(wide) == wide
+
+
+def test_widening_extensions_of_truncations_preserves_values():
+    rng = random.Random(11)
+
+    def narrow(depth):
+        if depth == 0 or rng.random() < 0.3:
+            choice = rng.random()
+            if choice < 0.4:
+                return UnOp("trunc", Var(rng.choice("ab"), 32), 8)
+            if choice < 0.7:
+                return UnOp("trunc", BinOp("and", Var(rng.choice("ab"), 32), Const(rng.choice([1, 3, 0x81]), 32), 32), 8)
+            return Const(rng.getrandbits(8), 8)
+        return BinOp(rng.choice(["and", "or", "xor"]), narrow(depth - 1), narrow(depth - 1), 8)
+
+    for _ in range(300):
+        e = UnOp("zx", narrow(3), 32)
+        normal = normalize(e)
+        for _ in range(8):
+            env = {"a": rng.getrandbits(32), "b": rng.getrandbits(32)}
+            assert evaluate(e, env) == evaluate(normal, env), (e, normal)

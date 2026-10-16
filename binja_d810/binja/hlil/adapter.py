@@ -25,6 +25,9 @@ from .lower import lower
 _ARITH = frozenset({H.HLIL_ADD, H.HLIL_SUB, H.HLIL_MUL, H.HLIL_NEG, H.HLIL_LSL})
 _BITWISE = frozenset({H.HLIL_AND, H.HLIL_OR, H.HLIL_XOR, H.HLIL_NOT})
 _PURE_LEAVES = frozenset({H.HLIL_VAR_SSA, H.HLIL_CONST, H.HLIL_CONST_PTR})
+# Flags a rewrite may leave dead (r15_1 = rax_1 != 0 once its 0/1 value is inlined): pure, never trap.
+_PURE_FLAGS = frozenset({H.HLIL_CMP_E, H.HLIL_CMP_NE, H.HLIL_BOOL_TO_INT})
+_PURE_FLAG_NAMES = frozenset(op.name for op in _PURE_FLAGS)
 
 
 class HLILAdapter:
@@ -50,16 +53,20 @@ class HLILAdapter:
     def candidates(self, skip: Skip) -> Iterator[Candidate]:
         if self.hlil.ssa_form is None:
             self.hlil.generate_ssa_form(self.aliased_list)
+        definitions: dict = {}  # SSA definitions, shared by every lift of this SSA form
+        # expression_roots walks statements last first (a stack over the body).
         for statement in list(expression_roots(self.hlil)):
             rejected: list = []
             roots = list(candidate_roots(statement, self.aliased, rejected))
             for expr, reason in rejected:
-                seen = lift(expr.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, effect_leaves=True)
+                seen = lift(expr.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, effect_leaves=True,
+                            definitions=definitions)
                 if seen is not None and is_mba(seen):
                     skip(expr.address, reason)
-            for root in roots:
+            for root in reversed(roots):
                 inlined: dict = {}
-                ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, inlined=inlined)
+                ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, inlined=inlined,
+                          definitions=definitions)
                 if ir is not None and is_mba(ir):
                     defines, single = self._defines(statement, root)
                     nodes, mixed = self._visible(root, inlined)
@@ -108,9 +115,12 @@ class HLILAdapter:
         for statement in ssa.instructions:
             dest = _defined(statement)
             if dest is not None and dest.var not in self.aliased and _pure(statement.src) \
-                    and hlil_effect(statement.src, self.aliased) is None:
+                    and hlil_effect(statement.src, self.aliased, _PURE_FLAG_NAMES) is None:
                 key = _key(dest)
                 pure[key] = [_key(v) for v in _ssa_vars(statement.src)]
+                partial = _partial(statement)
+                if partial is not None:
+                    pure[key].append(_key(partial.prev))  # rdx.b = e keeps the rest of rdx
                 statement_of[key] = statement.non_ssa_form.expr_index
             else:
                 roots.extend(_key(v) for v in _ssa_vars(statement))
@@ -184,13 +194,26 @@ def _defined(statement: HighLevelILInstruction):
         return statement.dest
     if statement.operation == H.HLIL_ASSIGN and statement.dest.operation == H.HLIL_VAR_SSA:
         return statement.dest.var
+    partial = _partial(statement)
+    return partial.dest if partial is not None else None
+
+
+def _partial(statement: HighLevelILInstruction):
+    """rdx.b = e in SSA form: a write of part of a new version of a variable, which keeps the
+    rest of the previous version (HLIL_VAR_SSA_PARTIAL: dest, prev). None for anything else."""
+    if statement.operation != H.HLIL_ASSIGN:
+        return None
+    dest = statement.dest
+    if (dest.operation == H.HLIL_STRUCT_FIELD and dest.member_index is None
+            and dest.src.operation == H.HLIL_VAR_SSA_PARTIAL):
+        return dest.src
     return None
 
 
 def _pure(e: HighLevelILInstruction) -> bool:
     if e.operation in _PURE_LEAVES:
         return True
-    if e.operation not in SUPPORTED_OPS:
+    if e.operation not in SUPPORTED_OPS and e.operation not in _PURE_FLAGS:
         return False
     return all(_pure(child) for child in children(e))
 

@@ -114,6 +114,10 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
         return
     shape = adapter.cfg_shape()
     dead = set(config.disabled_rules)
+    # Outcomes without a rewrite, by lifted expression: a pure function of it (names are symbols),
+    # so an unchanged candidate is not planned again in later iterations. Outcomes cut short by
+    # the shared deadline are not kept.
+    stuck: dict = {}
 
     def skip(address: int, reason: str) -> None:
         report.skipped.append(SkipRecord(address, reason, level))
@@ -123,9 +127,10 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
             planning = time.monotonic()
             planned = []
             consumed: set = set()
-            # Last first: a later candidate that inlines a single-use definition makes rewriting that
-            # definition on its own wasted work (it is dead once the later one is applied).
-            for candidate in reversed(list(adapter.candidates(skip))):
+            # Last first (the adapter's order): a later candidate that inlines a single-use definition
+            # makes rewriting that definition on its own wasted work (it is dead once the later one is
+            # applied). Candidates are lifted lazily, so the deadline also bounds lifting.
+            for candidate in adapter.candidates(skip):
                 if candidate.single_use and candidate.defines is not None and candidate.defines in consumed:
                     report.subsumed += 1
                     continue
@@ -133,6 +138,8 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
                     # No new solver or proof work; candidates already verified are still applied.
                     report.budget_exhausted = True
                     break
+                if candidate.ir in stuck:
+                    continue
                 outcome = simplify_expression(candidate.ir, rules, backends, config.limits, frozenset(dead),
                                               deadline=deadline)
                 report.refuted += outcome.refuted
@@ -142,6 +149,8 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
                     report.errors.append(ErrorRecord(source, message, level))
                 if outcome.skipped:
                     skip(candidate.address, outcome.skipped)
+                if outcome.rewrite is None and outcome.skipped != "budget exhausted" and not deadline.expired():
+                    stuck[candidate.ir] = outcome
                 if outcome.rewrite is not None and _grows_visible_code(candidate, outcome.rewrite.replacement):
                     skip(candidate.address, "would make the visible code larger or newly mixed")
                 elif outcome.rewrite is not None:

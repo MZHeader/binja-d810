@@ -143,9 +143,9 @@ class ChainAdapter(FakeAdapter):
                           "r": p("((x ^ y) + 2 * (x & y)) + ((x | y) - (x & y))") if consumer_simplifies else p("z")})
         self.planned: list = []
 
-    def candidates(self, skip):
-        yield Candidate("t1", 0x10, self.roots["t1"], defines="t1", single_use=True)
+    def candidates(self, skip):  # last first
         yield Candidate("r", 0x20, self.roots["r"], consumes=frozenset({"t1"}))
+        yield Candidate("t1", 0x10, self.roots["t1"], defines="t1", single_use=True)
 
 
 def test_single_use_definitions_inlined_by_a_planned_candidate_are_not_simplified_twice():
@@ -187,3 +187,30 @@ def test_a_rewrite_that_shrinks_the_visible_code_is_applied():
     adapter = VisibleAdapter(visible_nodes=9, visible_mixed=True)
     report = simplify_function(adapter, [], default_backends(), EngineConfig())
     assert len(report.rewrites) == 1
+
+
+class CountingBackend:
+    """LinearMBABackend that counts the expressions it is asked to simplify."""
+
+    name = "counting"
+
+    def __init__(self):
+        from collections import Counter
+
+        self.inner = LinearMBABackend()
+        self.calls: Counter = Counter()
+
+    def simplify(self, e, deadline=None):
+        self.calls[e] += 1
+        return self.inner.simplify(e, deadline=deadline)
+
+
+def test_an_unchanged_candidate_that_did_not_simplify_is_not_planned_again():
+    # Iteration 1 rewrites "b", so the engine runs a second iteration; "a" is the same expression
+    # then, and its outcome (no rewrite) is a function of that expression alone.
+    stuck = p("(x * y) ^ (x + z)")
+    adapter = FakeAdapter({"a": stuck, "b": p("(x ^ y) + 2 * (x & y)")})
+    backend = CountingBackend()
+    report = simplify_function(adapter, [], [backend], EngineConfig())
+    assert [r.address for r in report.rewrites] == [0x1000]
+    assert backend.calls[stuck] == 1

@@ -7,3 +7,4 @@ tests/samples/build/
 *.bndb
 .local/
 tests/binja/real/*.local.toml
+tests/binja/real/*_local.py

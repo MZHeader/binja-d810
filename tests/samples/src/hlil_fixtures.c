@@ -52,3 +52,32 @@ EXPORT uint32_t hl_select(uint32_t x, uint32_t y, uint32_t c) {
     uint32_t t1 = x & y; B(t1);
     return c ? t0 + 2u * t1 : y;
 }
+
+// Lift work (v2.1): each step reads both values twice, so the fully inlined tree grows fourfold per
+// step (VM handlers in tigress_vm). A lift must cut deep definitions without exploring that tree.
+#define DAG_STEP a = (a ^ b) + 2 * (a & b); B(a); b = (b | a) - (b & ~a); B(b);
+EXPORT uint32_t lift_dag(uint32_t x, uint32_t y) {
+    uint32_t a = x, b = y;
+    DAG_STEP DAG_STEP DAG_STEP DAG_STEP DAG_STEP DAG_STEP DAG_STEP DAG_STEP
+    DAG_STEP DAG_STEP DAG_STEP DAG_STEP DAG_STEP DAG_STEP DAG_STEP DAG_STEP
+    return a ^ b;
+}
+
+// Comparison results used as values (x86 setcc, ARM64 cset) inside MBA (mba_challenge 0x401301):
+// b is x & 1 (bool_ne) or its complement (bool_eq), so both return x + y. In bool_wide, b is not
+// x & 3, and nothing may treat it so.
+EXPORT uint32_t bool_ne(uint32_t x, uint32_t y) {
+    uint32_t t = x & 1; B(t);
+    uint32_t b = t != 0; B(b);
+    return ((x | b) ^ y) + 2 * ((x | b) & y);
+}
+EXPORT uint32_t bool_eq(uint32_t x, uint32_t y) {
+    uint32_t t = x & 1; B(t);
+    uint32_t b = t == 0; B(b);
+    return ((x ^ y) + 2 * (x & y)) + b + (x & 1) - 1;
+}
+EXPORT uint32_t bool_wide(uint32_t x, uint32_t y) {
+    uint32_t t = x & 3; B(t);
+    uint32_t b = t != 0; B(b);
+    return ((x | b) ^ y) + 2 * ((x | b) & y);
+}

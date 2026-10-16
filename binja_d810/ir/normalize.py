@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .bits import possible_ones
 from .evaluate import evaluate
 from .expr import COMMUTATIVE_OPS, BinOp, Const, Expr, UnOp, Var, mask, to_signed, to_str
 
@@ -32,7 +33,26 @@ def _unary(op: str, a: Expr, w: int) -> Expr:
         return _truncate(a, w)
     if op in ("zx", "sx") and isinstance(a, UnOp) and a.op == op:
         return UnOp(op, a.operand, w)
+    if op == "zx":
+        widened = _widen(a, w)
+        if widened is not None and possible_ones(widened) >> a.width == 0:
+            return widened
     return UnOp(op, a, w)
+
+
+def _widen(e: Expr, w: int):
+    """An expression of width w whose low e.width bits are e: truncations of values at least w bits
+    wide are undone, through constants and bitwise operations (which commute with truncation).
+    If it can have no one above e.width, it is zx(e) itself: x86 setne r15b; movzx r15d, r15b over
+    x & 1 gives zx32(1 & trunc8(x & 1)), which is x & 1."""
+    if isinstance(e, Const):
+        return Const(e.value, w)
+    if isinstance(e, UnOp) and e.op == "trunc" and e.operand.width >= w:
+        return _truncate(e.operand, w)
+    if isinstance(e, BinOp) and e.op in ("and", "or", "xor"):
+        left, right = _widen(e.left, w), _widen(e.right, w)
+        return None if left is None or right is None else BinOp(e.op, left, right, w)
+    return None
 
 
 def _truncate(a: Expr, w: int) -> Expr:

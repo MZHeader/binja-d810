@@ -102,3 +102,31 @@ def test_candidate_roots_are_supported_and_maximal(plain_mba):
     for instr in func.mlil.instructions:
         for root in candidate_roots(instr):
             assert root.operation in SUPPORTED_OPS
+
+
+@pytest.mark.parametrize("build,level", MATRIX, ids=IDS)
+def test_lift_work_is_bounded_when_definitions_are_shared(build, level):
+    """lift_dag reads both values twice per step: the fully inlined tree is exponential. Each lift
+    must stay within a few times its node budget (tigress_vm: 249 roots took 6 s to lift)."""
+    from binja_d810.binja.hlil.lift import candidate_roots as hlil_roots, expression_roots, lift as hlil_lift
+
+    bv = open_sample(sample("hlil_fixtures", build, level), d810=False)
+    try:
+        func = function_named(bv, "lift_dag")
+        func.set_user_type("uint32_t lift_dag(uint32_t x, uint32_t y)")
+        bv.update_analysis_and_wait()
+        worst = {"mlil": 0, "hlil": 0}
+        for instr in func.mlil.instructions:
+            for root in candidate_roots(instr):
+                stats: dict = {}
+                lift(root.ssa_form, root_instr=instr, max_nodes=200, stats=stats)
+                worst["mlil"] = max(worst["mlil"], stats["visits"])
+        aliased = frozenset(func.hlil.aliased_vars)
+        for statement in expression_roots(func.hlil):
+            for root in hlil_roots(statement, aliased):
+                stats = {}
+                hlil_lift(root.ssa_form, aliased=aliased, max_nodes=200, stats=stats)
+                worst["hlil"] = max(worst["hlil"], stats["visits"])
+        assert max(worst.values()) <= 4 * 200, worst
+    finally:
+        bv.file.close()

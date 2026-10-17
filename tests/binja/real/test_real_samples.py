@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import statistics
 import subprocess
 import threading
@@ -214,6 +215,10 @@ def _reports(func) -> dict:
     return {} if report is None else {"mlil": report}
 
 
+_CONSTANT = re.compile(r"\(?-?(0x[0-9a-f]+|\d+)\)?")
+_COMPARISONS = tuple(f"{op}(" for op in ("eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge"))
+
+
 def _report_summary(report, into: Counter, skips: Counter, level: str = "mlil") -> None:
     if report is None:
         into["no_report"] += 1
@@ -227,6 +232,11 @@ def _report_summary(report, into: Counter, skips: Counter, level: str = "mlil") 
         if verdict is not None:
             into[f"verdict:{getattr(verdict, 'name', verdict)}"] += 1
             into[f"method:{record.method}"] += 1
+        after = getattr(record, "after", None)
+        if after is not None and _CONSTANT.fullmatch(after):
+            into["constants"] += 1
+            into["constants_proven"] += getattr(verdict, "name", verdict) == "PROVEN"
+            into["predicates_folded"] += any(op in record.before for op in _COMPARISONS)
     into["errors"] += len(report.errors)
     into["rolled_back"] += bool(report.rolled_back)
     into["capped"] += bool(report.capped)
@@ -273,12 +283,13 @@ def test_sample():
         result["functions_with_hlil_mba"] = sum(1 for c in before.values() if c.mba_roots)
 
         scan_start = time.perf_counter()
-        scan, per_func = _mlil_scan(bv, time.monotonic() + MLIL_SCAN_SECONDS)
+        scan, _ = _mlil_scan(bv, time.monotonic() + MLIL_SCAN_SECONDS)
         result["mlil_scan"] = scan
         result["mlil_scan_s"] = round(time.perf_counter() - scan_start, 1)
 
-        candidates = sorted({f.start for f in funcs if before[f.start].mba_roots} |
-                            {start for start, found in per_func.items() if found.get("mba_roots_unchecked")} |
+        # Chosen from the plugin-off HLIL only, so every plugin revision measures the same functions
+        # (the MLIL scan above depends on the plugin's own lifter and is reported, not used here).
+        candidates = sorted({f.start for f in funcs if before[f.start].mba_roots or before[f.start].bitwise_conditions} |
                             {a for a in spots if bv.get_function_at(a) is not None})
         result["candidate_functions"] = len(candidates)
         result["plugin_functions_truncated"] = len(candidates) > MAX_PLUGIN_FUNCTIONS

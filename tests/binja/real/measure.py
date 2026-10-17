@@ -34,6 +34,14 @@ STRUCTURE = frozenset({
     H.HLIL_BLOCK, H.HLIL_IF, H.HLIL_WHILE, H.HLIL_DO_WHILE, H.HLIL_FOR, H.HLIL_SWITCH, H.HLIL_CASE,
     H.HLIL_WHILE_SSA, H.HLIL_DO_WHILE_SSA, H.HLIL_FOR_SSA,
 })
+# Statements with a condition: folding an opaque predicate removes one (v3).
+CONDITIONAL = frozenset({
+    H.HLIL_IF, H.HLIL_WHILE, H.HLIL_DO_WHILE, H.HLIL_FOR, H.HLIL_WHILE_SSA, H.HLIL_DO_WHILE_SSA, H.HLIL_FOR_SSA,
+})
+COMPARES = frozenset({
+    H.HLIL_CMP_E, H.HLIL_CMP_NE, H.HLIL_CMP_SLT, H.HLIL_CMP_ULT, H.HLIL_CMP_SLE, H.HLIL_CMP_ULE, H.HLIL_CMP_SGE,
+    H.HLIL_CMP_UGE, H.HLIL_CMP_SGT, H.HLIL_CMP_UGT,
+})
 
 
 @dataclass
@@ -45,6 +53,10 @@ class RootCounts:
     mba_roots_with_effects: int = 0
     mba_roots_with_unsupported: int = 0
     mba_nodes: int = 0
+    conditionals: int = 0  # if / while / do-while / for statements
+    # Conditions comparing a bitwise operation or a product of two non-constants: where opaque
+    # predicates live (the same notion as the plugin's, computed here independently).
+    bitwise_conditions: int = 0
     # Reads of a local variable's entry value (HLIL SSA version 0, not a parameter): an uninitialized
     # read, or a definition Binary Ninja's HLIL dropped. A rise after the plugin is a finding.
     undefined_reads: int = 0
@@ -142,8 +154,19 @@ def hlil_counts(func) -> RootCounts:
             if supported and not parent_supported:
                 _root(node, counts)
             stack.extend((child, supported) for child in children(node))
+    conditional = [node for node in subtree(hlil.root) if node.operation in CONDITIONAL]
+    counts.conditionals = len(conditional)
+    counts.bitwise_conditions = sum(1 for node in conditional if _over_bitwise(node.condition))
     counts.undefined_reads = _undefined_reads(func)
     return counts
+
+
+def _over_bitwise(condition: HighLevelILInstruction) -> bool:
+    nodes = list(subtree(condition))
+    if not any(n.operation in COMPARES for n in nodes):
+        return False
+    return any(n.operation in BITWISE or (n.operation == H.HLIL_MUL and not any(
+        c.operation in (H.HLIL_CONST, H.HLIL_CONST_PTR) for c in children(n))) for n in nodes)
 
 
 def _undefined_reads(func) -> int:

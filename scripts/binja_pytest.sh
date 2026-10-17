@@ -6,14 +6,14 @@
 #                    with an isolated user directory ($OUT/user) that links the real license and
 #                    Python packages, so another revision (e.g. a v1.0 worktree) can be measured
 #                    without touching the user's plugin folder.
-# BINJA_D810_TIMEOUT seconds before the instance is killed (default 900).
+# BINJA_D810_TIMEOUT seconds before the instance is killed (default 3600; the full suite takes about 26 minutes).
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 OUT="${BINJA_D810_OUT:-$REPO/.binja-test}"
 BN="/Applications/Binary Ninja.app/Contents/MacOS/binaryninja"
 BN_USER="$HOME/Library/Application Support/Binary Ninja"
-TIMEOUT="${BINJA_D810_TIMEOUT:-900}"
+TIMEOUT="${BINJA_D810_TIMEOUT:-3600}"
 rm -rf "$OUT" && mkdir -p "$OUT"
 if [ "$#" -eq 0 ]; then set -- "$REPO/tests/binja"; fi
 ARGS=$(/usr/bin/python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' -q -p no:cacheprovider --rootdir "$REPO" "$@")

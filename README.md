@@ -1,22 +1,24 @@
 # binja-d810
 
-d810-style deobfuscation of mixed boolean-arithmetic (MBA) expressions for Binary Ninja, on x86 (32-bit), x64 and ARM64, for PE, ELF and Mach-O. AGPL-3.0-only.
+d810-style deobfuscation of mixed boolean-arithmetic (MBA) expressions and opaque predicates for Binary Ninja, on x86 (32-bit), x64 and ARM64, for PE, ELF and Mach-O. AGPL-3.0-only.
 
-The plugin rewrites MBA expressions during analysis, in two passes enabled by one setting:
+The plugin rewrites MBA expressions and folds conditions that never change during analysis, in two passes enabled by one setting:
 
 - **MLIL pass.** Rewrites expressions in MLIL, rebuilding expressions split across instructions by following SSA definitions.
 - **HLIL pass.** Rewrites, in HLIL, what MLIL could not express. Typically, optimized code overwrites the registers holding the inputs before the instruction that combines them; HLIL still reads the original variables.
 
 Each candidate is simplified in two tiers:
 
-- **Tier 1:** d810's rule corpus. 156 of 179 rules are Z3-proven at one or more bit widths (153 at all of 8, 16, 32 and 64), and a rule only fires at the widths where it was proven.
+- **Tier 1:** d810's rule corpus, including its predicate rules. 174 of 179 rules are Z3-proven at one or more bit widths (170 at all of 8, 16, 32 and 64), and a rule only fires at the widths where it was proven.
 - **Tier 2:** generic MBA simplifiers. First a built-in linear-MBA simplifier, which treats non-linear sub-expressions (sums under a bitwise operation, products, extensions) as opaque atoms, so `(A ^ B) + 2 * (~A | B)` becomes `B - A - 2` whatever A and B are. Then CoBRA, when it is installed, for what is left.
 
-Each function's candidates first go through the rules and the linear simplifier, and only the ones still unsimplified go to CoBRA, so one slow expression cannot use up a function's time budget. Supported operations are `+ - * & | ^ ~`, shifts, rotates, extensions and truncations. A comparison with zero of a value that can only be 0 or 1 (x86 `setcc`, ARM64 `cset`), as in `r15 = (x & 1) != 0`, is read as that value.
+Each function's candidates first go through the rules and the linear simplifier, and only the ones still unsimplified go to CoBRA, so one slow expression cannot use up a function's time budget. Supported operations are `+ - * & | ^ ~`, shifts, rotates, extensions, truncations and the ten integer comparisons (`== != < <= > >=`, signed and unsigned), whose value is 0 or 1. A comparison with zero of a value that can only be 0 or 1 (x86 `setcc`, ARM64 `cset`), as in `r15 = (x & 1) != 0`, is read as that value.
+
+**Opaque predicates.** A condition or value that is the same for every input, such as `x * (x + 1)` being even, `(x ^ y) + 2 * (x & y) == x + y`, or `(x | 0x10) != 0x0f`, is replaced by that constant, and Binary Ninja's HLIL then drops the branch that can never run. A comparison is only considered when it involves a bitwise operation or a product of two non-constants, or when its form decides it (`x == x` after a register copy, `zx.d(x.b) > 0xff`): ordinary conditions such as `i < n - 1` are left alone. A fold needs a proof: a candidate that is constant on every random sample is then proven constant, by signature (an MBA equality) or by Z3 (2 s per fold), and one that cannot be proven is left alone and logged as "constant on every sample, not proven". Every other rewrite whose result is a condition needs a proof too. Integer division and remainder (`x % 2` at -O0) are not modelled yet.
 
 Every rewrite is checked for equivalence before it is applied: random evaluation always, plus an exact proof by signature for linear MBAs (also over atoms) and a Z3 proof for everything else. Each rewrite records whether it was proven or only tested by sampling, and why. Expressions containing loads, calls or other effects are never rewritten through: only their pure parts are. A rewrite never makes the code you see larger, and never adds a mix of arithmetic and bitwise operations where there was none: when an expression's inputs are values that stay visible elsewhere, it is simplified over those values rather than over copies of their definitions. Nothing is written to the binary or the database.
 
-Design: `docs/design/specs/2026-10-15-binja-d810-v2-design.md` (v1: `docs/design/specs/2026-10-15-binja-d810-core-framework-design.md`). Coverage and known gaps: `docs/design/reports/2026-10-15-v2.0-coverage.md` and `docs/design/reports/2026-10-15-v2.1-coverage.md`. Next (draft, not started): `docs/design/specs/2026-10-16-binja-d810-v3-design.md`.
+Design: `docs/design/specs/2026-10-15-binja-d810-v2-design.md` (v1: `docs/design/specs/2026-10-15-binja-d810-core-framework-design.md`). Opaque predicates: `docs/design/specs/2026-10-16-binja-d810-v3-design.md`. Coverage and known gaps: `docs/design/reports/2026-10-15-v2.0-coverage.md`, `docs/design/reports/2026-10-15-v2.1-coverage.md` and `docs/design/reports/2026-10-17-v3.0-coverage.md`.
 
 ## Install
 
@@ -46,7 +48,7 @@ The activity is **off by default**. Turn it on in one of two ways:
 
 The same setting enables both passes; the HLIL pass has no switch of its own.
 
-Each function gets a time budget (`binja_d810.functionSeconds`, 5 s by default) shared by both passes of one analysis run. When it runs out, rewrites already verified are applied and nothing new is attempted; the report says "budget exhausted". The budget never exceeds half of Binary Ninja's own per-function limit (`analysis.limits.maxFunctionAnalysisTime`), so the plugin cannot make Binary Ninja abandon a function. Enable D-810 per function on heavily obfuscated code: with a whole binary enabled, many functions are analyzed in parallel and compete for Python, so more of them hit the budget. Functions without mixed arithmetic and bitwise operations are skipped almost instantly.
+Each function gets a time budget (`binja_d810.functionSeconds`, 10 s by default) shared by both passes of one analysis run. When it runs out, rewrites already verified are applied and nothing new is attempted; the report says "budget exhausted". The budget never exceeds half of Binary Ninja's own per-function limit (`analysis.limits.maxFunctionAnalysisTime`), so the plugin cannot make Binary Ninja abandon a function. Enable D-810 per function on heavily obfuscated code: with a whole binary enabled, many functions are analyzed in parallel and compete for Python, so more of them hit the budget. Functions with neither mixed arithmetic and bitwise operations nor comparisons over bitwise operations or products are skipped almost instantly.
 
 ### Settings
 
@@ -61,7 +63,7 @@ Settings are under **Settings > D-810**. All of them can be set globally or per 
 | `binja_d810.maxIterations` | 10 | Maximum rewrite passes per function. |
 | `binja_d810.disabledRules` | none | d810 rule names to skip. |
 | `binja_d810.skipFunctions` | none | Function start addresses (hex) never rewritten. |
-| `binja_d810.functionSeconds` | 5 | Time budget per function, shared by both passes (capped at half of `analysis.limits.maxFunctionAnalysisTime`). |
+| `binja_d810.functionSeconds` | 10 | Time budget per function, shared by both passes (capped at half of `analysis.limits.maxFunctionAnalysisTime`, 20 s by default; raise both for more). |
 
 To set the number settings from Python, use `Settings().set_integer`. Binary Ninja ignores a value stored with `set_double` for these keys.
 
@@ -89,15 +91,15 @@ The Binary Ninja tests build the samples, then run pytest inside a fresh Binary 
 
 ```bash
 tests/samples/build.sh                       # ARM64 Mach-O, x64 PE, i686 PE, x64 ELF, each at -O0 and -O2
-scripts/binja_pytest.sh                      # everything (about 15 minutes)
+scripts/binja_pytest.sh                      # everything (about 26 minutes)
 scripts/binja_pytest.sh tests/binja -k x86_64-pe   # one architecture: arm64, x86_64-pe, i686-pe, x86_64-elf
 ```
 
-`.binja-test/coverage.json` holds the latest per-build, per-category coverage, including how each final HLIL was validated (`tests/binja/oracle.py`: proven, exhaustive, sampled).
+`.binja-test/coverage.json` holds the latest per-build, per-category coverage, including how each final HLIL was validated (`tests/binja/oracle.py`: proven, exhaustive, sampled). `.binja-test/opaque_coverage.json` holds the opaque-predicate corpus (`tests/samples/gen_opaque.py`: 17 predicates, each direct and mirrored) per build and family.
 
 Opt-in suites, skipped by default:
 
-- `BINJA_D810_SPIKE=1 scripts/binja_pytest.sh tests/binja/spikes` reruns the HLIL and formats spikes.
+- `BINJA_D810_SPIKE=1 scripts/binja_pytest.sh tests/binja/spikes` reruns the HLIL, formats and v3 (comparison shapes) spikes.
 - Real samples, static analysis only: `BINJA_D810_SAMPLES=<dir> scripts/real_samples.sh <label>` loads each binary in its own Binary Ninja process and writes `.local/real/<label>/<sample>.json`. `BINJA_D810_PLUGIN=<dir>` measures another plugin revision (for example a `v1.0` worktree) in an isolated Binary Ninja user directory; `BINJA_D810_FUNCTION_SECONDS` sets the per-function budget for the run. Nothing under `.local/` is committed.
 - Spot checks: list function addresses per sample in `tests/binja/real/spot_checks.local.toml` (git-ignored; see `spot_checks.example.toml`). Each real-sample run then writes `<out>/real/spot/<sample>/<address>.txt` with the function's HLIL with the plugin off and on, and both passes' reports.
 

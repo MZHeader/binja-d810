@@ -595,3 +595,41 @@ def test_per_path_constancy_waits_for_every_other_candidate():
     simplify_function(adapter, [], [backend], EngineConfig(max_iterations=1))
     assert adapter.roots["c"] == Const(0, 1) and adapter.roots["m"] != adapter.original["m"]
     assert events.index("paths") > max(i for i, e in enumerate(events) if e == "tier2"), events
+
+
+def test_constant_folds_come_before_every_backend():
+    # snagit.dll's sub_180009da0 (v3.3): hundreds of junk MBA roots took the whole budget in Tier 2
+    # before the opaque predicates' constant-only folds (shared values, 10-60 ms each) were reached.
+    # Constant folds run first in each pass: a folded predicate removes the junk behind it.
+    import sys
+    import time
+    from pathlib import Path
+
+    from binja_d810.deadline import Deadline
+    from binja_d810.ir.expr import Const
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_constancy import _bcf_condition
+
+    class Slow:
+        name = "slow"
+
+        def simplify(self, e, deadline=None):
+            time.sleep(0.2)
+            return None
+
+    roots = {f"m{k}": p(f"(x{k} ^ y) + 2 * (x{k} & y)") for k in range(10)}
+    roots["c"] = _bcf_condition()
+    adapter = FakeAdapter(roots)
+    adapter.has_candidates = lambda: True
+
+    def candidates(skip):
+        for name, e in adapter.roots.items():
+            if name == "c" and not isinstance(e, Const):
+                yield Candidate("c", 0x60, e, constant_only=True, shared_dag=e)  # last, as the order may put it
+            elif name != "c" and adapter.roots[name] == adapter.original[name]:
+                yield Candidate(name, 0x10, e)
+
+    adapter.candidates = candidates
+    simplify_function(adapter, [], [Slow()], EngineConfig(max_iterations=1), Deadline.after(1.0))
+    assert adapter.roots["c"] == Const(1, 1)

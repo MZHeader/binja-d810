@@ -168,6 +168,25 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
         order: dict = {}  # candidate -> position in the adapter's (last first) order
         pending = _numbered(adapter.candidates(skip), order, report)
         by_path: list = []  # last-round candidates left for per-path constancy
+        # Constant folds first (v3.3): the lifts only a proven constant may come from, by constancy alone,
+        # before any backend runs. An opaque predicate folded now removes the junk code behind it in the
+        # next pass (snagit.dll's sub_180009da0: Tier 2 on hundreds of junk roots used the whole budget
+        # before its predicates' 10-60 ms folds were reached). Constancy rejects ordinary roots after a
+        # sample or two.
+        rest = []
+        for candidate in pending:
+            if deadline.expired():
+                report.budget_exhausted = True
+                break
+            rewrite = None
+            if candidate.ir not in stuck and (candidate.unchecked is not None or candidate.shared_dag is not None):
+                rewrite, _ = _constant_only(candidate, constants, deadline)
+            if rewrite is None:
+                rest.append(candidate)
+                continue
+            planned.append((candidate, rewrite))
+            consumed |= candidate.consumes
+        pending = rest
         for number, round_backends in enumerate(rounds):
             final = number == len(rounds) - 1
             deferred = []
@@ -220,31 +239,11 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                             chosen, rewrite, grows = local, found, False
                 _note_slowest(report, candidate, time.monotonic() - started, rewrite, outcome)
                 if rewrite is None and not grows and final and not deadline.expired():
-                    # Lifts only a proven constant may come from (v3.1), by constancy alone, once, in
-                    # the last round: the root over inputs whose registers were reused before it
-                    # (x86-64 -O2's x in rdi; arm64 -O2's per-path values), and the root too large
-                    # as a tree but small as shared values (snagit.dll's export). A constant reads
-                    # no variable, and constancy rejects ordinary roots after a sample or two.
-                    unchecked = candidate.unchecked
-                    if unchecked is not None and not candidate.constant_only and unchecked == candidate.ir:
-                        unchecked = None
-                    for lifted, source in ((unchecked, "constancy (unchecked versions)"),
-                                           (candidate.shared_dag, "constancy (shared values)")):
-                        if lifted is None or deadline.expired():
-                            continue
-                        if lifted in constants:
-                            folded = constants[lifted]
-                        else:
-                            folded = fold_shared(lifted, deadline)
-                            if not deadline.expired():
-                                constants[lifted] = folded  # an outcome cut short is not kept
-                        if folded is not None and folded[1].verdict.name == "PROVEN":
-                            rewrite = Rewrite(original=lifted, replacement=Const(folded[0], lifted.width),
-                                              source=source, verdict=folded[1].verdict,
-                                              method=folded[1].method, reason=folded[1].reason)
-                            break
-                        if folded is not None:
-                            outcome.skipped = "constant on every sample, not proven"
+                    # The constant-only lifts again (remembered from the first stage: no new work unless
+                    # it was cut short).
+                    rewrite, unproven = _constant_only(candidate, constants, deadline)
+                    if unproven:
+                        outcome.skipped = "constant on every sample, not proven"
                     if rewrite is None and (candidate.paths is not None or hasattr(adapter, "path_variants")):
                         by_path.append(candidate)  # per-path constancy comes last (below)
                 if rewrite is None and not final:
@@ -307,6 +306,33 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
             return
     report.capped = True
     report.still_firing = last_sources
+
+
+def _constant_only(candidate, constants: dict, deadline: Deadline):
+    """Lifts only a proven constant may come from (v3.1), by constancy alone: the root over inputs whose
+    registers were reused before it (x86-64 -O2's x in rdi; arm64 -O2's per-path values), and the root
+    too large as a tree but small as shared values (snagit.dll's export). A constant reads no variable.
+    (rewrite or None, whether a lift was constant on every sample but not proven). Outcomes are
+    remembered in `constants` by lift (an outcome cut short by the deadline is not)."""
+    unchecked = candidate.unchecked
+    if unchecked is not None and not candidate.constant_only and unchecked == candidate.ir:
+        unchecked = None
+    unproven = False
+    for lifted, source in ((unchecked, "constancy (unchecked versions)"),
+                           (candidate.shared_dag, "constancy (shared values)")):
+        if lifted is None or deadline.expired():
+            continue
+        if lifted in constants:
+            folded = constants[lifted]
+        else:
+            folded = fold_shared(lifted, deadline)
+            if not deadline.expired():
+                constants[lifted] = folded
+        if folded is not None and folded[1].verdict is Verdict.PROVEN:
+            return Rewrite(original=lifted, replacement=Const(folded[0], lifted.width), source=source,
+                           verdict=folded[1].verdict, method=folded[1].method, reason=folded[1].reason), False
+        unproven = unproven or folded is not None
+    return None, unproven
 
 
 def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline):

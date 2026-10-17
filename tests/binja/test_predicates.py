@@ -4,8 +4,9 @@ import pytest
 from arch import IDS, MATRIX, sample
 from helpers import function_named, open_sample, set_types
 
+LOOPS = ("loop_bitwise", "loop_masked", "loop_product")
 TYPES = {name: f"uint32_t {name}(uint32_t x, uint32_t y)" for name in
-         ("opaque_parity", "opaque_setnz", "opaque_mba", "plain_condition", "mirrored")}
+         ("opaque_parity", "opaque_setnz", "opaque_mba", "plain_condition", "mirrored") + LOOPS}
 TYPES["load_condition"] = "uint32_t load_condition(uint32_t* p, uint32_t y)"
 
 
@@ -27,6 +28,33 @@ def test_opaque_conditions_are_folded_and_the_dead_branch_is_gone(fixtures, name
 def test_ordinary_conditions_stay(fixtures):
     func = function_named(fixtures, "plain_condition")
     assert "if (" in "\n".join(map(str, func.hlil.instructions))
+
+
+def _conditions(func) -> list:
+    """The conditions of every if, while, do-while and for in the final HLIL."""
+    stack, found = [func.hlil.root], []
+    while stack:
+        node = stack.pop()
+        if hasattr(node, "condition") and node.operation.name in _CONDITIONAL:
+            found.append(node.condition)
+        stack.extend(o for o in node.operands if hasattr(o, "operation"))
+        stack.extend(i for o in node.operands if isinstance(o, list) for i in o if hasattr(i, "operation"))
+    return found
+
+
+_CONDITIONAL = {"HLIL_IF", "HLIL_WHILE", "HLIL_DO_WHILE", "HLIL_FOR"}
+
+
+@pytest.mark.parametrize("name", LOOPS)
+def test_loop_conditions_over_bitwise_operations_stay(fixtures, name):
+    # HLIL's loop conditions have size 0: their operands' width must come from the operands.
+    from binja_d810.binja import log
+
+    func = function_named(fixtures, name)
+    found = _conditions(func)
+    assert found and all(c.operation.name != "HLIL_CONST" for c in found), [str(c) for c in found]
+    for level, report in log.latest_reports(func).items():
+        assert not report.rolled_back and not report.errors, (level, report.errors)
 
 
 def _loads(func) -> int:

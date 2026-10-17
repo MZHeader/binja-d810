@@ -26,11 +26,20 @@ def to_signed(value: int, width: int) -> int:
     return value - (1 << width) if value >> (width - 1) else value
 
 
+def _check_width(width: int) -> None:
+    # A 0-bit value equals every other: one would make live conditions provably "constant".
+    if width < 1:
+        raise ValueError(f"{width}-bit value")
+
+
 @dataclass(frozen=True)
 class Var:
     name: str
     width: int
     ref: object = field(default=None, compare=False, hash=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _check_width(self.width)
 
 
 @dataclass(frozen=True)
@@ -39,6 +48,7 @@ class Const:
     width: int
 
     def __post_init__(self) -> None:
+        _check_width(self.width)
         object.__setattr__(self, "value", self.value & mask(self.width))
 
 
@@ -50,6 +60,7 @@ class BinOp:
     width: int
 
     def __post_init__(self) -> None:
+        _check_width(self.width)
         if self.op not in BINARY_OPS:
             raise ValueError(f"unknown binary op {self.op!r}")
         if self.op in CMP_OPS:
@@ -67,6 +78,7 @@ class UnOp:
     width: int
 
     def __post_init__(self) -> None:
+        _check_width(self.width)
         if self.op not in UNARY_OPS:
             raise ValueError(f"unknown unary op {self.op!r}")
         inner = self.operand.width

@@ -214,11 +214,13 @@ class _Lifter:
         self.done[key] = (expr, saved_budget - self.budget, added)
 
     def compare(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
-        """A comparison: 1 bit, over operands of the comparison's own size."""
-        width = e.size * 8
+        """A comparison: 1 bit, over operands of the comparison's own size, or of their own size
+        when it has none (HLIL gives loop conditions size 0 over 4-byte operands)."""
         left, right = self.expr(e.left, inlined=inlined), self.expr(e.right, inlined=inlined)
-        left = None if left is None else fit(left, width)
-        right = None if right is None else fit(right, width)
+        if left is None or right is None:
+            return None
+        width = e.size * 8 or max(left.width, right.width)
+        left, right = fit(left, width), fit(right, width)  # never extends: operands of two sizes stay
         if left is None or right is None:
             return None
         return BinOp(_COMPARE[e.operation], left, right, 1)

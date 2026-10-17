@@ -96,34 +96,49 @@ def simplify_expression(
     if out.skipped is None and is_mba(current) and len(variables(current)) > limits.max_vars:
         out.skipped = f"too complex: {len(variables(current))} variables > {limits.max_vars}"
     if not isinstance(current, Const) and is_candidate(expr) and not deadline.expired():
-        # Constancy (v3): the same value on every sample; the final check below is the proof.
+        # Constancy (v3): the same value on every sample, applied only if proven. Otherwise the
+        # Tier 1 / Tier 2 result stands on its own.
         value = sampled_constant(current)
         if value is not None:
-            current, out.skipped = Const(value, current.width), None
-            sources.append("constancy")
+            skipped, out.skipped = out.skipped, None
+            if _finish(expr, Const(value, current.width), sources + ["constancy"], out, check, custom_check, deadline):
+                return out
+            out.skipped = out.skipped or skipped
+    _finish(expr, current, sources, out, check, custom_check, deadline)
+    return out
+
+
+def _finish(expr: Expr, current: Expr, sources: list[str], out: Outcome, check: Checker,
+            custom_check: Optional[Checker], deadline: Deadline) -> bool:
+    """Gate and check `current` as the replacement of `expr`; True if it became out.rewrite."""
+    sources = list(sources)
     if not sources:
         # Normalization alone: a condition its form decides (x == x), or its own gate below.
         if not (isinstance(current, Const) and is_candidate(expr)) and not _cancelled_by_normalization(current, expr):
-            return out
+            return False
         sources.append("normalize")
     elif not _worth_applying(current, expr):
-        return out
-    folding = "constancy" in sources or current.width == 1
+        return False
+    constancy = "constancy" in sources
+    folding = constancy or current.width == 1
     if folding and custom_check is None:
         # A fold changes what is shown as reachable: it gets the longer proof budget, and needs it.
         final = verify_check(expr, current, deadline=deadline, z3_timeout_ms=CONSTANCY_Z3_MS)
     else:
         final = _checked(check, expr, current)
+    if final.verdict is Verdict.REFUTED and constancy:
+        out.skipped = "constant on samples, refuted"  # a guess from sampling, not a wrong rewrite
+        return False
     if final.verdict is Verdict.REFUTED:
         out.refuted += 1
         out.errors.append(("verify", f"refuted {to_str(expr)} -> {to_str(current)} via {sources}"))
-        return out
+        return False
     if folding and final.verdict is not Verdict.PROVEN:
-        out.skipped = "constant on every sample, not proven" if "constancy" in sources else "condition not proven"
-        return out
+        out.skipped = "constant on every sample, not proven" if constancy else "condition not proven"
+        return False
     out.rewrite = Rewrite(original=expr, replacement=current, source="+".join(dict.fromkeys(sources)),
                           verdict=final.verdict, method=final.method, reason=final.reason)
-    return out
+    return True
 
 
 def _better(new: Expr, old: Expr) -> bool:

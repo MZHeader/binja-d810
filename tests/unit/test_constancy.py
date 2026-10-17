@@ -1,5 +1,6 @@
 from binja_d810.deadline import Deadline
-from binja_d810.ir.expr import Const
+from binja_d810.ir.expr import Const, to_str
+from binja_d810.ir.normalize import normalize
 from binja_d810.ir.parse import parse
 from binja_d810.semantic.constancy import constant_value
 from binja_d810.semantic.verify import Verdict
@@ -56,3 +57,24 @@ def test_conditions_decided_by_form_or_bounds_are_folded_and_proven():
         out = simplify_expression(c(text), [], [])
         assert out.rewrite is not None and out.rewrite.replacement == Const(value, 1), (text, out)
         assert out.rewrite.verdict is Verdict.PROVEN, (text, out.rewrite)
+
+
+def test_equality_with_a_small_value_is_not_constant_on_samples():
+    # Random 32-bit z almost never equals a 3-bit value; small and equal samples do (a loop
+    # condition in predicates.c: ((i ^ x) & 7) != y).
+    from binja_d810.semantic.constancy import sampled_constant
+
+    for text in ["eq((x ^ y) & 7, z)", "ne((x ^ y) & 7, z)", "ult(x & 0xff, y)", "eq(x & y, z)", "eq(x | y, 0)",
+                 "eq(x & y, (-1))"]:
+        assert sampled_constant(c(text)) is None, text
+
+
+def test_a_refuted_constant_falls_back_to_the_simplified_condition():
+    # Every sample says 1 (random sums almost never hit 0x1234); the proof refutes that, and the
+    # linear backend's x + y still stands, proven.
+    from binja_d810.semantic.linear_mba import LinearMBABackend
+
+    out = simplify_expression(c("ne(((x ^ y) + 2 * (x & y)) & 0xffff, 0x1234)"), [], [LinearMBABackend()])
+    assert out.rewrite is not None and out.rewrite.verdict is Verdict.PROVEN, out
+    assert out.rewrite.replacement == normalize(c("ne((x + y) & 0xffff, 0x1234)")), to_str(out.rewrite.replacement)
+    assert "constancy" not in out.rewrite.source and not out.errors, out

@@ -94,3 +94,15 @@ def test_one_bit_constants_print_as_zero_or_one():
     # Reports show a folded condition as its value: true is 1, not the signed 1-bit (-1).
     assert to_str(Const(1, 1)) == "1" and to_str(Const(0, 1)) == "0"
     assert to_str(Const(0xFFFFFFFF, 32)) == "(-1)"
+
+
+def test_nodes_have_at_least_one_bit():
+    # A 0-bit operand compares equal to anything 0-bit: a lifter that produced one would let a
+    # live condition be "proven" constant (HLIL loop conditions have size 0).
+    import pytest
+
+    a = Var("a", 32)
+    for build in (lambda: Const(0, 0), lambda: Var("b", 0), lambda: UnOp("trunc", a, 0),
+                  lambda: BinOp("add", Var("b", 0), Var("c", 0), 0)):
+        with pytest.raises(ValueError):
+            build()

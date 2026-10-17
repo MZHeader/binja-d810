@@ -1,8 +1,8 @@
-"""The shared per-function allowance across both passes (spec section 8). No binaryninja import.
+"""The shared per-function allowance across both passes. No binaryninja import.
 
 Accounting is keyed by (view session, function start) and by analysis generation. The generation
 token is the address of the MLIL function the MLIL pass worked on: the HLIL activity sees that same
-MLIL object within one analysis run (docs/design/spikes/2026-10-15-v2-hlil.md, gate 4), so it
+MLIL object within one analysis run, so it
 inherits what the MLIL pass left. The ledger keeps a reference to that object, so its address cannot
 be reused for another function while the entry lives. Repeated calls in one generation reuse the
 entry; a new token (reanalysis) starts a fresh allowance; an HLIL invocation whose MLIL token is

@@ -1,4 +1,4 @@
-"""Per-path variants over merged values (spec v3.2 goal 3), independent of Binary Ninja."""
+"""Per-path variants over merged values, independent of Binary Ninja."""
 
 from binja_d810.deadline import Deadline
 from binja_d810.ir.expr import BinOp, Const, Var, variables

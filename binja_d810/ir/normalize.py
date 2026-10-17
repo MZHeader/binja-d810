@@ -86,7 +86,7 @@ def _truncate(a: Expr, w: int) -> Expr:
         inner = a.left.operand
         return _truncate(BinOp("lshr", inner, Const(a.right.value, inner.width), inner.width), w)
     if isinstance(a, BinOp) and a.op in DIV_OPS:
-        # A division of extended values is the narrow division, at every value (spec v3.2 goal 1):
+        # A division of extended values is the narrow division, at every value:
         # x86's divu.dp.d(0:x, y) and divs.dp.d(sx.q(x), y).
         ext = "zx" if a.op[0] == "u" else "sx"
         left, right = narrowed(a.left, w, ext), narrowed(a.right, w, ext)

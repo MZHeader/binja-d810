@@ -1,4 +1,4 @@
-"""Division and remainder in the IR (spec v3.2 goal 1): total semantics, ARM64's.
+"""Division and remainder in the IR: total semantics, ARM64's.
 
 x / 0 = 0, x % 0 = x, MIN / -1 = MIN, MIN % -1 = 0; signed division rounds toward zero and the
 remainder takes the dividend's sign. Lifted divisions never meet the zero or overflow cases (a trap

@@ -1,4 +1,4 @@
-"""The HLIL pass (spec section 5): what MLIL could not express, rewritten in HLIL, safely."""
+"""The HLIL pass: what MLIL could not express, rewritten in HLIL, safely."""
 
 import oracle
 import pytest

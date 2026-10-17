@@ -1,4 +1,4 @@
-"""The opaque-predicate corpus (spec v3 section 6): every predicate that survives compilation is
+"""The opaque-predicate corpus: every predicate that survives compilation is
 folded on every build, and the final HLIL computes the live branch's value, or it is listed here
 with the reason."""
 

@@ -1,4 +1,4 @@
-"""Shift semantics against Binary Ninja's IL and the hardware (spec section 6.5).
+"""Shift semantics against Binary Ninja's IL and the hardware.
 
 tests/samples/src/shifts_*.S pairs each variable-count function (`shl8_var`) with constant-input
 functions whose result Binary Ninja's dataflow folds (`shl8_by8`). Three references must agree:

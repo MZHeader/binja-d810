@@ -1,1 +1,1 @@
-"""The HLIL level: lifter, lowering and the ILAdapter for the HLIL pass (spec section 5)."""
+"""The HLIL level: lifter, lowering and the ILAdapter for the HLIL pass."""

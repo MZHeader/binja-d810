@@ -73,7 +73,7 @@ def check(
     a: Expr, b: Expr, *, samples: int = 64, use_z3: bool = True, z3_timeout_ms: int = 500, seed: int = 0,
     deadline: Optional[Deadline] = None,
 ) -> Check:
-    """A PROVEN or REFUTED verdict is remembered by the pair's shape (spec v3.2 goal 2)."""
+    """A PROVEN or REFUTED verdict is remembered by the pair's shape."""
     key = ("check", shape_key(a, b))
     found = memo.get(key)
     if found is not memo.MISSING:

@@ -1,4 +1,4 @@
-"""Spike evidence (docs/design/spikes/2026-10-15-v2-hlil.md). Runs only with BINJA_D810_SPIKE=1."""
+"""Spike evidence. Runs only with BINJA_D810_SPIKE=1."""
 
 import os
 import sys

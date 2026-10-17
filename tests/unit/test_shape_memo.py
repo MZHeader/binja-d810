@@ -1,4 +1,4 @@
-"""Proofs remembered by shape (spec v3.2 goal 2): a verdict cannot change when variables are renamed."""
+"""Proofs remembered by shape: a verdict cannot change when variables are renamed."""
 
 import time
 

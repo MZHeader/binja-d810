@@ -1,4 +1,4 @@
-"""Effect policy tables (spec section 5.2), tested on stand-in IL nodes: no Binary Ninja needed."""
+"""Effect policy tables, tested on stand-in IL nodes: no Binary Ninja needed."""
 
 from dataclasses import dataclass, field
 

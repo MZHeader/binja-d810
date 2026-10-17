@@ -1,4 +1,4 @@
-"""Per-path variants of an expression over merged values (spec v3.2 goal 3).
+"""Per-path variants of an expression over merged values.
 
 A merged value (an SSA phi) takes, when control enters its block along an edge, its incoming value
 for that edge, and every merged value of the block does so at the same moment. A variant replaces

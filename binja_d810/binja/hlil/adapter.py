@@ -1,6 +1,6 @@
-"""ILAdapter for HLIL (spec section 5): what the MLIL pass could not express, rewritten in HLIL.
+"""ILAdapter for HLIL: what the MLIL pass could not express, rewritten in HLIL.
 
-Mutation and rollback follow the spike (docs/design/spikes/2026-10-15-v2-hlil.md): expressions
+Mutation and rollback follow the spike: expressions
 are replaced with replace_expr and backed up as shallow copies built from core_operands (the
 Python API's copy_expr reads the wrong operands in 6.0.10601); dead statements are removed by
 rebuilding their block, since a nop would still print; SSA is regenerated with the function's
@@ -259,7 +259,7 @@ def _pure(e: HighLevelILInstruction) -> bool:
     if e.operation in _PURE_LEAVES:
         return True
     if e.operation in DIVISION_OPS:
-        return is_safe_division(e)  # cannot trap: removable once dead (spec v3.2); aliasing is checked apart
+        return is_safe_division(e)  # cannot trap: removable once dead; aliasing is checked apart
     if e.operation not in SUPPORTED_OPS and e.operation not in _PURE_FLAGS:
         return False
     return all(_pure(child) for child in children(e))

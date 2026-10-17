@@ -71,7 +71,7 @@ def decided_comparison(op: str, a: Expr, b: Expr) -> Optional[int]:
 def compare_with_zero(value: Expr, kind: str, width: int) -> Optional[Expr]:
     """`value != 0` (kind "ne") or `value == 0` ("eq") as a `width`-bit 0 or 1 (x86 setcc, ARM64
     cset), when `value` itself can only be 0 or 1: then it is `value` or `value ^ 1`. Other
-    comparisons are not modelled (spec v3)."""
+    comparisons are not modelled."""
     if possible_ones(value) & ~1:
         return None
     if value.width > width:

@@ -125,7 +125,7 @@ def test_an_unproven_constant_is_not_proven_again_in_the_same_function_run():
 
 
 def test_fold_shared_evaluates_a_variable_free_expression():
-    # A per-path variant whose merged values were all constants (spec v3.2 goal 3): exact by evaluation.
+    # A per-path variant whose merged values were all constants: exact by evaluation.
     from binja_d810.semantic.constancy import fold_shared
     from binja_d810.ir.expr import BinOp, Const
 

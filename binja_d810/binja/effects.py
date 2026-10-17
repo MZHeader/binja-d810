@@ -1,4 +1,4 @@
-"""Effect policy for candidate roots (spec section 5.2). No binaryninja import: tables use names.
+"""Effect policy for candidate roots. No binaryninja import: tables use names.
 
 An unsupported operation inside a candidate root may stay as an opaque leaf only if it is pure and
 safe to evaluate again, or not at all: algebra can delete or duplicate a leaf (0 & [p] -> 0). A
@@ -41,7 +41,7 @@ def _nodes(tree):
 
 def mlil_effect(tree, pure: Optional[Callable] = None) -> Optional[str]:
     """None if every operation in the (SSA-form) tree is pure, else "effect: <operation>". `pure(node)`
-    may accept a node outside the table: a division proven never to trap (spec v3.2 goal 1)."""
+    may accept a node outside the table: a division proven never to trap."""
     for node in _nodes(tree):
         name = node.operation.name
         if name not in MLIL_PURE and (pure is None or not pure(node)):
@@ -60,7 +60,7 @@ def hlil_effect(tree, aliased: frozenset = frozenset(), allowed: frozenset = fro
                 pure: Optional[Callable] = None) -> Optional[str]:
     """None if the tree only reads variables (not address-taken ones), fields of them and
     constants through supported operations (and the operation names in `allowed`); else the reason
-    it is not a candidate. `pure(node)` may accept a division proven never to trap (spec v3.2), with
+    it is not a candidate. `pure(node)` may accept a division proven never to trap, with
     its double-width dividend (0:x)."""
     dividends: set = set()
     for node in _nodes(tree):

@@ -1,6 +1,6 @@
-"""HLIL (SSA) -> binja_d810 IR (spec section 5.2).
+"""HLIL (SSA) -> binja_d810 IR.
 
-HLIL SSA numbers versions per variable (docs/design/spikes/2026-10-15-v2-hlil.md, gate 2), so
+HLIL SSA numbers versions per variable, so
 a parameter read after MLIL reused its register is still the parameter. Version safety is checked
 per variable: every leaf must hold the version of its variable that is current at the statement
 holding the root, because the rewrite is lowered there and reads variables by name. Definitions
@@ -29,7 +29,7 @@ _COMPARE = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne", H.HLIL_CMP_ULT: "ult", H.HL
             H.HLIL_CMP_UGT: "ugt", H.HLIL_CMP_UGE: "uge", H.HLIL_CMP_SLT: "slt", H.HLIL_CMP_SLE: "sle",
             H.HLIL_CMP_SGT: "sgt", H.HLIL_CMP_SGE: "sge"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {H.HLIL_BOOL_TO_INT}
-# Division (spec v3.2 goal 1): lifted only when it cannot trap; otherwise an effect, as before.
+# Division: lifted only when it cannot trap; otherwise an effect, as before.
 _DIVIDE = {H.HLIL_DIVU: "udiv", H.HLIL_DIVS: "sdiv", H.HLIL_MODU: "urem", H.HLIL_MODS: "srem"}
 _DIVIDE_DP = {H.HLIL_DIVU_DP: "udiv", H.HLIL_DIVS_DP: "sdiv", H.HLIL_MODU_DP: "urem", H.HLIL_MODS_DP: "srem"}
 DIVISION_OPS = frozenset(_DIVIDE) | frozenset(_DIVIDE_DP)
@@ -72,7 +72,7 @@ def candidate_roots(statement: HighLevelILInstruction, aliased: frozenset,
     """Maximal supported expressions that read only variables, their fields and constants.
 
     Calls, dereferences, aliased reads and any other operation bound candidates: their pure
-    supported sub-expressions are candidates instead (spec section 5.2).
+    supported sub-expressions are candidates instead.
     """
     def pure(node) -> bool:
         return is_safe_division(node, aliased)
@@ -93,7 +93,7 @@ def candidate_roots(statement: HighLevelILInstruction, aliased: frozenset,
 
 
 def is_safe_division(node: HighLevelILInstruction, aliased: frozenset = frozenset()) -> bool:
-    """A division the lifter builds: one that cannot trap for any value of its inputs (spec v3.2)."""
+    """A division the lifter builds: one that cannot trap for any value of its inputs."""
     return node.operation in DIVISION_OPS and lift(node.ssa_form, aliased=aliased, check_versions=False) is not None
 
 
@@ -219,7 +219,7 @@ class _Lifter:
         return None
 
     def division(self, e: HighLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
-        """A division that cannot trap (spec v3.2 goal 1), else None (binja_d810.binja.mlil.lift)."""
+        """A division that cannot trap, else None (binja_d810.binja.mlil.lift)."""
         saved, saved_inlined = self.budget, dict(self.inlined)
         double = e.operation in _DIVIDE_DP
         op = (_DIVIDE_DP if double else _DIVIDE)[e.operation]

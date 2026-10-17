@@ -1,4 +1,4 @@
-"""HLIL spike (spec section 5.5): a throwaway activity after core.function.generateHighLevelIL.
+"""HLIL spike: a throwaway activity after core.function.generateHighLevelIL.
 
 It lifts HLIL expressions to binja_d810 IR (following SSA definitions), simplifies them with the
 v1 pipeline and replaces them with HLIL built from the result. Everything it does is recorded in

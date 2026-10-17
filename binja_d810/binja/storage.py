@@ -1,4 +1,4 @@
-"""Backing-storage model for field reads and partial writes (spec section 6.1). No binaryninja import.
+"""Backing-storage model for field reads and partial writes. No binaryninja import.
 
 Each SSA version of a storage location (a register, or a stack variable) has one backing value of
 the storage's full width, whose bits are all unknown. A read of `size` bytes at byte `offset` is
@@ -107,7 +107,7 @@ def unary(op: str, operand: Expr, width: int) -> Optional[Expr]:
 
 
 def exact(e: Optional[Expr], width: int) -> Optional[Expr]:
-    """`e` as a division operand of `width` bits (spec v3.2): its own width, or a wider constant whose
+    """`e` as a division operand of `width` bits: its own width, or a wider constant whose
     value fits. Never `fit`: a division reads every bit, so a wider operand's low bits are not its value."""
     if e is None or e.width == width:
         return e

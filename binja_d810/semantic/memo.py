@@ -1,4 +1,4 @@
-"""Verdicts remembered by shape, process-wide (spec v3.2 goal 2).
+"""Verdicts remembered by shape, process-wide.
 
 A proof's verdict cannot change when variables of the same width are renamed, so PROVEN and REFUTED
 outcomes are kept under ir.expr.shape_key: a predicate repeated with other variables (x-tunnel.bin

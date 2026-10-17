@@ -1,4 +1,4 @@
-# Spot checks for the real-sample harness (spec section 9.2). Copy to spot_checks.local.toml
+# Spot checks for the real-sample harness. Copy to spot_checks.local.toml
 # (git-ignored) and list, per sample file name, function start addresses to read before and after.
 # The harness writes <out>/real/spot/<sample>/<address>.txt: HLIL with the plugin off, HLIL with it
 # on, and both passes' reports. Addresses that are not function starts are reported, not fatal.

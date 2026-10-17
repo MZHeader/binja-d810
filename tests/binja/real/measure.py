@@ -1,6 +1,6 @@
 """Structural MBA counters over a function's final HLIL (test code, independent of the plugin).
 
-Definition (spec section 9.2): an "MBA expression in HLIL" is a maximal supported HLIL expression
+Definition: an "MBA expression in HLIL" is a maximal supported HLIL expression
 whose structural lift mixes arithmetic and bitwise operations. The counter imports nothing from
 binja_d810, so the same code measures frozen v1 and v2 with identical rules, and a stricter
 product lifter cannot masquerade as better deobfuscation. Roots whose leaves include effectful

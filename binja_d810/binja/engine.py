@@ -1,4 +1,4 @@
-"""IL-independent per-function fixpoint (spec section 4): plan, verify, apply, report, roll back.
+"""IL-independent per-function fixpoint: plan, verify, apply, report, roll back.
 
 The engine knows nothing about MLIL or HLIL; an ILAdapter (binja_d810.binja.adapter) supplies
 candidates, lowering, dead-code analysis, the control-flow fingerprint and the transaction.
@@ -39,7 +39,7 @@ class EngineConfig:
     max_iterations: int = 10
     tier2: bool = True
     disabled_rules: frozenset[str] = frozenset()
-    # Shared by both passes of one analysis run (spec section 8). v3.3: 20 s, with Binary Ninja's own
+    # Shared by both passes of one analysis run. v3.3: 20 s, with Binary Ninja's own
     # per-function limit raised to twice that where D-810 is enabled (binja_d810.binja.limits). At 10 s,
     # snagit.dll's export needed 85% of the budget and stopped short on a slower machine.
     function_seconds: float = 20.0
@@ -50,7 +50,7 @@ class RewriteRecord(NamedTuple):
     source: str
     before: str
     after: str
-    verdict: str  # "PROVEN" or "TESTED": the original -> replacement check (spec section 10)
+    verdict: str  # "PROVEN" or "TESTED": the original -> replacement check
     method: str  # "signature", "z3" or "sampling"
     reason: str  # why a TESTED rewrite has no proof
     level: str = "mlil"
@@ -80,7 +80,7 @@ class FunctionReport:
     rolled_back_rewrites: int = 0  # attempted, then undone; never counted as applied
     subsumed: int = 0  # candidates skipped because a planned later candidate inlined them
     constant_uses: int = 0  # reads replaced by the constant their definition was proven to be (v3.1)
-    # Time (spec section 8). Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
+    # Time. Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0
     budget_exhausted: bool = False
@@ -270,7 +270,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     planned.append((chosen, rewrite))
                     consumed |= chosen.consumes
             pending = deferred
-        # Per-path constancy (spec v3.2 goal 3) last, with what remains of the budget (v3.3): the costliest
+        # Per-path constancy last, with what remains of the budget (v3.3): the costliest
         # and rarest mechanism must not take the time of other candidates' folds (snagit.dll's export).
         for candidate in by_path:
             if deadline.expired():
@@ -346,7 +346,7 @@ def _constant_only(candidate, constants: dict, deadline: Deadline):
 
 
 def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline):
-    """Per-path constancy (spec v3.2 goal 3): the condition once per incoming path of the merged values
+    """Per-path constancy: the condition once per incoming path of the merged values
     it reads. The adapter gives alternatives, cheapest first (v3.3: invariant merges alone, then every
     merge split); one folds only if every variant in it is the same proven constant."""
     alternatives = candidate.paths if candidate.paths is not None else adapter.path_variants(candidate)

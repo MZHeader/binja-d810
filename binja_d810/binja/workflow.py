@@ -1,6 +1,6 @@
 """Registers the D-810 activities on Binary Ninja's function workflows.
 
-Two passes, one toggle (spec section 4): the MLIL activity runs after MLIL generation and is the one
+Two passes, one toggle: the MLIL activity runs after MLIL generation and is the one
 users enable ("D-810: simplify MBA expressions"); the HLIL activity runs after HLIL generation for
 every function and returns at once unless that same setting is on. It sees HLIL generated from the
 already rewritten MLIL, so it only acts on what the MLIL pass could not express.

@@ -34,7 +34,7 @@ _COMPARE = {Op.MLIL_CMP_E: "eq", Op.MLIL_CMP_NE: "ne", Op.MLIL_CMP_ULT: "ult", O
             Op.MLIL_CMP_SGT: "sgt", Op.MLIL_CMP_SGE: "sge"}
 _LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {Op.MLIL_BOOL_TO_INT}
-# Division (spec v3.2 goal 1): lifted only when it cannot trap; otherwise an effect, as before.
+# Division: lifted only when it cannot trap; otherwise an effect, as before.
 _DIVIDE = {Op.MLIL_DIVU: "udiv", Op.MLIL_DIVS: "sdiv", Op.MLIL_MODU: "urem", Op.MLIL_MODS: "srem"}
 _DIVIDE_DP = {Op.MLIL_DIVU_DP: "udiv", Op.MLIL_DIVS_DP: "sdiv", Op.MLIL_MODU_DP: "urem", Op.MLIL_MODS_DP: "srem"}
 DIVISION_OPS = frozenset(_DIVIDE) | frozenset(_DIVIDE_DP)
@@ -52,12 +52,12 @@ class Opaque:
 
 def candidate_roots(instr: MediumLevelILInstruction, rejected: Optional[list] = None,
                     divisions: bool = True) -> Iterator[MediumLevelILInstruction]:
-    """Maximal supported expressions that contain no effect (spec section 5.2).
+    """Maximal supported expressions that contain no effect.
 
     A supported expression containing a load, call or other effect is not a candidate: rewriting
     it could delete, duplicate or reorder the effect (0 & [p] -> 0). Its effect-free supported
     sub-expressions are candidates instead. Each such split is appended to `rejected` as
-    (expression, reason). A division that cannot trap is pure (spec v3.2); `divisions=False` treats
+    (expression, reason). A division that cannot trap is pure; `divisions=False` treats
     every division as an effect without proving anything (the cheap pre-check).
     """
     pure = (lambda node: is_safe_division(node, instr)) if divisions else None
@@ -125,7 +125,7 @@ def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruc
 
 @dataclass(frozen=True)
 class Backing:
-    """One SSA version of a whole storage location (spec section 6.1): every bit unknown.
+    """One SSA version of a whole storage location: every bit unknown.
 
     `var` is a variable living in that storage, used to lower reads of it.
     """
@@ -226,7 +226,7 @@ class _Lifter:
         return Var(f"opaque@{e.expr_index}", width, ref=Opaque(e.non_ssa_form))
 
     def division(self, e: MediumLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
-        """A division that cannot trap (spec v3.2 goal 1), else None: it stays an effect. Operands
+        """A division that cannot trap, else None: it stays an effect. Operands
         must have the division's own width (a division reads every bit, so a wider operand is not
         its low bits). x86's double-width forms are the narrow division when the dividend is the
         zero (unsigned) or sign (signed) extension of its low half."""
@@ -417,7 +417,7 @@ class _Lifter:
         return self.expr(self.get(definition, "src"), inlined=True)
 
     def field(self, ssa_var: SSAVariable, offset: int, width: int) -> Optional[Expr]:
-        """A read of `width` bits at byte `offset` of a variable's storage (spec section 6.1)."""
+        """A read of `width` bits at byte `offset` of a variable's storage."""
         declared = _declared_bits(ssa_var.var)
         definition = self.definition_of(ssa_var)
         kept = (ssa_var.var.identifier, ssa_var.version) in self.keep

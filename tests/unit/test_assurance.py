@@ -1,4 +1,4 @@
-"""Verification assurance (spec section 10): every verdict says how it was reached."""
+"""Verification assurance: every verdict says how it was reached."""
 
 import builtins
 

@@ -7,7 +7,7 @@ from typing import Iterator, Mapping, Union
 
 # Comparisons: 1-bit results of two operands of equal width (signed ones use two's complement).
 CMP_OPS = frozenset({"eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge"})
-# Total division (spec v3.2, ARM64's semantics): x / 0 = 0, x % 0 = x, MIN / -1 = MIN, MIN % -1 = 0;
+# Total division (ARM64's semantics): x / 0 = 0, x % 0 = x, MIN / -1 = MIN, MIN % -1 = 0;
 # signed rounds toward zero. Lifters build one only after proving it cannot trap. Neither arithmetic
 # nor bitwise for is_mba.
 DIV_OPS = frozenset({"udiv", "urem", "sdiv", "srem"})
@@ -73,7 +73,7 @@ class BinOp:
         elif self.left.width != self.width or (self.op not in COUNT_OPS and self.right.width != self.width):
             raise ValueError(f"width mismatch in {self.op}: {self.left.width}/{self.right.width} -> {self.width}")
         # Children's hashes are cached, so hashing a node is O(1) even when the expression shares
-        # values and its tree is exponentially larger (spec v3.1 goal 1).
+        # values and its tree is exponentially larger.
         object.__setattr__(self, "_hash", hash((self.op, self.left, self.right, self.width)))
 
     def __hash__(self) -> int:
@@ -289,7 +289,7 @@ def nodes(e: Expr) -> Iterator[Expr]:
 def shape_key(*exprs: Expr) -> tuple:
     """The expressions with their variables renamed v0, v1, ... in order of first appearance (pre-order,
     across the expressions in turn), widths kept: equal exactly for expressions that differ only in
-    their variables' names. A proof's verdict is invariant under such renaming (spec v3.2 goal 2).
+    their variables' names. A proof's verdict is invariant under such renaming.
     Shared values stay shared, and the leaves carry no reference."""
     names: dict[tuple[str, int], str] = {}
     for e in exprs:

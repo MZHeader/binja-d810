@@ -495,7 +495,7 @@ def test_a_rewrite_never_makes_the_statement_that_uses_it_mixed():
 
 class PathAdapter(FakeAdapter):
     """x-tunnel.bin: 2 / (x * x + 1) == i with i merged from y1 * y1 + 3 and y2 * y2 + 3: not constant
-    over i, false on each incoming path (spec v3.2 goal 3). The adapter offers the per-path variants."""
+    over i, false on each incoming path. The adapter offers the per-path variants."""
 
     def __init__(self, variants):
         super().__init__({"c": p("eq(udiv(2, (x * x) + 1), i)", 1, {"x": 32, "i": 32})})
@@ -531,7 +531,7 @@ def test_a_condition_constant_on_every_incoming_path_is_folded():
 
 def test_a_condition_offered_with_its_paths_is_folded_from_them():
     # A condition over merged values that is no candidate itself (k != 0, k = phi(...)): the adapter
-    # offers it constant-only with the per-path variants it computed (spec v3.2 goal 3).
+    # offers it constant-only with the per-path variants it computed.
     from binja_d810.ir.expr import Const
     from binja_d810.semantic.backend import default_backends
 

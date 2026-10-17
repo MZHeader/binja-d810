@@ -108,7 +108,7 @@ def test_folds_are_stable_and_disabling_the_plugin_restores_the_branch(fixtures)
 @pytest.mark.parametrize("build,level", MATRIX, ids=IDS)
 def test_the_hlil_pass_alone_folds_proven_conditions_and_leaves_others(build, level):
     # What the MLIL pass cannot express is left to the HLIL pass; a folded HLIL condition stays an
-    # `if` on a constant until v3.1 removes dead branches in HLIL (spec v3 section 3).
+    # `if` on a constant until v3.1 removes dead branches in HLIL.
     from binaryninja import HighLevelILOperation as H
 
     from binja_d810.binja import workflow

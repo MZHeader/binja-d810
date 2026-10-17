@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the opaque-predicate corpus: C source plus a manifest (spec v3 section 6).
+"""Generate the opaque-predicate corpus: C source plus a manifest.
 
 Each function is `if (P) return LIVE; return DEAD;` (or the mirrored `if (!(P))`), with P a condition
 whose value never changes. Intermediates pass through an empty asm barrier so the compiler cannot

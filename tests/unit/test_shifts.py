@@ -1,4 +1,4 @@
-"""IR shift semantics (spec section 6.5): match Binary Ninja's IL, with no result-width modulo.
+"""IR shift semantics: match Binary Ninja's IL, with no result-width modulo.
 
 Binary Ninja's own dataflow, measured on assembly fixtures (tests/samples/src/shifts_*.S, pinned in
 tests/binja/test_shift_reference.py), takes the count modulo max(32, width) and then loses the bits

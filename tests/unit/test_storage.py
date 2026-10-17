@@ -1,4 +1,4 @@
-"""Backing-storage model for field reads and partial writes (spec section 6.1)."""
+"""Backing-storage model for field reads and partial writes."""
 
 import itertools
 
@@ -128,7 +128,7 @@ def test_visible_size_counts_a_field_read_as_one_node():
 
 
 def test_division_operands_keep_their_value():
-    # A division reads every bit (spec v3.2): only an operand of its own width, or a wider constant whose
+    # A division reads every bit: only an operand of its own width, or a wider constant whose
     # value fits. A narrower constant is never widened: 0xff as an 8-bit -1 is not 255 to a signed division.
     from binja_d810.binja.storage import exact
     from binja_d810.ir.expr import Const, UnOp, Var

@@ -1,4 +1,4 @@
-// Effect-policy fixtures (spec section 5.2): values materialized from calls and aliased or
+// Effect-policy fixtures: values materialized from calls and aliased or
 // volatile reads, with an MBA over them.
 #include <stdint.h>
 #define B(v) __asm__ volatile("" : "+r"(v))

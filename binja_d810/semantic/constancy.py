@@ -1,4 +1,4 @@
-"""Is an expression constant? Sample it, then prove the value (spec v3 section 4)."""
+"""Is an expression constant? Sample it, then prove the value."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int = CONSTANCY_Z3_M
     export, spec v3.1 goal 1). Samples evaluate each shared value once and the Z3 query is built
     with sharing. (value, check) when constant on every sample (or variable-free); the check says
     whether it is proven. None as soon as two samples differ, or when a proof refutes it. Proven and refuted outcomes are
-    remembered by shape (spec v3.2 goal 2)."""
+    remembered by shape."""
     key = ("fold", shape_key(e))
     found = memo.get(key)
     if found is not memo.MISSING:

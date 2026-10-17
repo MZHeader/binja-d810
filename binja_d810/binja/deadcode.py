@@ -1,4 +1,4 @@
-"""Liveness policy shared by both IL levels (spec section 5.4).
+"""Liveness policy shared by both IL levels.
 
 An adapter describes its function as pure definitions (key -> the keys its value reads) plus the
 keys read by everything else (effects, returns, branches, impure definitions). A pure definition

@@ -1,4 +1,4 @@
-"""v3 spike (docs/design/spikes/2026-10-17-v3-predicates.md): a throwaway activity after
+"""v3 spike: a throwaway activity after
 core.function.generateMediumLevelIL that replaces a named function's first MLIL_IF condition with a
 constant built in the selected way. Not product code."""
 

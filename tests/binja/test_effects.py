@@ -1,4 +1,4 @@
-"""Effect policy in Binary Ninja (spec sections 5.2 and 10): loads, calls, aliased and volatile reads
+"""Effect policy in Binary Ninja: loads, calls, aliased and volatile reads
 keep their count and order; values already materialized from them remain usable leaves."""
 
 import pytest

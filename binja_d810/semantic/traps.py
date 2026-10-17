@@ -1,4 +1,4 @@
-"""Can a division trap? (spec v3.2 goal 1)
+"""Can a division trap?
 
 x86's div and idiv trap on a zero divisor, and idiv on MIN / -1 (the quotient overflows). A division
 is lifted, and may then be evaluated, folded, moved or removed, only if no value of its inputs makes

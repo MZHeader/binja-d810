@@ -1,4 +1,4 @@
-"""Can a division trap? (spec v3.2 goal 1): a division is lifted only when no input makes it trap."""
+"""Can a division trap?: a division is lifted only when no input makes it trap."""
 
 import pytest
 

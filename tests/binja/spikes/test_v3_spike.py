@@ -1,5 +1,5 @@
 """v3 spike: comparison shapes (S1), constant conditions and dead branches (S2), what survives -O2
-(S3). Evidence for docs/design/spikes/2026-10-17-v3-predicates.md.
+(S3).
 
 Run: BINJA_D810_SPIKE=1 scripts/binja_pytest.sh tests/binja/spikes/test_v3_spike.py
 """

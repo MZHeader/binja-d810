@@ -1,4 +1,4 @@
-"""The shared per-function time budget in Binary Ninja (spec sections 8 and 11)."""
+"""The shared per-function time budget in Binary Ninja."""
 
 import os
 import time

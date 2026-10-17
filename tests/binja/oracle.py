@@ -1,4 +1,4 @@
-"""Independent final-IL oracle (spec section 11): what does the function's final HLIL compute?
+"""Independent final-IL oracle: what does the function's final HLIL compute?
 
 This module imports nothing from binja_d810. It reads the final HLIL of a straight-line function,
 follows its assignments, and builds the returned value as an expression over the parameters with

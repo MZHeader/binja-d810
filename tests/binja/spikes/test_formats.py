@@ -1,4 +1,4 @@
-"""PE/ELF formats spike (spec section 13 item 3): load each cross-built corpus, find every sample."""
+"""PE/ELF formats spike: load each cross-built corpus, find every sample."""
 
 import json
 import os

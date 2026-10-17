@@ -1,4 +1,4 @@
-// HLIL-pass fixtures (spec section 5.5): MBA in branches, joins and loops; a reassigned input;
+// HLIL-pass fixtures: MBA in branches, joins and loops; a reassigned input;
 // effects embedded in HLIL expressions; conditional evaluation.
 #include <stdint.h>
 #define B(v) __asm__ volatile("" : "+r"(v))

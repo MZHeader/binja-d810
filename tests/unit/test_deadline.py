@@ -1,4 +1,4 @@
-"""Deadlines and the shared per-function allowance (spec section 8)."""
+"""Deadlines and the shared per-function allowance."""
 
 import threading
 import time

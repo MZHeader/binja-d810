@@ -1,4 +1,4 @@
-"""Partial-register reads and writes on x86 (spec section 6.1), from exact assembly fixtures.
+"""Partial-register reads and writes on x86, from exact assembly fixtures.
 
 Each fixture computes (x ^ y) + 2 * (x & y) on part of a register and keeps the rest; the reference
 is written out in tests/samples/src/partial_*.S. The oracle models parameters as full registers

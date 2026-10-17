@@ -1,4 +1,4 @@
-"""Locates a usable CoBRA MBA solver. Findings: docs/design/spikes/2026-10-15-cobra.md."""
+"""Locates a usable CoBRA MBA solver."""
 
 from __future__ import annotations
 

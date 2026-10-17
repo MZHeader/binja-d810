@@ -1,4 +1,4 @@
-"""HLIL spike gates (spec section 5.5). Evidence for docs/design/spikes/2026-10-15-v2-hlil.md.
+"""HLIL spike gates.
 
 Run: BINJA_D810_SPIKE=1 scripts/binja_pytest.sh tests/binja/spikes/test_hlil_spike.py
 """

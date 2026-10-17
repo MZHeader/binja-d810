@@ -1,4 +1,4 @@
-"""The build matrix (spec section 9.1): every target at -O0 and -O2.
+"""The build matrix: every target at -O0 and -O2.
 
 Select one architecture with pytest's -k, e.g. scripts/binja_pytest.sh tests/binja -k x86_64-pe.
 """
@@ -20,7 +20,7 @@ def sample(base: str, build: str, level: str) -> str:
 # a listed case that starts passing fails the run and must be removed from this table.
 _ALIASED = ("the address-taken value is reloaded into a register that is reused before the combining "
             "instruction, and HLIL reads the address-taken variable itself, an aliased read the effect "
-            "policy rejects (spec 5.2)")
+            "policy rejects")
 MISSES: dict[tuple[str, str], str] = {
     ("eff_aliased", "x86_64-pe-O0"): _ALIASED,
     ("eff_aliased", "i686-pe-O0"): _ALIASED,

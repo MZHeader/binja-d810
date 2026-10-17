@@ -128,7 +128,7 @@ def _binary(e: BinOp, x: int, y: int) -> int:
 
 
 def _divide(op: str, x: int, y: int, width: int) -> int:
-    """ARM64's division, total (spec v3.2): x / 0 = 0, x % 0 = x, MIN / -1 = MIN, MIN % -1 = 0. Signed
+    """ARM64's division, total: x / 0 = 0, x % 0 = x, MIN / -1 = MIN, MIN % -1 = 0. Signed
     division rounds toward zero; the remainder takes the dividend's sign (x86 and C as well)."""
     if y == 0:
         return 0 if op in ("udiv", "sdiv") else x

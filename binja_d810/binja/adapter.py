@@ -1,4 +1,4 @@
-"""The contract between the IL-independent engine and one IL level (spec section 4)."""
+"""The contract between the IL-independent engine and one IL level."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class Candidate:
     consumer_kinds: Optional[frozenset] = None
     root_kinds: frozenset = frozenset()
     # A condition over merged values that is no candidate itself (k != 0 with k = phi(...)) but whose
-    # per-path variants are (spec v3.2 goal 3): offered constant-only with them, as alternative sets of
+    # per-path variants are: offered constant-only with them, as alternative sets of
     # variants, cheapest first (ILAdapter.path_variants).
     paths: Optional[tuple] = None
 
@@ -78,7 +78,7 @@ class ILAdapter(Protocol):
         """Remove those assignments, keeping backups."""
 
     def path_variants(self, candidate: Candidate) -> Optional[list[list[Expr]]]:
-        """Optional (spec v3.2 goal 3). Alternative sets of a condition's lift once per incoming path of
+        """Optional. Alternative sets of a condition's lift once per incoming path of
         the merged values it reads (binja_d810.ir.paths), cheapest first; the engine folds it if every
         variant of one set is the same proven constant. None when there is nothing to split."""
 

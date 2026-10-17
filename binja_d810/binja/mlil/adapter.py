@@ -376,7 +376,7 @@ def _pure(e: MediumLevelILInstruction) -> bool:
     if e.operation in _PURE_LEAVES:
         return True
     if e.operation in DIVISION_OPS:
-        return is_safe_division(e, e)  # cannot trap: removable once dead (spec v3.2)
+        return is_safe_division(e, e)  # cannot trap: removable once dead
     if e.operation not in SUPPORTED_OPS and e.operation not in _PURE_FLAGS:
         return False
     return all(_pure(op) for op in e.operands if isinstance(op, MediumLevelILInstruction))

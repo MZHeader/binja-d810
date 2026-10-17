@@ -66,9 +66,20 @@ class BinOp:
         if self.op in CMP_OPS:
             if self.width != 1 or self.left.width != self.right.width:
                 raise ValueError(f"comparison {self.op} of {self.left.width}/{self.right.width} bits -> {self.width}")
-            return
-        if self.left.width != self.width or (self.op not in COUNT_OPS and self.right.width != self.width):
+        elif self.left.width != self.width or (self.op not in COUNT_OPS and self.right.width != self.width):
             raise ValueError(f"width mismatch in {self.op}: {self.left.width}/{self.right.width} -> {self.width}")
+        # Children's hashes are cached, so hashing a node is O(1) even when the expression shares
+        # values and its tree is exponentially larger (spec v3.1 goal 1).
+        object.__setattr__(self, "_hash", hash((self.op, self.left, self.right, self.width)))
+
+    def __hash__(self) -> int:
+        return self._hash
+
+    def __eq__(self, other: object) -> bool:
+        return _same(self, other) if isinstance(other, (BinOp, UnOp, Var, Const)) else NotImplemented
+
+    def __reduce__(self):
+        return BinOp, (self.op, self.left, self.right, self.width)  # the cached hash is per process
 
 
 @dataclass(frozen=True)
@@ -90,6 +101,41 @@ class UnOp:
             ok = inner > self.width
         if not ok:
             raise ValueError(f"bad widths for {self.op}: {inner} -> {self.width}")
+        object.__setattr__(self, "_hash", hash((self.op, self.operand, self.width)))
+
+    def __hash__(self) -> int:
+        return self._hash
+
+    def __eq__(self, other: object) -> bool:
+        return _same(self, other) if isinstance(other, (BinOp, UnOp, Var, Const)) else NotImplemented
+
+    def __reduce__(self):
+        return UnOp, (self.op, self.operand, self.width)
+
+
+def _same(a: "Expr", b: "Expr") -> bool:
+    """Structural equality, each pair of nodes compared once: linear in the shared nodes."""
+    stack, seen = [(a, b)], set()
+    while stack:
+        x, y = stack.pop()
+        if x is y:
+            continue
+        if type(x) is not type(y):
+            return False
+        if isinstance(x, (Var, Const)):
+            if x != y:
+                return False
+            continue
+        if (id(x), id(y)) in seen:
+            continue
+        seen.add((id(x), id(y)))
+        if x._hash != y._hash or x.op != y.op or x.width != y.width:
+            return False
+        if isinstance(x, BinOp):
+            stack += [(x.left, y.left), (x.right, y.right)]
+        else:
+            stack.append((x.operand, y.operand))
+    return True
 
 
 Expr = Union[Var, Const, BinOp, UnOp]
@@ -114,6 +160,43 @@ def walk(e: Expr) -> Iterator[Expr]:
 
 def node_count(e: Expr) -> int:
     return sum(1 for _ in walk(e))
+
+
+def tree_size(e: Expr) -> int:
+    """node_count, computed once per shared value: exact even when the tree is too large to walk."""
+    sizes: dict[int, int] = {}
+    stack = [(e, False)]
+    while stack:
+        node, ready = stack.pop()
+        if id(node) in sizes:
+            continue
+        kids = children(node)
+        if ready or not kids:
+            sizes[id(node)] = 1 + sum(sizes[id(k)] for k in kids)
+        else:
+            stack.append((node, True))
+            stack.extend((k, False) for k in kids if id(k) not in sizes)
+    return sizes[id(e)]
+
+
+def distinct_nodes(e: Expr) -> int:
+    """The nodes of `e` counted once each, however often they are shared."""
+    seen, stack = set(), [e]
+    while stack:
+        node = stack.pop()
+        if id(node) not in seen:
+            seen.add(id(node))
+            stack.extend(children(node))
+    return len(seen)
+
+
+def brief(e: Expr, limit: int = 400) -> str:
+    """to_str for reports, bounded: a shared value too large to print as a tree is summarized."""
+    if tree_size(e) > 4 * limit:
+        head = e.op if isinstance(e, (BinOp, UnOp)) else to_str(e)
+        return f"{head}(...) [{distinct_nodes(e)} nodes, shared values counted once; {tree_size(e)} as a tree]"
+    text = to_str(e)
+    return text if len(text) <= limit else text[:limit] + "..."
 
 
 def variables(e: Expr) -> list[Var]:

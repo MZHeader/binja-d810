@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from .expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var, mask, to_signed
+from .expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var, children, mask, to_signed
 
 
 def evaluate(e: Expr, env: Mapping[str, int]) -> int:
@@ -12,18 +12,47 @@ def evaluate(e: Expr, env: Mapping[str, int]) -> int:
         return env[e.name] & mask(e.width)
     if isinstance(e, Const):
         return e.value
-    m = mask(e.width)
     if isinstance(e, UnOp):
-        v = evaluate(e.operand, env)
-        if e.op == "neg":
-            return -v & m
-        if e.op == "not":
-            return ~v & m
-        if e.op == "sx":
-            return to_signed(v, e.operand.width) & m
-        return v & m  # zx, trunc
+        return _unary(e, evaluate(e.operand, env))
     assert isinstance(e, BinOp)
-    x, y = evaluate(e.left, env), evaluate(e.right, env)
+    return _binary(e, evaluate(e.left, env), evaluate(e.right, env))
+
+
+def evaluate_shared(e: Expr, env: Mapping[str, int]) -> int:
+    """evaluate, each shared value computed once (iterative): linear in the distinct nodes."""
+    memo: dict[int, int] = {}
+    stack = [(e, False)]
+    while stack:
+        node, ready = stack.pop()
+        if id(node) in memo:
+            continue
+        if isinstance(node, Var):
+            memo[id(node)] = env[node.name] & mask(node.width)
+        elif isinstance(node, Const):
+            memo[id(node)] = node.value
+        elif not ready:
+            stack.append((node, True))
+            stack.extend((k, False) for k in children(node) if id(k) not in memo)
+        elif isinstance(node, UnOp):
+            memo[id(node)] = _unary(node, memo[id(node.operand)])
+        else:
+            memo[id(node)] = _binary(node, memo[id(node.left)], memo[id(node.right)])
+    return memo[id(e)]
+
+
+def _unary(e: UnOp, v: int) -> int:
+    m = mask(e.width)
+    if e.op == "neg":
+        return -v & m
+    if e.op == "not":
+        return ~v & m
+    if e.op == "sx":
+        return to_signed(v, e.operand.width) & m
+    return v & m  # zx, trunc
+
+
+def _binary(e: BinOp, x: int, y: int) -> int:
+    m = mask(e.width)
     if e.op == "add":
         return (x + y) & m
     if e.op == "sub":

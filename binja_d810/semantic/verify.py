@@ -173,7 +173,17 @@ def _z3_prove(a: Expr, b: Expr, var_widths: Mapping[str, int], timeout_ms: int) 
     return None, "z3 timeout" if why in ("timeout", "canceled") else f"z3 unknown: {why}"
 
 
-def to_z3(e: Expr, z3_vars: dict, ctx=None):
+def to_z3(e: Expr, z3_vars: dict, ctx=None, memo: Optional[dict] = None):
+    """Each shared value is translated once (memo by node identity), so a DAG stays linear."""
+    if memo is None:
+        memo = {}
+    found = memo.get(id(e))
+    if found is None:
+        found = memo[id(e)] = _to_z3(e, z3_vars, ctx, memo)
+    return found
+
+
+def _to_z3(e: Expr, z3_vars: dict, ctx, memo: dict):
     import z3
 
     if isinstance(e, Var):
@@ -181,7 +191,7 @@ def to_z3(e: Expr, z3_vars: dict, ctx=None):
     if isinstance(e, Const):
         return z3.BitVecVal(e.value, e.width, ctx)
     if isinstance(e, UnOp):
-        x = to_z3(e.operand, z3_vars, ctx)
+        x = to_z3(e.operand, z3_vars, ctx, memo)
         if e.op == "neg":
             return -x
         if e.op == "not":
@@ -192,8 +202,8 @@ def to_z3(e: Expr, z3_vars: dict, ctx=None):
             return z3.SignExt(e.width - e.operand.width, x)
         return z3.Extract(e.width - 1, 0, x)  # trunc
     assert isinstance(e, BinOp)
-    x = to_z3(e.left, z3_vars, ctx)
-    y = to_z3(e.right, z3_vars, ctx)
+    x = to_z3(e.left, z3_vars, ctx, memo)
+    y = to_z3(e.right, z3_vars, ctx, memo)
     if e.op in CMP_OPS:
         cond = {"eq": lambda: x == y, "ne": lambda: x != y, "ult": lambda: z3.ULT(x, y),
                 "ule": lambda: z3.ULE(x, y), "ugt": lambda: z3.UGT(x, y), "uge": lambda: z3.UGE(x, y),

@@ -14,6 +14,7 @@ from ...ir.expr import Expr, is_candidate, tree_size
 from ...ir.paths import Merge, path_variants
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root, shown_in
+from ..ssa import definition_of
 from .lift import DIVISION_OPS, SUPPORTED_OPS, candidate_roots, is_safe_division, lift, lift_value
 from .lower import lower
 
@@ -83,13 +84,13 @@ class MLILAdapter:
                         shared = dag
                 unchecked = through = None
                 unchecked_inlined: dict = {}
-                if (root.operation in _COMPARES or ir is None) and shared is None:
+                if root.operation in _COMPARES or ir is None:
                     # A condition, or a root the version-safe lift could not see at all: a proven
                     # constant reads no variable, so it may come from a lift through inputs whose
                     # registers were reused before the root (x86-64 -O2). Not values the checked lift
                     # saw partly (stale inputs): folding two such values in mba_linear_030 (x86-64
-                    # -O2) made Binary Ninja's HLIL drop the result's definition. Not when the lift
-                    # over shared values exists: a tree lift as large stops at the same size (v3.3).
+                    # -O2) made Binary Ninja's HLIL drop the result's definition. Also the base of a
+                    # condition's per-path variants, even beside a lift over shared values.
                     unchecked = through = lift(root.ssa_form, root_instr=instr, check_versions=False,
                                                max_nodes=self.max_nodes, inlined=unchecked_inlined,
                                                definitions=definitions)
@@ -165,10 +166,10 @@ class MLILAdapter:
         """A phi's block and its incoming value along each of the block's incoming edges: the version
         of the variable at the end of the edge's source block, which must be one of the phi's sources."""
         ssa = self.mlil.ssa_form
-        phi = ssa.get_ssa_var_definition(ssa_var)
+        phi = definition_of(ssa, ssa_var, definitions)
         if phi is None or phi.operation != Op.MLIL_VAR_PHI:
             return None
-        source = _invariant_source(ssa, ssa_var)
+        source = _invariant_source(ssa, ssa_var, definitions)
         if source is not None:
             # Every value of the merge is some instance of `source` (v3.3): one incoming value, which
             # path_variants renames apart like any other.
@@ -319,17 +320,20 @@ class MLILAdapter:
         self.backups.clear()
 
 
-def _invariant_source(ssa, ssa_var: SSAVariable, limit: int = 64) -> Optional[SSAVariable]:
+def _invariant_source(ssa, ssa_var: SSAVariable, definitions: Optional[dict] = None,
+                      limit: int = 64) -> Optional[SSAVariable]:
     """The one value entering a web of merges and whole copies from outside it, if there is exactly one
     (v3.3): i = phi(i0, i'), i' = esi, esi = phi(i0, i), as x-tunnel.bin carries y * y + 3 round a loop.
     Every member then holds some instance of that value. None otherwise."""
+    shared = definitions is not None
+    definitions = {} if definitions is None else definitions
     web, outside, stack = set(), {}, [ssa_var]
     while stack:
         var = stack.pop()
         key = (var.var.identifier, var.version)
         if key in web or key in outside:
             continue
-        definition = ssa.get_ssa_var_definition(var)
+        definition = definition_of(ssa, var, definitions, by_storage=shared)
         if definition is not None and definition.operation == Op.MLIL_VAR_PHI:
             web.add(key)
             stack.extend(definition.src)

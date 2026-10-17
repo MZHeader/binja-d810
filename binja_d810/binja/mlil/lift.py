@@ -20,6 +20,7 @@ from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ...ir.normalize import narrowed
 from ...semantic.traps import never_traps
 from ..effects import mlil_effect
+from ..ssa import definition_of
 from ..storage import (
     as_integer, contained, exact, field_read, fit, merge_partial_write, read_over_write, unary,
 )
@@ -149,6 +150,7 @@ class _Lifter:
         self.max_visits = 3 * max_nodes
         self.failed: dict[tuple, int] = {}  # (identifier, version, width) -> largest budget that failed
         self.done: dict[tuple, tuple] = {}  # (identifier, version, width) -> (expr, nodes, inlined)
+        self.shared_cache = definitions is not None
         self.definitions = {} if definitions is None else definitions
         self.keep: frozenset = frozenset()
         self.effect_leaves = effect_leaves
@@ -328,10 +330,8 @@ class _Lifter:
         return Const(value.value & ((1 << width) - 1), width)
 
     def definition_of(self, ssa_var: SSAVariable):
-        key = (ssa_var.var.identifier, ssa_var.version)
-        if key not in self.definitions:
-            self.definitions[key] = self.ssa.get_ssa_var_definition(ssa_var)
-        return self.definitions[key]
+        # By storage when the variable's is missing, with a cache shared by many lifts (binja_d810.binja.ssa).
+        return definition_of(self.ssa, ssa_var, self.definitions, by_storage=self.shared_cache)
 
     def may_inline(self, key: tuple) -> bool:
         if self.budget > self.failed.get(key, 0) and self.visits < self.max_visits:

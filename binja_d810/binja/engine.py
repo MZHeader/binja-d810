@@ -244,7 +244,8 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                             break
                         if folded is not None:
                             outcome.skipped = "constant on every sample, not proven"
-                    if rewrite is None and hasattr(adapter, "path_variants") and not deadline.expired():
+                    if (rewrite is None and (candidate.paths is not None or hasattr(adapter, "path_variants"))
+                            and not deadline.expired()):
                         rewrite = _fold_paths(adapter, candidate, constants, deadline)
                 if rewrite is None and not final:
                     deferred.append(candidate)
@@ -302,7 +303,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
 def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline):
     """Per-path constancy (spec v3.2 goal 3): the condition once per incoming path of the merged values
     it reads (adapter.path_variants); a rewrite only if every variant is the same proven constant."""
-    variants = adapter.path_variants(candidate)
+    variants = candidate.paths if candidate.paths is not None else adapter.path_variants(candidate)
     if not variants:
         return None
     value = None

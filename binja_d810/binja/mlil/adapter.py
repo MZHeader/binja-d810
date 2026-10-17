@@ -99,12 +99,21 @@ class MLILAdapter:
                     inlined = {}
                     ir = lift(root.ssa_form, root_instr=instr, check_versions=False, max_nodes=self.max_nodes,
                               inlined=inlined, definitions=definitions)
-                if ir is not None and is_candidate(ir):
+                paths = None
+                if root.operation in _COMPARES and (ir is None or not is_candidate(ir)) and unchecked is None:
+                    # A condition over merged values whose per-path variants are candidates (k != 0 with
+                    # k = phi((x - 1) * x & 1, (x + x * x) & 1)): constant-only, from its paths.
+                    through = lift(root.ssa_form, root_instr=instr, check_versions=False,
+                                   max_nodes=self.max_nodes, definitions=definitions)
+                    variants = None if through is None else self._path_variants(through, instr)
+                    if variants and any(is_candidate(v) for v in variants):
+                        ir, inlined, constant_only, paths = through, {}, True, tuple(variants)
+                if ir is not None and (is_candidate(ir) or paths is not None):
                     defines, single = self._defines(instr, root)
                     nodes, mixed, dying = self._visible(instr, root, inlined)
                     yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,
                                     instr, frozenset(inlined) - dying, unchecked, constant_only, shared,
-                                    self._consumer_kinds(instr, root), self.root_kinds)
+                                    self._consumer_kinds(instr, root), self.root_kinds, paths)
 
     def shallow(self, candidate: Candidate, keep: Optional[frozenset] = None) -> Optional[Candidate]:
         """The root lifted with `keep` (default: the definitions that stay alive) as leaves where
@@ -130,6 +139,9 @@ class MLILAdapter:
         if candidate.context is None or candidate.root.operation not in _COMPARES:
             return None
         base = candidate.unchecked if candidate.unchecked is not None else candidate.ir
+        return self._path_variants(base, candidate.context)
+
+    def _path_variants(self, base: Expr, instr: MediumLevelILInstruction) -> Optional[list[Expr]]:
         merges: dict = {}
         definitions: dict = {}
 
@@ -138,7 +150,7 @@ class MLILAdapter:
                 return None
             key = (leaf.ref.var.identifier, leaf.ref.version, leaf.width)
             if key not in merges:
-                merges[key] = self._merge(leaf.ref, leaf.width, candidate.context, definitions)
+                merges[key] = self._merge(leaf.ref, leaf.width, instr, definitions)
             return merges[key]
 
         return path_variants(base, merge_of)

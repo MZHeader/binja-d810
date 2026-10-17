@@ -527,3 +527,19 @@ def test_a_condition_constant_on_every_incoming_path_is_folded():
         refused = PathAdapter(variants)
         simplify_function(refused, [], default_backends(), EngineConfig())
         assert refused.roots["c"] == refused.original["c"], variants
+
+
+def test_a_condition_offered_with_its_paths_is_folded_from_them():
+    # A condition over merged values that is no candidate itself (k != 0, k = phi(...)): the adapter
+    # offers it constant-only with the per-path variants it computed (spec v3.2 goal 3).
+    from binja_d810.ir.expr import Const
+    from binja_d810.semantic.backend import default_backends
+
+    widths = {"x": 32, "y": 32, "k": 32}
+    adapter = PathAdapter(None)
+    adapter.roots["c"] = adapter.original["c"] = p("ne(k, 0)", 1, widths)
+    paths = (p("ne(((x - 1) * x) & 1, 0)", 1, widths), p("ne((y + (y * y)) & 1, 0)", 1, widths))
+    adapter.candidates = lambda skip: iter([Candidate("c", 0x90, adapter.roots["c"], constant_only=True, paths=paths)]
+                                           if adapter.roots["c"] == adapter.original["c"] else [])
+    report = simplify_function(adapter, [], default_backends(), EngineConfig())
+    assert adapter.roots["c"] == Const(0, 1), report

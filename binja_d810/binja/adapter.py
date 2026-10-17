@@ -41,6 +41,9 @@ class Candidate:
     # the kinds of the root's own statement. A replacement must not make that statement mixed.
     consumer_kinds: Optional[frozenset] = None
     root_kinds: frozenset = frozenset()
+    # A condition over merged values that is no candidate itself (k != 0 with k = phi(...)) but whose
+    # per-path variants are (spec v3.2 goal 3): offered constant-only with those variants.
+    paths: Optional[tuple] = None
 
 
 Skip = Callable[[int, str], None]

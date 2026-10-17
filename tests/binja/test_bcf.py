@@ -19,10 +19,10 @@ TYPES = {
 }
 # Builds where a fixture is not folded, with the reason; a listed miss that folds fails the test.
 KNOWN_MISSES = {
-    ("arm64-O2", "bcf_merge"): "each arm's k is computed from x after x's register is reused; the unchecked "
-                               "(constant-only) lift is not used for values the checked lift saw partly "
-                               "(folding two such values in mba_linear_030 made Binary Ninja's HLIL drop a definition)",
-    ("arm64-O2", "const_after_merge"): "k is computed from x after x's register is reused (as bcf_merge)",
+    ("arm64-O2", "const_after_merge"): "k is computed from x after x's register is reused; the unchecked "
+                                       "(constant-only) lift is not used for values the checked lift saw partly "
+                                       "(folding two such values in mba_linear_030 made Binary Ninja's HLIL drop "
+                                       "a definition)",
 }
 ARITH = {H.HLIL_ADD, H.HLIL_SUB, H.HLIL_MUL, H.HLIL_NEG}
 BITWISE = {H.HLIL_AND, H.HLIL_OR, H.HLIL_XOR, H.HLIL_NOT}

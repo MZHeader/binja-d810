@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from typing import NamedTuple, Sequence
 
 from ..deadline import Deadline
-from ..ir.expr import Const, brief, is_mba, tree_size, variables
+from ..ir.expr import Const, brief, is_mba, tree_size
 from ..semantic import cobra_shim
 from ..rules.base import Rewrite, Rule
 from ..semantic.constancy import fold_shared
@@ -78,6 +78,7 @@ class FunctionReport:
     refuted: int = 0  # candidate results the checker refuted; never applied
     rolled_back_rewrites: int = 0  # attempted, then undone; never counted as applied
     subsumed: int = 0  # candidates skipped because a planned later candidate inlined them
+    constant_uses: int = 0  # reads replaced by the constant their definition was proven to be (v3.1)
     # Time (spec section 8). Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0
@@ -139,6 +140,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
     # Outcomes cut short by the shared deadline are not kept.
     stuck: dict = {}
     tier1_cache: dict = {}  # both rounds and every pass ask about the same expressions
+    constants: dict = {}  # constancy outcomes of constant-only lifts, by expression (v3.1)
     last_sources: list = []
     for _ in range(config.max_iterations):
         planning, planning_cpu = time.monotonic(), time.thread_time()
@@ -200,26 +202,32 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                         if found is not None and not _grows_visible_code(local, found.replacement):
                             chosen, rewrite, grows = local, found, False
                 _note_slowest(report, candidate, time.monotonic() - started, rewrite, outcome)
-                if (rewrite is None and not grows and candidate.unchecked is not None and not deadline.expired()
-                        and (candidate.constant_only or candidate.unchecked != candidate.ir)):
-                    # Inputs whose registers were reused before the root (x86-64 -O2: x's rdi): a
-                    # constant reads no variable, so a proven constant may replace the root.
-                    found = attempt(replace(candidate, ir=candidate.unchecked)).rewrite
-                    if (found is not None and not variables(found.replacement)
-                            and found.verdict is not None and found.verdict.name == "PROVEN"):
-                        rewrite = found
-                if (rewrite is None and not grows and final and candidate.shared_dag is not None
-                        and not deadline.expired()):
-                    # Too large as a tree, small as shared values (v3.1): a proven constant only. Once,
-                    # in the last round: no backend changes what it finds.
-                    folded = fold_shared(candidate.shared_dag, deadline)
-                    if folded is not None and folded[1].verdict.name == "PROVEN":
-                        dag = candidate.shared_dag
-                        rewrite = Rewrite(original=dag, replacement=Const(folded[0], dag.width),
-                                          source="constancy (shared values)", verdict=folded[1].verdict,
-                                          method=folded[1].method, reason=folded[1].reason)
-                    elif folded is not None:
-                        outcome.skipped = "constant on every sample, not proven"
+                if rewrite is None and not grows and final and not deadline.expired():
+                    # Lifts only a proven constant may come from (v3.1), by constancy alone, once, in
+                    # the last round: the root over inputs whose registers were reused before it
+                    # (x86-64 -O2's x in rdi; arm64 -O2's per-path values), and the root too large
+                    # as a tree but small as shared values (snagit.dll's export). A constant reads
+                    # no variable, and constancy rejects ordinary roots after a sample or two.
+                    unchecked = candidate.unchecked
+                    if unchecked is not None and not candidate.constant_only and unchecked == candidate.ir:
+                        unchecked = None
+                    for lifted, source in ((unchecked, "constancy (unchecked versions)"),
+                                           (candidate.shared_dag, "constancy (shared values)")):
+                        if lifted is None or deadline.expired():
+                            continue
+                        if lifted in constants:
+                            folded = constants[lifted]
+                        else:
+                            folded = fold_shared(lifted, deadline)
+                            if not deadline.expired():
+                                constants[lifted] = folded  # an outcome cut short is not kept
+                        if folded is not None and folded[1].verdict.name == "PROVEN":
+                            rewrite = Rewrite(original=lifted, replacement=Const(folded[0], lifted.width),
+                                              source=source, verdict=folded[1].verdict,
+                                              method=folded[1].method, reason=folded[1].reason)
+                            break
+                        if folded is not None:
+                            outcome.skipped = "constant on every sample, not proven"
                 if rewrite is None and not final:
                     deferred.append(candidate)
                     continue
@@ -251,6 +259,15 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                 candidate.address, rewrite.source, brief(rewrite.original, 2000), brief(rewrite.replacement, 2000),
                 rewrite.verdict.name if rewrite.verdict else "UNCHECKED", rewrite.method, rewrite.reason, level))
         adapter.finish()
+        if hasattr(adapter, "propagate_constants"):
+            # Definitions made constant: their other reads become the constant (v3.1), so plain uses
+            # (a + k * 3, a call's argument) show it and the definitions die.
+            folded = [c for c, r in planned if isinstance(r.replacement, Const) and r.verdict is not None
+                      and r.verdict.name == "PROVEN"]
+            uses = adapter.propagate_constants(folded) if folded else 0
+            if uses:
+                report.constant_uses += uses
+                adapter.finish()
         # Only what these rewrites made dead: ordinary dead stores (z_1 = z at -O0) stay.
         newly_dead = adapter.dead_assignments() - dead_before
         if newly_dead:

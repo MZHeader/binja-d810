@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Hashable, Iterator, Optional
 
 from binaryninja import (
-    ILSourceLocation, MediumLevelILFunction, MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable,
+    ILSourceLocation, MediumLevelILFunction, MediumLevelILInstruction, MediumLevelILOperation as Op, RegisterValueType,
+    SSAVariable,
 )
 
 from ...deadline import Deadline
@@ -80,9 +81,10 @@ class MLILAdapter:
                     if dag is not None and tree_size(dag) > self.max_nodes and is_candidate(dag):
                         shared = dag
                 unchecked = None
-                if root.operation in _COMPARES:
-                    # A condition: a proven constant reads no variable, so it may come from a lift
-                    # through inputs whose registers were reused before the root (x86-64 -O2).
+                if root.operation in _COMPARES or ir is None or (stats.get("stale") and not is_candidate(ir)):
+                    # A condition, or a value whose inputs the version-safe lift could not see: a proven
+                    # constant reads no variable, so it may come from a lift through inputs whose
+                    # registers were reused before the root (x86-64 -O2; arm64 -O2's per-path values).
                     unchecked = lift(root.ssa_form, root_instr=instr, check_versions=False,
                                      max_nodes=self.max_nodes, definitions=definitions)
                     if unchecked is not None and not is_candidate(unchecked):
@@ -151,6 +153,37 @@ class MLILAdapter:
         self.backups.append((root.expr_index, root.copy_to(self.mlil)))
         self.mlil.replace_expr(root.expr_index, lower(self.mlil, replacement, loc))
 
+    def propagate_constants(self, rewritten: list[Candidate]) -> int:
+        """After a pass (SSA regenerated): reads of a value a rewritten instruction defines, when
+        Binary Ninja's dataflow now knows it is a constant, read the constant (v3.1). Covers partial
+        writes too (xor r14d, r14d; setne r14b folded: r14 is 1). Exact for the SSA value; phi nodes
+        keep their sources (the dataflow carries constants through them). Returns the reads replaced;
+        the definitions then die and are removed as newly dead."""
+        ssa = self.mlil.ssa_form
+        replaced = 0
+        for candidate in rewritten:
+            if candidate.context is None:
+                continue
+            instr = self.mlil[candidate.context.instr_index].ssa_form
+            if instr.operation not in (Op.MLIL_SET_VAR_SSA, Op.MLIL_SET_VAR_SSA_FIELD):
+                continue
+            dest = instr.dest
+            value = ssa.get_ssa_var_value(dest)
+            if value.type != RegisterValueType.ConstantValue:
+                continue
+            for use in ssa.get_ssa_var_uses(dest):
+                if use.operation == Op.MLIL_VAR_PHI:
+                    continue
+                # The use's own non-SSA instruction: SSA form numbers instructions differently (phi).
+                for node, offset in _var_reads(use.non_ssa_form, dest.var):
+                    bits = 8 * node.size or 1  # a flag's value is one bit (if (true), spike S2)
+                    constant = (value.value >> (8 * offset)) & ((1 << bits) - 1)
+                    self.backups.append((node.expr_index, node.copy_to(self.mlil)))
+                    self.mlil.replace_expr(node.expr_index, self.mlil.const(node.size, constant,
+                                                                            ILSourceLocation.from_instruction(node)))
+                    replaced += 1
+        return replaced
+
     def finish(self) -> None:
         self.mlil.finalize()
         self.mlil.generate_ssa_form()
@@ -172,9 +205,13 @@ class MLILAdapter:
                 key = _key(instr.dest)
                 pure[key] = [_key(instr.prev)] + [_key(v) for v in _ssa_vars(instr.src)]
                 index_of[key] = instr.non_ssa_form.instr_index
+            elif instr.operation == Op.MLIL_VAR_PHI:
+                # A merge is not a use: its sources live only if its result does (a folded
+                # predicate's per-path values, merged at -O0 through a stack slot). Not removable.
+                pure[_key(instr.dest)] = [_key(v) for v in instr.src]
             else:
                 roots.extend(_key(v) for v in _ssa_vars(instr))
-        return {index_of[key] for key in dead_definitions(pure, roots)}
+        return {index_of[key] for key in dead_definitions(pure, roots) if key in index_of}
 
     def remove(self, dead: set[Hashable]) -> None:
         for index in sorted(dead):
@@ -232,3 +269,23 @@ def _ssa_vars(e: MediumLevelILInstruction):
 
 def _key(ssa_var: SSAVariable) -> tuple[int, int]:
     return ssa_var.var.identifier, ssa_var.version
+
+
+def _var_reads(instr: MediumLevelILInstruction, var) -> list:
+    """(node, byte offset) for each read of `var` in one non-SSA instruction: whole (MLIL_VAR) or a
+    field (MLIL_VAR_FIELD, r14.d). Its destination is not a read."""
+    found, stack = [], [instr]
+    while stack:
+        node = stack.pop()
+        if node.operation == Op.MLIL_VAR and node.src == var:  # size 0: a flag (cond:0)
+            found.append((node, 0))
+            continue
+        if node.operation == Op.MLIL_VAR_FIELD and node.src == var and node.size > 0:
+            found.append((node, node.offset))
+            continue
+        for operand in node.operands:
+            if isinstance(operand, MediumLevelILInstruction):
+                stack.append(operand)
+            elif isinstance(operand, list):
+                stack.extend(o for o in operand if isinstance(o, MediumLevelILInstruction))
+    return found

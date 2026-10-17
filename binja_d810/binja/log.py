@@ -60,6 +60,8 @@ def render(report: FunctionReport) -> str:
     assurance = report.assurance()
     lines = [f"rewrites: {len(report.rewrites)} (proven {assurance['PROVEN']}, tested only {assurance['TESTED']})"
              f"  refuted: {report.refuted}  skipped: {len(report.skipped)}  errors: {len(report.errors)}"]
+    if getattr(report, "constant_uses", 0):
+        lines.append(f"constants into their uses: {report.constant_uses} reads")
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

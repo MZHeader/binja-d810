@@ -12,7 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
-from binaryninja import MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable, VariableSourceType
+from binaryninja import (
+    MediumLevelILInstruction, MediumLevelILOperation as Op, RegisterValueType, SSAVariable, VariableSourceType,
+)
 
 from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ..effects import mlil_effect
@@ -25,6 +27,7 @@ _UNARY = {Op.MLIL_NEG: "neg", Op.MLIL_NOT: "not", Op.MLIL_ZX: "zx", Op.MLIL_SX: 
 _COMPARE = {Op.MLIL_CMP_E: "eq", Op.MLIL_CMP_NE: "ne", Op.MLIL_CMP_ULT: "ult", Op.MLIL_CMP_ULE: "ule",
             Op.MLIL_CMP_UGT: "ugt", Op.MLIL_CMP_UGE: "uge", Op.MLIL_CMP_SLT: "slt", Op.MLIL_CMP_SLE: "sle",
             Op.MLIL_CMP_SGT: "sgt", Op.MLIL_CMP_SGE: "sge"}
+_LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {Op.MLIL_BOOL_TO_INT}
 
 
@@ -83,6 +86,7 @@ def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruc
     if stats is not None:
         stats["visits"] = lifter.visits
         stats["budget_hit"] = lifter.budget_hit
+        stats["stale"] = lifter.stale
     if e is not None and inlined is not None:
         inlined.update(lifter.inlined)  # (variable identifier, version) -> SSA variable, each definition followed
     return None if e is None else lifter.relate(e)
@@ -123,6 +127,7 @@ class _Lifter:
         self.inlined: dict[tuple[int, int], object] = {}  # (identifier, version) -> SSA variable
         self.shared_once = False
         self.budget_hit = False
+        self.stale = False  # an input was overwritten before the root (version safety stopped inlining)
 
     def expr(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
         self.visits += 1
@@ -194,11 +199,29 @@ class _Lifter:
                 return inner
             self.failed[key] = max(self.failed.get(key, 0), saved)
             self.budget, self.inlined = saved, saved_inlined
+        constant = self.dataflow_constant(ssa_var, definition, width)
+        if constant is not None:
+            return constant
         if not self.live(ssa_var):
+            self.stale = True
             return None  # overwritten before the root and not rebuildable from live values
         # One IR name per (variable, version, width): the verifier keys samples and Z3 symbols by name.
         return Var(self.name(("var", ssa_var.var.identifier, ssa_var.version, width), f"{ssa_var.var.name}#{ssa_var.version}"),
                    width, ref=ssa_var)
+
+    def dataflow_constant(self, ssa_var: SSAVariable, definition, width: int) -> Optional[Const]:
+        """Binary Ninja's dataflow value of a leaf, when it is a single constant (v3.1): a merge of
+        equal constants (phi), or a definition a rewrite made constant. Never a loaded value: memory
+        may change. A constant reads no variable, so it is version-safe."""
+        if definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA and definition.src.operation in _LOADS:
+            return None
+        try:
+            value = self.ssa.get_ssa_var_value(ssa_var)
+        except Exception:  # noqa: BLE001 - no dataflow for this variable
+            return None
+        if value.type != RegisterValueType.ConstantValue:
+            return None
+        return Const(value.value & ((1 << width) - 1), width)
 
     def definition_of(self, ssa_var: SSAVariable):
         key = (ssa_var.var.identifier, ssa_var.version)

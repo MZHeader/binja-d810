@@ -63,3 +63,15 @@ EXPORT uint32_t align_gate(uint32_t p, uint32_t n) {
     bcf_sink(q);
     return (n + p - q - 8) >> 3;
 }
+
+// A proven constant read after a merge: SSA form numbers instructions differently (phi nodes), so
+// a read must be found through its own instruction, never by index.
+EXPORT uint32_t const_after_merge(uint32_t a, uint32_t c) {
+    uint32_t x = bcf_x; B(x);
+    uint32_t s = x | 0x10; B(s);
+    uint32_t k = s != 0x0f;
+    uint32_t m = (c & 1) ? a * 3 : a + 7; B(m);
+    bcf_sink(m);
+    bcf_sink(k);
+    return m;
+}

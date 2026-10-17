@@ -11,6 +11,7 @@ TYPES = {
     "bcf_merge": "uint32_t bcf_merge(uint32_t a, uint32_t c)",
     "const_use": "uint32_t const_use(uint32_t a)",
     "align_gate": "uint32_t align_gate(uint32_t p, uint32_t n)",
+    "const_after_merge": "uint32_t const_after_merge(uint32_t a, uint32_t c)",
 }
 ARITH = {H.HLIL_ADD, H.HLIL_SUB, H.HLIL_MUL, H.HLIL_NEG}
 BITWISE = {H.HLIL_AND, H.HLIL_OR, H.HLIL_XOR, H.HLIL_NOT}
@@ -69,3 +70,16 @@ def test_a_rewrite_never_makes_its_statement_mixed(builds):
         mixed.append([str(i) for i in func.hlil.instructions
                       if {n.operation for n in _nodes(i)} & ARITH and {n.operation for n in _nodes(i)} & BITWISE])
     assert len(mixed[1]) <= len(mixed[0]), (mixed[0], mixed[1])
+
+
+def test_a_constant_read_after_a_merge_reaches_that_read_only(builds):
+    from binja_d810.binja import log
+
+    on, off = builds
+    func = function_named(on, "const_after_merge")
+    reports = log.latest_reports(func)
+    assert all(not r.rolled_back and not any(e.source == "engine" for e in r.errors) for r in reports.values()), \
+        {level: r.errors for level, r in reports.items()}
+    text = _text(func)
+    assert "sink(1)" in text, text  # k's read; m's reads keep m
+    assert text.count("sink(") == 2 and text.count("sink(1)") == 1, text

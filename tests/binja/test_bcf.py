@@ -1,0 +1,71 @@
+"""v3.1: OLLVM-style bogus control flow and the shapes around it (tests/samples/src/bcf.c), on 8 builds."""
+
+import oracle
+import pytest
+from arch import IDS, MATRIX, sample
+from binaryninja import HighLevelILOperation as H
+from helpers import function_named, open_sample, set_types
+
+TYPES = {
+    "bcf_chain": "uint32_t bcf_chain(uint32_t a)",
+    "bcf_merge": "uint32_t bcf_merge(uint32_t a, uint32_t c)",
+    "const_use": "uint32_t const_use(uint32_t a)",
+    "align_gate": "uint32_t align_gate(uint32_t p, uint32_t n)",
+}
+ARITH = {H.HLIL_ADD, H.HLIL_SUB, H.HLIL_MUL, H.HLIL_NEG}
+BITWISE = {H.HLIL_AND, H.HLIL_OR, H.HLIL_XOR, H.HLIL_NOT}
+
+
+@pytest.fixture(scope="module", params=MATRIX, ids=IDS)
+def builds(request):
+    on = open_sample(sample("bcf", *request.param), d810=True)
+    off = open_sample(sample("bcf", *request.param), d810=False)
+    set_types(on, TYPES)
+    set_types(off, TYPES)
+    yield on, off
+    on.file.close()
+    off.file.close()
+
+
+def _text(func) -> str:
+    return "\n".join(map(str, func.hlil.instructions))
+
+
+def _nodes(e):
+    stack = [e]
+    while stack:
+        node = stack.pop()
+        yield node
+        for operand in node.operands:
+            if hasattr(operand, "operation"):
+                stack.append(operand)
+            elif isinstance(operand, list):
+                stack.extend(o for o in operand if hasattr(o, "operation"))
+
+
+@pytest.mark.parametrize("name", ["bcf_chain", "bcf_merge"])
+def test_bogus_control_flow_is_folded(builds, name):
+    on, _ = builds
+    func = function_named(on, name)
+    text = _text(func)
+    assert "if (" not in text and "0x5a" not in text, text
+    result = oracle.compare(oracle.function_result(func), oracle.reference("a + 1", 32), 32)
+    assert result.kind in ("proven", "exhaustive"), (result, text)
+
+
+def test_a_folded_constant_reaches_its_uses(builds):
+    on, _ = builds
+    func = function_named(on, "const_use")
+    constants = [str(i) for i in func.hlil.instructions
+                 if i.operation in (H.HLIL_VAR_INIT, H.HLIL_ASSIGN) and i.src.operation == H.HLIL_CONST]
+    assert not constants, _text(func)
+
+
+def test_a_rewrite_never_makes_its_statement_mixed(builds):
+    on, off = builds
+    mixed = []
+    for bv in (off, on):
+        func = function_named(bv, "align_gate")
+        mixed.append([str(i) for i in func.hlil.instructions
+                      if {n.operation for n in _nodes(i)} & ARITH and {n.operation for n in _nodes(i)} & BITWISE])
+    assert len(mixed[1]) <= len(mixed[0]), (mixed[0], mixed[1])

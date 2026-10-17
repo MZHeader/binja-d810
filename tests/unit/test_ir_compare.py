@@ -88,3 +88,9 @@ def test_comparisons_decided_by_their_form_or_bit_bounds_are_candidates():
     assert not is_candidate(parse("eq(zx32(c), 0x41)", 1, {"c": 8}))
     assert not is_candidate(parse("ult(zx32(c), 0x80)", 1, {"c": 8}))
     assert not is_candidate(parse("eq(x, y)", 1, {"x": 32, "y": 32}))
+
+
+def test_one_bit_constants_print_as_zero_or_one():
+    # Reports show a folded condition as its value: true is 1, not the signed 1-bit (-1).
+    assert to_str(Const(1, 1)) == "1" and to_str(Const(0, 1)) == "0"
+    assert to_str(Const(0xFFFFFFFF, 32)) == "(-1)"

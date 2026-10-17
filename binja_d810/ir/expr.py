@@ -128,6 +128,8 @@ def to_str(e: Expr) -> str:
     if isinstance(e, Var):
         return e.name
     if isinstance(e, Const):
+        if e.width == 1:
+            return str(e.value)  # a condition's value: 0 or 1
         signed = to_signed(e.value, e.width)
         if -4096 <= signed < 0:
             return f"({signed})"

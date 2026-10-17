@@ -1,7 +1,7 @@
 """Runs pytest inside the Binary Ninja GUI process (Personal edition has no headless API).
 
 scripts/binja_pytest.sh launches Binary Ninja with BINJA_D810_PYTEST_ARGS (JSON list of pytest
-arguments) and BINJA_D810_PYTEST_OUT (a directory). This module runs pytest on a background
+arguments), BINJA_D810_PYTEST_OUT (a directory) and BINJA_D810_PYTEST_CWD (where pytest runs). This module runs pytest on a background
 thread, writes pytest.log and result.json into that directory, then quits the application.
 """
 
@@ -13,6 +13,7 @@ from pathlib import Path
 
 ENV_ARGS = "BINJA_D810_PYTEST_ARGS"
 ENV_OUT = "BINJA_D810_PYTEST_OUT"
+ENV_CWD = "BINJA_D810_PYTEST_CWD"  # the directory pytest runs in (an app launched hidden starts in /)
 
 
 def maybe_run_from_env() -> bool:
@@ -32,6 +33,8 @@ def _run(args: list[str], out_dir: Path) -> None:
     try:
         import pytest
 
+        if os.environ.get(ENV_CWD):
+            os.chdir(os.environ[ENV_CWD])
         with open(out_dir / "pytest.log", "w") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             exit_code = int(pytest.main(args))
     finally:

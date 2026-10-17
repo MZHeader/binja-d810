@@ -18,7 +18,6 @@ TYPES = {
 }
 UNSIGNED = {M.MLIL_DIVU, M.MLIL_DIVU_DP}
 SIGNED = {M.MLIL_DIVS, M.MLIL_DIVS_DP}
-PER_PATH = "folded per incoming path (v3.2 Task 5)"
 ARITH = {H.HLIL_ADD, H.HLIL_SUB, H.HLIL_MUL, H.HLIL_NEG}
 BITWISE = {H.HLIL_AND, H.HLIL_OR, H.HLIL_XOR, H.HLIL_NOT}
 
@@ -71,9 +70,7 @@ def _mlil_operations(func) -> set:
 
 
 @pytest.mark.parametrize("name", ["div_opaque", "rem_opaque", "div_merge"])
-def test_division_predicates_are_folded(builds, name, request):
-    if name == "div_merge":
-        request.applymarker(pytest.mark.xfail(reason=PER_PATH, strict=True))
+def test_division_predicates_are_folded(builds, name):
     _, on, off = builds
     assert "if (" in _text(function_named(off, name))  # the predicate is there without the plugin
     func = function_named(on, name)

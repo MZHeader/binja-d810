@@ -70,8 +70,8 @@ def constant_value(e: Expr, deadline: Deadline, prove: Optional[Prover] = None) 
 def fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int = CONSTANCY_Z3_MS) -> Optional[tuple[int, Check]]:
     """constant_value for an expression too large to expand as a tree (values shared: snagit.dll's
     export, spec v3.1 goal 1). Samples evaluate each shared value once and the Z3 query is built
-    with sharing. (value, check) when constant on every sample; the check says whether it is proven.
-    None as soon as two samples differ, or when a proof refutes it. Proven and refuted outcomes are
+    with sharing. (value, check) when constant on every sample (or variable-free); the check says
+    whether it is proven. None as soon as two samples differ, or when a proof refutes it. Proven and refuted outcomes are
     remembered by shape (spec v3.2 goal 2)."""
     key = ("fold", shape_key(e))
     found = memo.get(key)
@@ -86,7 +86,8 @@ def fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int = CONSTANCY_Z3_M
 def _fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int) -> Optional[tuple[int, Check]]:
     widths = {v.name: v.width for v in variables(e)}
     if not widths:
-        return None
+        # Exact (a per-path variant whose merged values were constants, spec v3.2 goal 3).
+        return evaluate_shared(e, {}), Check(Verdict.PROVEN, "evaluation")
     value = None
     for env in itertools.chain(_joint_envs(widths), sample_envs(widths, 256, seed=11)):
         found = evaluate_shared(e, env)

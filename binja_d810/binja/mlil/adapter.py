@@ -11,9 +11,10 @@ from binaryninja import (
 
 from ...deadline import Deadline
 from ...ir.expr import Expr, is_candidate, tree_size
+from ...ir.paths import Merge, path_variants
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root, shown_in
-from .lift import DIVISION_OPS, SUPPORTED_OPS, candidate_roots, is_safe_division, lift
+from .lift import DIVISION_OPS, SUPPORTED_OPS, candidate_roots, is_safe_division, lift, lift_value
 from .lower import lower
 
 _ARITH = frozenset({Op.MLIL_ADD, Op.MLIL_SUB, Op.MLIL_MUL, Op.MLIL_NEG, Op.MLIL_LSL})
@@ -119,6 +120,45 @@ class MLILAdapter:
         defines, single = self._defines(instr, root)
         nodes, mixed, _ = self._visible(instr, root, inlined)
         return Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed, instr)
+
+    def path_variants(self, candidate: Candidate) -> Optional[list[Expr]]:
+        """The candidate's condition once per incoming path of the merged values it reads (spec v3.2
+        goal 3), from its lift through every input (versions unchecked: only a proven constant may
+        come from it). Conditions only; None when it reads no merged value."""
+        if candidate.context is None or candidate.root.operation not in _COMPARES:
+            return None
+        base = candidate.unchecked if candidate.unchecked is not None else candidate.ir
+        merges: dict = {}
+        definitions: dict = {}
+
+        def merge_of(leaf) -> Optional[Merge]:
+            if not isinstance(leaf.ref, SSAVariable):
+                return None
+            key = (leaf.ref.var.identifier, leaf.ref.version, leaf.width)
+            if key not in merges:
+                merges[key] = self._merge(leaf.ref, leaf.width, candidate.context, definitions)
+            return merges[key]
+
+        return path_variants(base, merge_of)
+
+    def _merge(self, ssa_var: SSAVariable, width: int, instr: MediumLevelILInstruction,
+               definitions: dict) -> Optional[Merge]:
+        """A phi's block and its incoming value along each of the block's incoming edges: the version
+        of the variable at the end of the edge's source block, which must be one of the phi's sources."""
+        ssa = self.mlil.ssa_form
+        phi = ssa.get_ssa_var_definition(ssa_var)
+        if phi is None or phi.operation != Op.MLIL_VAR_PHI:
+            return None
+        sources = {(s.var.identifier, s.version) for s in phi.src}
+        block = phi.il_basic_block
+        incoming = []
+        for edge in block.incoming_edges:
+            reaching = _reaching(ssa, edge.source, ssa_var.var)
+            if reaching is None or (reaching.var.identifier, reaching.version) not in sources:
+                return None
+            incoming.append(lift_value(ssa, reaching, width, root_instr=instr, max_nodes=self.max_nodes,
+                                       definitions=definitions))
+        return Merge(block.index, tuple(incoming))
 
     def _visible(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction, inlined: dict):
         """Size and mix of what the user sees: the root plus the definitions that die with it."""
@@ -251,6 +291,18 @@ class MLILAdapter:
         if self.backups:
             self.finish()
         self.backups.clear()
+
+
+def _reaching(ssa, block, var) -> Optional[SSAVariable]:
+    """The version of `var` leaving `block` (SSA form): written by its last instruction, or current there."""
+    last = ssa[block.end - 1]
+    for written in last.vars_written:
+        if isinstance(written, SSAVariable) and written.var == var:
+            return written
+    try:
+        return SSAVariable(var, last.non_ssa_form.get_ssa_var_version(var))
+    except Exception:  # noqa: BLE001 - no non-SSA instruction for it
+        return None
 
 
 def _operations(e: MediumLevelILInstruction):

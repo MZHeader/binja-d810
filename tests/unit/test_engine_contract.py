@@ -491,3 +491,39 @@ def test_a_rewrite_never_makes_the_statement_that_uses_it_mixed():
     allowed = EnclosedAdapter(frozenset({"bitwise"}))  # a bitwise user: -8 | p reads fine there
     simplify_function(allowed, load_rules(), default_backends(), EngineConfig())
     assert allowed.roots["d"] != allowed.original["d"]
+
+
+class PathAdapter(FakeAdapter):
+    """x-tunnel.bin: 2 / (x * x + 1) == i with i merged from y1 * y1 + 3 and y2 * y2 + 3: not constant
+    over i, false on each incoming path (spec v3.2 goal 3). The adapter offers the per-path variants."""
+
+    def __init__(self, variants):
+        super().__init__({"c": p("eq(udiv(2, (x * x) + 1), i)", 1, {"x": 32, "i": 32})})
+        self.variants = variants
+
+    def has_candidates(self):
+        return True
+
+    def candidates(self, skip):
+        if self.roots["c"] == self.original["c"]:
+            yield Candidate("c", 0x80, self.roots["c"])
+
+    def path_variants(self, candidate):
+        return self.variants
+
+
+def test_a_condition_constant_on_every_incoming_path_is_folded():
+    from binja_d810.ir.expr import Const
+    from binja_d810.semantic.backend import default_backends
+
+    widths = {"x": 32, "y": 32, "z": 32}
+    agree = PathAdapter([p("eq(udiv(2, (x * x) + 1), (y * y) + 3)", 1, widths),
+                         p("eq(udiv(2, (x * x) + 1), (z * z) + 3)", 1, widths)])
+    report = simplify_function(agree, [], default_backends(), EngineConfig())
+    assert agree.roots["c"] == Const(0, 1), report
+    assert report.rewrites[0].source == "constancy (per path)" and report.rewrites[0].verdict == "PROVEN"
+    for variants in ([p("eq(udiv(2, (x * x) + 1), (y * y) + 3)", 1, widths), p("eq(udiv(2, (x * x) + 1), z)", 1, widths)],
+                     [p("eq(x, x)", 1, widths), p("ne(y, y)", 1, widths)]):  # one path varies; two constants
+        refused = PathAdapter(variants)
+        simplify_function(refused, [], default_backends(), EngineConfig())
+        assert refused.roots["c"] == refused.original["c"], variants

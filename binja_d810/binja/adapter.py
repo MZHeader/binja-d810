@@ -73,6 +73,11 @@ class ILAdapter(Protocol):
     def remove(self, dead: set[Hashable]) -> None:
         """Remove those assignments, keeping backups."""
 
+    def path_variants(self, candidate: Candidate) -> Optional[list[Expr]]:
+        """Optional (spec v3.2 goal 3). A condition's lift once per incoming path of the merged values
+        it reads (binja_d810.ir.paths); the engine folds it only if every variant is the same proven
+        constant. None when there is nothing to split."""
+
     def cfg_shape(self) -> tuple:
         """A value that changes if and only if the function's control flow changes."""
 

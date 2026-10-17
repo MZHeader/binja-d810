@@ -18,6 +18,7 @@ from ..semantic import cobra_shim
 from ..rules.base import Rewrite, Rule
 from ..semantic.constancy import fold_shared
 from ..semantic.backend import Tier2Backend
+from ..semantic.verify import Verdict
 from ..simplify import Limits, Outcome, simplify_expression
 from .adapter import ILAdapter
 from .storage import visible_size
@@ -243,6 +244,8 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                             break
                         if folded is not None:
                             outcome.skipped = "constant on every sample, not proven"
+                    if rewrite is None and hasattr(adapter, "path_variants") and not deadline.expired():
+                        rewrite = _fold_paths(adapter, candidate, constants, deadline)
                 if rewrite is None and not final:
                     deferred.append(candidate)
                     continue
@@ -294,6 +297,30 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
             return
     report.capped = True
     report.still_firing = last_sources
+
+
+def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline):
+    """Per-path constancy (spec v3.2 goal 3): the condition once per incoming path of the merged values
+    it reads (adapter.path_variants); a rewrite only if every variant is the same proven constant."""
+    variants = adapter.path_variants(candidate)
+    if not variants:
+        return None
+    value = None
+    for variant in variants:
+        if deadline.expired():
+            return None
+        if variant in constants:
+            folded = constants[variant]
+        else:
+            folded = fold_shared(variant, deadline)
+            if not deadline.expired():
+                constants[variant] = folded
+        if folded is None or folded[1].verdict is not Verdict.PROVEN or value not in (None, folded[0]):
+            return None
+        value = folded[0]
+    original = candidate.unchecked if candidate.unchecked is not None else candidate.ir
+    return Rewrite(original=original, replacement=Const(value, original.width), source="constancy (per path)",
+                   verdict=Verdict.PROVEN, method="z3", reason="")
 
 
 def _numbered(candidates, order: dict, report: FunctionReport):

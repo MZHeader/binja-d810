@@ -80,6 +80,17 @@ def is_safe_division(ssa_node: MediumLevelILInstruction, root_instr: MediumLevel
     return ssa_node.operation in DIVISION_OPS and lift(ssa_node, root_instr=root_instr, check_versions=False) is not None
 
 
+def lift_value(ssa_func, ssa_var: SSAVariable, width: int, *, root_instr: MediumLevelILInstruction,
+               max_nodes: int = 200, definitions: Optional[dict] = None) -> Expr:
+    """One SSA value lifted on its own, versions unchecked (a merge's incoming value, spec v3.2 goal 3):
+    its definitions inlined, or the value itself as a leaf. Only a proven constant may come from it."""
+    lifter = _Lifter(ssa_func, root_instr, False, max_nodes, False, definitions)
+    found = lifter.var(ssa_var, width)
+    if found is None:
+        return Var(f"{ssa_var.var.name}#{ssa_var.version}", width, ref=ssa_var)
+    return lifter.relate(found)
+
+
 def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruction,
          check_versions: bool = True, max_nodes: int = 200, effect_leaves: bool = False,
          inlined: Optional[set] = None, stats: Optional[dict] = None,

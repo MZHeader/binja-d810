@@ -122,3 +122,12 @@ def test_an_unproven_constant_is_not_proven_again_in_the_same_function_run():
         out = simplify_expression(c("eq((x * (x + 1)) & 1, 0)"), [], [], check=check, tier1_cache=cache)
         assert out.rewrite is None and out.skipped == "constant on every sample, not proven", out
     assert len(calls) == 1, calls
+
+
+def test_fold_shared_evaluates_a_variable_free_expression():
+    # A per-path variant whose merged values were all constants (spec v3.2 goal 3): exact by evaluation.
+    from binja_d810.semantic.constancy import fold_shared
+    from binja_d810.ir.expr import BinOp, Const
+
+    found = fold_shared(BinOp("xor", Const(1, 1), Const(0, 1), 1), Deadline.never())
+    assert found is not None and found[0] == 1 and found[1].verdict is Verdict.PROVEN

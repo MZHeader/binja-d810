@@ -91,10 +91,14 @@ def _run(ctx, level: str) -> None:
     # One allowance per function and analysis run, shared by both passes: the generation is the
     # MLIL the MLIL pass produced, which the HLIL activity sees as ctx.mlil (binja/budget.py).
     mlil = ctx.mlil
+    from . import limits  # it imports this module
+
+    # The limit Binary Ninja really applies: the one the binary was opened with (v3.3, measured).
+    limit_ms = limits.in_effect_ms(func, _analysis_limit_ms(ctx))
     allowance = budget.LEDGER.begin((func.view.file.session_id, func.start), level,
                                     generation=_handle(mlil) if mlil is not None else _handle(il),
                                     keepalive=mlil if mlil is not None else il,
-                                    allowance=budget.plugin_allowance(config.function_seconds, _analysis_limit_ms(ctx)))
+                                    allowance=budget.plugin_allowance(config.function_seconds, limit_ms))
     make = MLILAdapter if level == "mlil" else HLILAdapter
     adapter = make(il, config.limits.max_nodes, allowance.deadline)
     backends = _backends_override if _backends_override is not None else _backends()

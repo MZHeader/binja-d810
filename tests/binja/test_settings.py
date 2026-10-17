@@ -28,15 +28,65 @@ def test_settings_are_registered():
         assert s.contains(key), key
 
 
-def test_the_default_budget_is_the_most_binary_ninjas_default_limit_allows():
-    # 10 s: half of analysis.limits.maxFunctionAnalysisTime's default 20 s (budget.plugin_allowance).
-    from binja_d810.binja.budget import plugin_allowance
+LIMIT = "analysis.limits.maxFunctionAnalysisTime"
+
+
+def test_the_default_budget_is_20_seconds_with_room_in_binary_ninjas_limit():
+    # v3.3: 20 s. Binary Ninja defers a function whose analysis exceeds its own limit (20 s by default),
+    # so the budget stays at most half of it (budget.plugin_allowance), and a binary opened with D-810
+    # enabled gets a limit of twice the budget before its analysis starts.
     from binja_d810.binja.engine import EngineConfig
 
     s = Settings()
-    assert s.get_integer(settings.FUNCTION_SECONDS) == 10
-    assert EngineConfig().function_seconds == 10
-    assert plugin_allowance(10, s.get_integer("analysis.limits.maxFunctionAnalysisTime")) == 10
+    assert s.get_integer(settings.FUNCTION_SECONDS) == 20
+    assert EngineConfig().function_seconds == 20
+    bv, func = _open()
+    try:
+        assert s.get_integer(LIMIT, bv) == 40_000
+        report = log.latest_reports(func)["mlil"]
+        assert 19.9 < report.allowance_seconds <= 20.0, report.allowance_seconds
+    finally:
+        bv.file.close()
+
+
+def test_a_limit_raised_after_the_analysis_started_never_raises_the_budget():
+    # Binary Ninja analyzes a binary with the limit it had when the binary was opened (measured: 40 s set
+    # afterwards, on the binary and the function, still deferred tigress_vm's 0x401159 at 20 s). The
+    # budget is at most half of that limit, whatever the setting says later.
+    from binja_d810.binja import workflow
+
+    s = Settings()
+    bv = open_sample("mba_O2.dylib", d810=False)
+    try:
+        set_types(bv, {ENTRY["name"]: signature(ENTRY)})
+        func = function_named(bv, ENTRY["name"])
+        s.set_integer(LIMIT, 40_000, bv)
+        s.set_bool(workflow.ACTIVITY_SETTING, True, func)
+        func = _reanalyze(bv, func)
+        assert 9.9 < log.latest_reports(func)["mlil"].allowance_seconds <= 10.0
+    finally:
+        bv.file.close()
+
+
+def test_a_lower_budget_or_a_higher_limit_is_left_alone():
+    s = Settings()
+    s.set_integer(settings.FUNCTION_SECONDS, 5)
+    try:
+        bv, _ = _open()
+        assert s.get_integer(LIMIT, bv) == 20_000  # 2 x 5 s fits
+        bv.file.close()
+    finally:
+        s.reset(settings.FUNCTION_SECONDS)
+    bv = open_sample("mba_O2.dylib", d810=True, options={LIMIT: 90_000})
+    try:
+        assert s.get_integer(LIMIT, bv) == 90_000
+    finally:
+        bv.file.close()
+    bv = open_sample("mba_O2.dylib", d810=True, options={LIMIT: 0})  # 0: no limit
+    try:
+        assert s.get_integer(LIMIT, bv) == 0
+    finally:
+        bv.file.close()
 
 
 def test_kill_switch():

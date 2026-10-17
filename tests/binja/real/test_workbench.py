@@ -20,7 +20,7 @@ import pytest
 from binaryninja import Settings
 from measure import hlil_counts
 
-from binja_d810.binja import log, settings, workflow
+from binja_d810.binja import limits, log, settings, workflow
 
 OUT = Path(os.environ.get("BINJA_D810_PYTEST_OUT", ".binja-test")) / "workbench"
 LIST = Path(os.environ.get("BINJA_D810_WORKBENCH", Path(__file__).with_name("workbench.local.toml")))
@@ -55,10 +55,15 @@ def test_workbench():
     root = Path(os.environ["BINJA_D810_SAMPLES"])
     rows = []
     for sample, addresses in _entries():
-        bv = binaryninja.load(str(root / sample), options={workflow.ACTIVITY_SETTING: False})
-        assert bv is not None, sample
+        options = {workflow.ACTIVITY_SETTING: False}
         if os.environ.get("BINJA_D810_FUNCTION_SECONDS"):
-            Settings().set_integer(settings.FUNCTION_SECONDS, int(os.environ["BINJA_D810_FUNCTION_SECONDS"]), bv)
+            options[settings.FUNCTION_SECONDS] = int(os.environ["BINJA_D810_FUNCTION_SECONDS"])
+        # As if the binary were opened with D-810 enabled: room for the whole budget in Binary Ninja's own
+        # limit, set when the binary opens (binja_d810.binja.limits), though each function is enabled below.
+        options.update(limits.opening_options(options.get(settings.FUNCTION_SECONDS,
+                                                           Settings().get_integer(settings.FUNCTION_SECONDS))))
+        bv = binaryninja.load(str(root / sample), options=options)
+        assert bv is not None, sample
         try:
             for address in addresses:
                 func = bv.get_function_at(address)

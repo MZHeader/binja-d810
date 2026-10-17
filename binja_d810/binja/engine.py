@@ -39,10 +39,10 @@ class EngineConfig:
     max_iterations: int = 10
     tier2: bool = True
     disabled_rules: frozenset[str] = frozenset()
-    # Shared by both passes of one analysis run (spec section 8): half of Binary Ninja's default
-    # 20 s per-function limit. At 5 s, heavily obfuscated functions stopped short (mba_challenge's
-    # mba5 needs 6.9 s to reach arg1 + arg2 + arg3).
-    function_seconds: float = 10.0
+    # Shared by both passes of one analysis run (spec section 8). v3.3: 20 s, with Binary Ninja's own
+    # per-function limit raised to twice that where D-810 is enabled (binja_d810.binja.limits). At 10 s,
+    # snagit.dll's export needed 85% of the budget and stopped short on a slower machine.
+    function_seconds: float = 20.0
 
 
 class RewriteRecord(NamedTuple):

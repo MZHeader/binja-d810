@@ -29,7 +29,7 @@ from binaryninja import Settings
 from measure import RootCounts, hlil_counts
 
 import binja_d810
-from binja_d810.binja import log, settings, workflow
+from binja_d810.binja import limits, log, settings, workflow
 
 OUT = Path(os.environ.get("BINJA_D810_PYTEST_OUT", ".binja-test")) / "real"
 MLIL_SCAN_SECONDS = 600
@@ -259,13 +259,14 @@ def test_sample():
     out_file.write_text(json.dumps(result, indent=1))
 
     start = time.perf_counter()
-    bv = binaryninja.load(str(path), options={workflow.ACTIVITY_SETTING: False})
-    assert bv is not None, f"Binary Ninja could not load {path.name}"
+    options = {workflow.ACTIVITY_SETTING: False}
     if os.environ.get("BINJA_D810_FUNCTION_SECONDS"):  # explore budgets (capped at half of BN's limit)
-        seconds = int(os.environ["BINJA_D810_FUNCTION_SECONDS"])
-        Settings().set_integer(settings.FUNCTION_SECONDS, seconds, bv)
-        limit = "analysis.limits.maxFunctionAnalysisTime"
-        Settings().set_integer(limit, max(Settings().get_integer(limit, bv), 2000 * seconds + 10_000), bv)
+        options[settings.FUNCTION_SECONDS] = int(os.environ["BINJA_D810_FUNCTION_SECONDS"])
+    # As if opened with D-810 enabled: room for the whole budget, set when the binary opens (limits).
+    options.update(limits.opening_options(options.get(settings.FUNCTION_SECONDS,
+                                                       Settings().get_integer(settings.FUNCTION_SECONDS))))
+    bv = binaryninja.load(str(path), options=options)
+    assert bv is not None, f"Binary Ninja could not load {path.name}"
     try:
         result.update(arch=str(bv.arch), platform=str(bv.platform), view_type=bv.view_type,
                       load_s=round(time.perf_counter() - start, 1), settings=_settings(bv))

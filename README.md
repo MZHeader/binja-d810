@@ -48,7 +48,7 @@ The activity is **off by default**. Turn it on in one of two ways:
 
 The same setting enables both passes; the HLIL pass has no switch of its own.
 
-Each function gets a time budget (`binja_d810.functionSeconds`, 10 s by default) shared by both passes of one analysis run. When it runs out, rewrites already verified are applied and nothing new is attempted; the report says "budget exhausted". The budget never exceeds half of Binary Ninja's own per-function limit (`analysis.limits.maxFunctionAnalysisTime`), so the plugin cannot make Binary Ninja abandon a function. Enable D-810 per function on heavily obfuscated code: with a whole binary enabled, many functions are analyzed in parallel and compete for Python, so more of them hit the budget. Functions with neither mixed arithmetic and bitwise operations nor comparisons over bitwise operations or products are skipped almost instantly.
+Each function gets a time budget (`binja_d810.functionSeconds`, 20 s by default) shared by both passes of one analysis run. When it runs out, rewrites already verified are applied and nothing new is attempted; the report says "budget exhausted". The budget never exceeds half of Binary Ninja's own per-function limit (`analysis.limits.maxFunctionAnalysisTime`, 20 s by default), because Binary Ninja defers a function whose analysis takes longer (it gets no HLIL). Binary Ninja applies the limit a binary had when it was opened; changing the setting later has no effect until the binary is reopened. So when a binary is opened with D-810 enabled, D-810 raises its limit to twice the budget (40 s by default) before its analysis starts, and the log says so. A limit that is already higher, or 0 (no limit), is left alone. A function enabled on its own, in a binary opened without D-810, gets at most half of the limit the binary was opened with: 10 s by default. For the full budget there, open the binary with D-810 enabled, or set `analysis.limits.maxFunctionAnalysisTime` to 40000 ms in **Open with Options**. Enable D-810 per function on heavily obfuscated code: with a whole binary enabled, many functions are analyzed in parallel and compete for Python, so more of them hit the budget. Functions with neither mixed arithmetic and bitwise operations nor comparisons over bitwise operations or products are skipped almost instantly.
 
 ### Settings
 
@@ -63,7 +63,7 @@ Settings are under **Settings > D-810**. All of them can be set globally or per 
 | `binja_d810.maxIterations` | 10 | Maximum rewrite passes per function. |
 | `binja_d810.disabledRules` | none | d810 rule names to skip. |
 | `binja_d810.skipFunctions` | none | Function start addresses (hex) never rewritten. |
-| `binja_d810.functionSeconds` | 10 | Time budget per function, shared by both passes (capped at half of `analysis.limits.maxFunctionAnalysisTime`, 20 s by default; raise both for more). |
+| `binja_d810.functionSeconds` | 20 | Time budget per function, shared by both passes. Capped at half of the `analysis.limits.maxFunctionAnalysisTime` the binary was opened with, which D-810 raises to twice the budget for a binary opened with D-810 enabled. |
 
 To set the number settings from Python, use `Settings().set_integer`. Binary Ninja ignores a value stored with `set_double` for these keys.
 

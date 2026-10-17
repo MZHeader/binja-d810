@@ -9,7 +9,7 @@ from binaryninja import (
 )
 
 from ...deadline import Deadline
-from ...ir.expr import Expr, is_mba
+from ...ir.expr import Expr, is_candidate
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root
 from .lift import SUPPORTED_OPS, candidate_roots, lift
@@ -17,6 +17,8 @@ from .lower import lower
 
 _ARITH = frozenset({Op.MLIL_ADD, Op.MLIL_SUB, Op.MLIL_MUL, Op.MLIL_NEG, Op.MLIL_LSL})
 _BITWISE = frozenset({Op.MLIL_AND, Op.MLIL_OR, Op.MLIL_XOR, Op.MLIL_NOT})
+_COMPARES = frozenset({Op.MLIL_CMP_E, Op.MLIL_CMP_NE, Op.MLIL_CMP_ULT, Op.MLIL_CMP_ULE, Op.MLIL_CMP_UGT,
+                       Op.MLIL_CMP_UGE, Op.MLIL_CMP_SLT, Op.MLIL_CMP_SLE, Op.MLIL_CMP_SGT, Op.MLIL_CMP_SGE})
 _PURE_LEAVES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_VAR_SSA_FIELD, Op.MLIL_CONST, Op.MLIL_CONST_PTR})
 _COPIES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_VAR_SSA_FIELD})
 # Flags a rewrite may leave dead (cond:0 = t != 0 once t's 0/1 value is inlined): pure, never trap.
@@ -44,7 +46,9 @@ class MLILAdapter:
                 seen.update(_operations(root))
             for expr, _ in rejected:
                 seen.update(_operations(expr))
-        return bool(seen & _ARITH) and bool(seen & _BITWISE)
+        # MBA, or a comparison over a bitwise operation or a product (opaque predicates)
+        return (bool(seen & _ARITH) and bool(seen & _BITWISE)) or (
+            bool(seen & _COMPARES) and (bool(seen & _BITWISE) or Op.MLIL_MUL in seen))
 
     def candidates(self, skip: Skip) -> Iterator[Candidate]:
         if self.mlil.ssa_form is None:
@@ -58,17 +62,30 @@ class MLILAdapter:
             for expr, reason in rejected:
                 seen = lift(expr.ssa_form, root_instr=instr, max_nodes=self.max_nodes, effect_leaves=True,
                             definitions=definitions)
-                if seen is not None and is_mba(seen):
+                if seen is not None and is_candidate(seen):
                     skip(expr.address, reason)
             for root in reversed(roots):
                 inlined: dict = {}
                 ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes, inlined=inlined,
                           definitions=definitions)
-                if ir is not None and is_mba(ir):
+                unchecked = None
+                if root.operation in _COMPARES:
+                    # A condition: a proven constant reads no variable, so it may come from a lift
+                    # through inputs whose registers were reused before the root (x86-64 -O2).
+                    unchecked = lift(root.ssa_form, root_instr=instr, check_versions=False,
+                                     max_nodes=self.max_nodes, definitions=definitions)
+                    if unchecked is not None and not is_candidate(unchecked):
+                        unchecked = None
+                constant_only = (ir is None or not is_candidate(ir)) and unchecked is not None
+                if constant_only:
+                    inlined = {}
+                    ir = lift(root.ssa_form, root_instr=instr, check_versions=False, max_nodes=self.max_nodes,
+                              inlined=inlined, definitions=definitions)
+                if ir is not None and is_candidate(ir):
                     defines, single = self._defines(instr, root)
                     nodes, mixed, dying = self._visible(instr, root, inlined)
                     yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,
-                                    instr, frozenset(inlined) - dying)
+                                    instr, frozenset(inlined) - dying, unchecked, constant_only)
 
     def shallow(self, candidate: Candidate, keep: Optional[frozenset] = None) -> Optional[Candidate]:
         """The root lifted with `keep` (default: the definitions that stay alive) as leaves where

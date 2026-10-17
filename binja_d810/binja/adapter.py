@@ -28,6 +28,11 @@ class Candidate:
     # stay alive after a rewrite (used elsewhere too).
     context: object = None
     shared: frozenset = frozenset()
+    # The root lifted without version safety (through inputs whose registers were reused before the
+    # root). Only a proven constant may come from it: a constant reads no variable. constant_only:
+    # there is no version-safe lift (ir is the unchecked one).
+    unchecked: Optional[Expr] = None
+    constant_only: bool = False
 
 
 Skip = Callable[[int, str], None]

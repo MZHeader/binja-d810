@@ -14,7 +14,6 @@ from typing import Iterator, Optional
 
 from binaryninja import MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable, VariableSourceType
 
-from ...ir.bits import compare_with_zero
 from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ..effects import mlil_effect
 from ..storage import contained, field_read, fit, merge_partial_write, read_over_write
@@ -23,8 +22,10 @@ _BINARY = {Op.MLIL_ADD: "add", Op.MLIL_SUB: "sub", Op.MLIL_MUL: "mul", Op.MLIL_A
            Op.MLIL_OR: "or", Op.MLIL_XOR: "xor", Op.MLIL_LSL: "shl", Op.MLIL_LSR: "lshr", Op.MLIL_ASR: "ashr",
            Op.MLIL_ROL: "rol", Op.MLIL_ROR: "ror"}
 _UNARY = {Op.MLIL_NEG: "neg", Op.MLIL_NOT: "not", Op.MLIL_ZX: "zx", Op.MLIL_SX: "sx", Op.MLIL_LOW_PART: "trunc"}
-SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY)
-_COMPARE_ZERO = {Op.MLIL_CMP_E: "eq", Op.MLIL_CMP_NE: "ne"}
+_COMPARE = {Op.MLIL_CMP_E: "eq", Op.MLIL_CMP_NE: "ne", Op.MLIL_CMP_ULT: "ult", Op.MLIL_CMP_ULE: "ule",
+            Op.MLIL_CMP_UGT: "ugt", Op.MLIL_CMP_UGE: "uge", Op.MLIL_CMP_SLT: "slt", Op.MLIL_CMP_SLE: "sle",
+            Op.MLIL_CMP_SGT: "sgt", Op.MLIL_CMP_SGE: "sge"}
+SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {Op.MLIL_BOOL_TO_INT}
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,10 @@ class _Lifter:
         if self.budget < 0:
             return None
         op, width = e.operation, e.size * 8
+        if op in _COMPARE:
+            return self.compare(e, inlined=inlined)
+        if op == Op.MLIL_VAR_SSA and width == 0:
+            return self.boolean(e, inlined=inlined)  # a flag variable (cond:0)
         if width == 0:
             return None
         if op in (Op.MLIL_CONST, Op.MLIL_CONST_PTR):
@@ -154,9 +159,9 @@ class _Lifter:
             except ValueError:
                 return None
         elif op == Op.MLIL_BOOL_TO_INT:
-            found = self.flag(e.src, width, inlined=inlined)
+            found = self.boolean(e.src, inlined=inlined)
             if found is not None:
-                return found
+                return UnOp("zx", found, width)
         if inlined:
             return None  # never move loads or other unsupported expressions across instructions
         if mlil_effect(e) is not None:
@@ -208,32 +213,42 @@ class _Lifter:
         added = {k: v for k, v in self.inlined.items() if k not in saved_inlined}
         self.done[key] = (expr, saved_budget - self.budget, added)
 
-    def flag(self, e: MediumLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
-        """A boolean as a `width`-bit 0 or 1 (x86 setcc, ARM64 cset): a flag variable (cond:0 = t != 0)
-        or a comparison with zero of a value that can only be 0 or 1 (ir.bits.compare_with_zero)."""
-        if e.operation == Op.MLIL_VAR_SSA and e.size == 0:
-            definition = self.definition_of(e.src)
-            if definition is None or definition.operation != Op.MLIL_SET_VAR_SSA or not _is_flag(definition.src):
-                return None
-            found = self.flag(definition.src, width, inlined=True)
+    def compare(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
+        """A comparison: 1 bit, over operands of the comparison's own size."""
+        width = e.size * 8
+        left, right = self.expr(e.left, inlined=inlined), self.expr(e.right, inlined=inlined)
+        left = None if left is None else fit(left, width)
+        right = None if right is None else fit(right, width)
+        if left is None or right is None:
+            return None
+        return BinOp(_COMPARE[e.operation], left, right, 1)
+
+    def boolean(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
+        """A 1-bit value (x86 setcc, ARM64 cset, an if's condition): a comparison, or a flag variable
+        (cond:0 = t != 0), followed through its definition or kept as a 1-bit leaf. Normalization reads
+        zx(t != 0) as t when t can only be 0 or 1 (v2.1's 0/1 rule)."""
+        if e.operation in _COMPARE:
+            return self.compare(e, inlined=inlined)
+        if e.operation != Op.MLIL_VAR_SSA or e.size != 0:
+            return None
+        ssa_var = e.src
+        definition = self.definition_of(ssa_var)
+        if (definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA and _is_flag(definition.src)
+                and self.budget > 0 and self.visits < self.max_visits
+                and (ssa_var.var.identifier, ssa_var.version) not in self.keep):
+            found = self.boolean(definition.src, inlined=True)
             if found is not None:
-                self.inlined[(e.src.var.identifier, e.src.version)] = e.src
-            return found
-        kind = _COMPARE_ZERO.get(e.operation)
-        if kind is None:
+                self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
+                return found
+        if not self.live(ssa_var):
             return None
-        if _is_zero(e.right):
-            operand = e.left
-        elif _is_zero(e.left):
-            operand = e.right
-        else:
-            return None
-        value = self.expr(operand, inlined=inlined)
-        return None if value is None else compare_with_zero(value, kind, width)
+        return Var(self.name(("var", ssa_var.var.identifier, ssa_var.version, 1), f"{ssa_var.var.name}#{ssa_var.version}"),
+                   1, ref=ssa_var)
 
     def definition(self, definition, ssa_var: SSAVariable, width: int) -> Optional[Expr]:
         if definition.operation == Op.MLIL_SET_VAR_SSA and _is_flag(definition.src):
-            return self.flag(definition.src, width, inlined=True)  # r15 = cond:0
+            found = self.boolean(definition.src, inlined=True)  # r15 = cond:0, r15 = (x != 0)
+            return found if found is None or width == 1 else UnOp("zx", found, width)
         if definition.operation == Op.MLIL_SET_VAR_SSA and definition.src.size * 8 == width:
             return self.expr(definition.src, inlined=True)
         if definition.operation == Op.MLIL_SET_VAR_SSA_FIELD and _declared_bits(ssa_var.var) == width:
@@ -253,7 +268,8 @@ class _Lifter:
     def written(self, definition) -> Optional[Expr]:
         """The value a partial write (SET_VAR_SSA_FIELD) stores: rcx#2.cl = rax#2 != 0 @ rcx#1."""
         if _is_flag(definition.src):
-            return self.flag(definition.src, 8 * _written_bytes(definition), inlined=True)
+            found = self.boolean(definition.src, inlined=True)
+            return None if found is None else UnOp("zx", found, 8 * _written_bytes(definition))
         return self.expr(definition.src, inlined=True)
 
     def field(self, ssa_var: SSAVariable, offset: int, width: int) -> Optional[Expr]:
@@ -369,16 +385,12 @@ def _substitute_leaves(e: Expr, mapping: dict[tuple[str, int], Expr]) -> Expr:
 
 
 def _is_flag(e: MediumLevelILInstruction) -> bool:
-    return e.operation in _COMPARE_ZERO or (e.operation == Op.MLIL_VAR_SSA and e.size == 0)
+    return e.operation in _COMPARE or (e.operation == Op.MLIL_VAR_SSA and e.size == 0)
 
 
 def _written_bytes(definition) -> int:
     """Bytes a partial write stores: its own size (a comparison's size is its operands')."""
     return definition.size if _is_flag(definition.src) else definition.src.size
-
-
-def _is_zero(e: MediumLevelILInstruction) -> bool:
-    return e.operation in (Op.MLIL_CONST, Op.MLIL_CONST_PTR) and e.constant == 0
 
 
 def _declared_bits(var) -> int:

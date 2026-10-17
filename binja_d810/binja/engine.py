@@ -9,15 +9,15 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import NamedTuple, Sequence
 
 from ..deadline import Deadline
-from ..ir.expr import is_mba, node_count, to_str
+from ..ir.expr import is_mba, node_count, to_str, variables
 from ..semantic import cobra_shim
 from ..rules.base import Rule
 from ..semantic.backend import Tier2Backend
-from ..simplify import Limits, simplify_expression
+from ..simplify import Limits, Outcome, simplify_expression
 from .adapter import ILAdapter
 from .storage import visible_size
 
@@ -169,7 +169,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     return result
 
                 started = time.monotonic()
-                outcome = attempt(candidate)
+                outcome = Outcome() if candidate.constant_only else attempt(candidate)
                 chosen, rewrite, grows = candidate, outcome.rewrite, False
                 if rewrite is not None and _grows_visible_code(candidate, rewrite.replacement):
                     rewrite, grows = None, True
@@ -196,6 +196,14 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                         if found is not None and not _grows_visible_code(local, found.replacement):
                             chosen, rewrite, grows = local, found, False
                 _note_slowest(report, candidate, time.monotonic() - started, rewrite, outcome)
+                if (rewrite is None and not grows and candidate.unchecked is not None and not deadline.expired()
+                        and (candidate.constant_only or candidate.unchecked != candidate.ir)):
+                    # Inputs whose registers were reused before the root (x86-64 -O2: x's rdi): a
+                    # constant reads no variable, so a proven constant may replace the root.
+                    found = attempt(replace(candidate, ir=candidate.unchecked)).rewrite
+                    if (found is not None and not variables(found.replacement)
+                            and found.verdict is not None and found.verdict.name == "PROVEN"):
+                        rewrite = found
                 if rewrite is None and not final:
                     deferred.append(candidate)
                     continue

@@ -59,8 +59,8 @@ class FakeAdapter:
         self.restored = True
 
 
-def p(text):
-    return parse(text, 32)
+def p(text, width=32, widths=None):
+    return parse(text, width, widths)
 
 
 def test_rewrites_are_applied_and_reported_with_level():
@@ -391,3 +391,42 @@ def test_a_rewrite_refused_as_newly_mixed_is_tried_over_the_roots_own_inputs():
     assert frozenset({"a"}) in adapter.asked
     result = adapter.roots["b"]
     assert result != adapter.original["b"] and not is_mba(result) and node_count(result) <= 5, result
+
+
+class ReuseAdapter(FakeAdapter):
+    """x86-64 -O2: `if ((rcx & 1) != 0)` with rcx = (x + 1) * x, x's register reused before the if.
+    The version-safe lift keeps rcx; the unchecked lift sees (x + 1) * x and proves the condition
+    constant, and a constant reads no variable, so it may replace the condition."""
+
+    def __init__(self):
+        super().__init__({"c": p("ne(rcx & 1, 0)", 1, {"rcx": 32})})
+
+    def has_candidates(self):
+        return True  # a condition: the real adapters' pre-check accepts comparisons over bitwise ops
+
+    def candidates(self, skip):
+        if self.roots["c"] == self.original["c"]:
+            yield Candidate("c", 0x60, self.roots["c"],
+                            unchecked=p("ne(((x + 1) * x) & 1, 0)", 1, {"x": 32}))
+
+
+def test_a_condition_proven_constant_through_reused_registers_is_folded():
+    from binja_d810.ir.expr import Const
+    from binja_d810.semantic.backend import default_backends
+
+    adapter = ReuseAdapter()
+    report = simplify_function(adapter, [], default_backends(), EngineConfig())
+    assert adapter.roots["c"] == Const(0, 1) and report.rewrites[0].verdict == "PROVEN"
+
+
+def test_an_unchecked_lift_never_gives_a_non_constant_rewrite():
+    from binja_d810.semantic.backend import default_backends
+
+    adapter = ReuseAdapter()
+    adapter.roots["c"] = adapter.original["c"] = p("(rcx ^ y) + 2 * (rcx & y)", 32, None)
+    adapter.candidates = lambda skip: iter([Candidate("c", 0x60, adapter.roots["c"],
+                                                      unchecked=p("((x * 3) ^ y) + 2 * ((x * 3) & y)", 32))])
+    simplify_function(adapter, [], default_backends(), EngineConfig(max_iterations=1))
+    from binja_d810.ir.expr import variables
+
+    assert {v.name for v in variables(adapter.roots["c"])} <= {"rcx", "y"}  # from the checked lift only

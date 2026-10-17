@@ -1,123 +1,114 @@
-# binja-d810
+# D-810 for Binary Ninja
 
-d810-style deobfuscation of mixed boolean-arithmetic (MBA) expressions and opaque predicates for Binary Ninja, on x86 (32-bit), x64 and ARM64, for PE, ELF and Mach-O. AGPL-3.0-only.
+> Inspired by [D-810](https://github.com/joydo/d810) by eShard, with MBA rules from
+> [d810-ng](https://github.com/w00tzenheimer/d810-ng).
 
-The plugin rewrites MBA expressions and folds conditions that never change during analysis, in two passes enabled by one setting:
+A Binary Ninja plugin that cleans up mixed boolean-arithmetic (MBA) obfuscation and opaque
+predicates. It turns junk like `(x ^ y) + 2 * (x & y)` back into `x + y`, and folds conditions
+that always go the same way (OLLVM-style bogus control flow) so Binary Ninja drops the dead
+branches. Nothing is written to the binary.
 
-- **MLIL pass.** Rewrites expressions in MLIL, rebuilding expressions split across instructions by following SSA definitions.
-- **HLIL pass.** Rewrites, in HLIL, what MLIL could not express. Typically, optimized code overwrites the registers holding the inputs before the instruction that combines them; HLIL still reads the original variables.
+Here's an export from an OLLVM-obfuscated DLL before (399 lines of HLIL):
 
-Each candidate is simplified in two tiers:
+<img src="imgs/before.png" alt="Before" width="760">
 
-- **Tier 1:** d810's rule corpus, including its predicate rules. 174 of 179 rules are Z3-proven at one or more bit widths (170 at all of 8, 16, 32 and 64), and a rule only fires at the widths where it was proven.
-- **Tier 2:** generic MBA simplifiers. First a built-in linear-MBA simplifier, which treats non-linear sub-expressions (sums under a bitwise operation, products, extensions) as opaque atoms, so `(A ^ B) + 2 * (~A | B)` becomes `B - A - 2` whatever A and B are. Then CoBRA, when it is installed, for what is left.
+And after (15 lines):
 
-Each function's candidates first go through the rules and the linear simplifier, and only the ones still unsimplified go to CoBRA, so one slow expression cannot use up a function's time budget. Supported operations are `+ - * & | ^ ~`, shifts, rotates, extensions, truncations, the ten integer comparisons (`== != < <= > >=`, signed and unsigned), whose value is 0 or 1, and division and remainder that cannot trap. A division is used only when its divisor can never be zero, and, if signed, `MIN / -1` cannot occur: a nonzero constant, or a Z3 proof (`2 / (x * x + 1)`: `x * x + 1` is never 0). This includes x86's `div` and `idiv` with `edx` zeroed or sign-extended. Any other division may trap and is treated like a call. A comparison with zero of a value that can only be 0 or 1 (x86 `setcc`, ARM64 `cset`), as in `r15 = (x & 1) != 0`, is read as that value.
+<img src="imgs/after.png" alt="After" width="560">
 
-**Opaque predicates.** A condition or value that is the same for every input, such as `x * (x + 1)` being even, `(x ^ y) + 2 * (x & y) == x + y`, or `(x | 0x10) != 0x0f`, is replaced by that constant, and Binary Ninja's HLIL then drops the branch that can never run. A comparison is only considered when it involves a bitwise operation or a product of two non-constants, or when its form decides it (`x == x` after a register copy, `zx.d(x.b) > 0xff`): ordinary conditions such as `i < n - 1` are left alone. A fold needs a proof: a candidate that is constant on every random sample is then proven constant, by signature (an MBA equality) or by Z3 (2 s per fold), and one that cannot be proven is left alone and logged as "constant on every sample, not proven". Every other rewrite whose result is a condition needs a proof too. A condition computed through a long chain of reused values, as OLLVM's bogus control flow passes its predicate through masked-constant encodings, is checked with each shared value counted once, so its size as a tree does not matter. A value proven constant is also put into the instructions that read it, and Binary Ninja's dataflow carries it through merges. A condition over a value merged from several paths, which is not constant by itself, is folded when it is the same proven constant on every incoming path. A value carried round a loop unchanged, through copies of itself, is read as some instance of the one value it comes from. Values that come round a loop are never treated as the current ones. Proofs are remembered by the expression's shape, so a predicate repeated with other registers is proven once.
+## What it handles
 
-Every rewrite is checked for equivalence before it is applied: random evaluation always, plus an exact proof by signature for linear MBAs (also over atoms) and a Z3 proof for everything else. Each rewrite records whether it was proven or only tested by sampling, and why. Expressions containing loads, calls or other effects are never rewritten through: only their pure parts are. A rewrite never makes the code you see larger, and never adds a mix of arithmetic and bitwise operations where there was none: when an expression's inputs are values that stay visible elsewhere, it is simplified over those values rather than over copies of their definitions. Nothing is written to the binary or the database.
+* MBA expressions, through D-810's rules, a built-in linear MBA simplifier, and
+  [CoBRA](https://github.com/trailofbits/CoBRA) if you have it installed
+* Opaque predicates, including ones hidden behind long chains of masked constants, ones that
+  only hold on every path into a merge, and values carried round loops
+* Divisions that can never trap, like `2 / (x * x + 1)`
+* x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 
-Design: `docs/design/specs/2026-10-15-binja-d810-v2-design.md` (v1: `docs/design/specs/2026-10-15-binja-d810-core-framework-design.md`). Opaque predicates: `docs/design/specs/2026-10-16-binja-d810-v3-design.md`, `docs/design/specs/2026-10-17-binja-d810-v3.1-design.md` and `docs/design/specs/2026-10-17-binja-d810-v3.2-design.md`. Coverage and known gaps: `docs/design/reports/2026-10-15-v2.0-coverage.md`, `docs/design/reports/2026-10-15-v2.1-coverage.md`, `docs/design/reports/2026-10-17-v3.0-coverage.md`, `docs/design/reports/2026-10-17-v3.1-coverage.md`, `docs/design/reports/2026-10-17-v3.2-coverage.md` and `docs/design/reports/2026-10-17-v3.3-invariant-merges.md`.
+Every rewrite is checked before it's applied. Conditions are only folded when Z3 proves them,
+and D-810's rules are only used at the bit widths Z3 proved them for. It runs in two passes,
+MLIL then HLIL, and the HLIL pass picks up whatever MLIL couldn't express.
+
+## Requirements
+
+* Binary Ninja 6.0 (tested on 6.0 Personal, macOS arm64)
+* `z3-solver` in Binary Ninja's Python
+* Optional: CoBRA, through the `d810-cobra` package
 
 ## Install
 
-Requires Binary Ninja 6.0 (tested on 6.0.10601 Personal, bundled Python 3.13) on macOS arm64. The binaries analyzed can be any architecture Binary Ninja lifts; the corpus covers x86, x64 and ARM64.
+Clone it and link it into your plugins folder:
 
-1. Link the plugin into Binary Ninja's plugin folder:
-   ```bash
-   ln -s "$PWD/binja_d810" "$HOME/Library/Application Support/Binary Ninja/plugins/binja_d810"
-   ```
-2. Install Z3 into Binary Ninja's Python. It is used to prove non-linear rewrites; without it those rewrites are checked by random sampling only. Use any Python 3.13 interpreter, since Binary Ninja's own is 3.13:
-   ```bash
-   BN_SITE="$HOME/Library/Application Support/Binary Ninja/python313/site-packages"
-   uv pip install --python python3.13 --target "$BN_SITE" z3-solver
-   ```
-3. Optional, recommended: install CoBRA for polynomial MBA. The `d810-cobra` wheel ships Trail of Bits' CoBRA solver. `--no-deps` skips its unreleased `d810-ng` dependency, which this plugin does not need:
-   ```bash
-   uv pip install --python python3.13 --no-deps --target "$BN_SITE" d810-cobra==0.1.7
-   ```
-4. Restart Binary Ninja. The log shows `binja-d810: activities extension.binja_d810.mba, extension.binja_d810.mba_hlil registered`.
+```sh
+git clone https://github.com/MZHeader/binja-d810
+ln -s "$PWD/binja-d810/binja_d810" "$HOME/Library/Application Support/Binary Ninja/plugins/binja_d810"
+```
 
-## Use
+Then install Z3 (and CoBRA if you want it) into Binary Ninja's Python, which is 3.13:
 
-The activity is **off by default**. Turn it on in one of two ways:
+```sh
+BN_SITE="$HOME/Library/Application Support/Binary Ninja/python313/site-packages"
+uv pip install --python python3.13 --target "$BN_SITE" z3-solver
+uv pip install --python python3.13 --target "$BN_SITE" --no-deps d810-cobra==0.1.7   # optional
+```
 
-- **One function:** right-click the function, choose **Function Analysis**, then enable **D-810: simplify MBA expressions**. The function reanalyzes.
-- **A whole binary:** in **Open with Options**, enable **D-810: simplify MBA expressions** (setting `extension.binja_d810.mba`).
+Restart Binary Ninja. You should see `binja-d810: activities ... registered` in the log.
 
-The same setting enables both passes; the HLIL pass has no switch of its own.
+## Usage
 
-Each function gets a time budget (`binja_d810.functionSeconds`, 20 s by default) shared by both passes of one analysis run. When it runs out, rewrites already verified are applied and nothing new is attempted; the report says "budget exhausted". The budget never exceeds half of Binary Ninja's own per-function limit (`analysis.limits.maxFunctionAnalysisTime`, 20 s by default), because Binary Ninja defers a function whose analysis takes longer (it gets no HLIL). Binary Ninja applies the limit a binary had when it was opened; changing the setting later has no effect until the binary is reopened. So when a binary is opened with D-810 enabled, D-810 raises its limit to twice the budget (40 s by default) before its analysis starts, and the log says so. A limit that is already higher, or 0 (no limit), is left alone. A function enabled on its own, in a binary opened without D-810, gets at most half of the limit the binary was opened with: 10 s by default. For the full budget there, open the binary with D-810 enabled, or set `analysis.limits.maxFunctionAnalysisTime` to 40000 ms in **Open with Options**. Enable D-810 per function on heavily obfuscated code: with a whole binary enabled, many functions are analyzed in parallel and compete for Python, so more of them hit the budget. Functions with neither mixed arithmetic and bitwise operations nor comparisons over bitwise operations or products are skipped almost instantly.
+It's off by default. To run it on one function, right-click it, go to **Function Settings** and
+tick **D-810: simplify MBA expressions**. The function reanalyzes straight away.
 
-### Settings
+<img src="imgs/function-settings.png" alt="Function Settings menu" width="520">
 
-Settings are under **Settings > D-810**. All of them can be set globally or per binary.
+To run it on a whole binary, tick the same option in **File > Open with Options** before opening
+it. Functions without obfuscation are skipped almost instantly, but heavily obfuscated ones can
+use their whole time budget each, so on big binaries it's often quicker to enable it only for the
+functions you care about.
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `binja_d810.enabled` | on | Kill switch. When off, nothing is rewritten. |
-| `binja_d810.tier2` | on | Use CoBRA and the linear-MBA simplifier. |
-| `binja_d810.maxVariables` | 4 | CoBRA skips subexpressions with more distinct variables. The linear simplifier counts atoms instead (sub-expressions it treats as opaque), up to 6. |
-| `binja_d810.maxNodes` | 200 | Larger expressions are skipped and logged as "too complex". |
-| `binja_d810.maxIterations` | 10 | Maximum rewrite passes per function. |
-| `binja_d810.disabledRules` | none | d810 rule names to skip. |
-| `binja_d810.skipFunctions` | none | Function start addresses (hex) never rewritten. |
-| `binja_d810.functionSeconds` | 20 | Time budget per function, shared by both passes. Capped at half of the `analysis.limits.maxFunctionAnalysisTime` the binary was opened with, which D-810 raises to twice the budget for a binary opened with D-810 enabled. |
-
-To set the number settings from Python, use `Settings().set_integer`. Binary Ninja ignores a value stored with `set_double` for these keys.
-
-### What happened to a function
-
-Each rewrite is logged to the Binary Ninja log under `binja_d810`, with the pass (`mlil` or `hlil`), the address, the rule or backend that produced it, how it was verified (`proven by signature`, `proven by z3`, or `tested by sampling` with the reason no proof was available) and the before and after expressions. Skipped expressions are logged at debug level, including roots left alone because they contain an effect. To see one function's full report for both passes, with timing, run this in the Python console, then reanalyze the function:
+Every rewrite is logged under `binja_d810`. For a full report on one function, run this in the
+Python console:
 
 ```python
 current_function.request_debug_report("d810")
 current_function.reanalyze()
 ```
 
-If anything goes wrong while a function is being rewritten, all of that pass's rewrites are rolled back and that IL is kept as Binary Ninja produced it; the other pass's verified rewrites stand.
+## Settings
 
-## Test
+Everything is under **Settings > D-810** and can be set globally or per binary. The on/off switch
+itself lives in a separate **extension** group that Binary Ninja creates.
 
-Unit tests need no Binary Ninja:
+<img src="imgs/settings.png" alt="D-810 settings" width="860">
 
-```bash
-uv sync
-uv run pytest
+<img src="imgs/settings-toggle.png" alt="The on/off switch" width="860">
+
+* **Time budget per function**: 20 s by default. Binary Ninja gives up on a function that takes
+  too long to analyze, so when a binary is opened with D-810 on, its per-function limit is raised
+  to twice the budget.
+* **Generic MBA simplifier (Tier 2)**: the linear simplifier and CoBRA. Turn it off to use the
+  rules only.
+* **Skipped functions** and **Disabled rules**: addresses and rule names to leave alone.
+* **Enabled**: a kill switch for everything.
+
+## Notes
+
+* After folding you'll often see bare `data_...` lines where the obfuscation read its globals.
+  Binary Ninja keeps memory reads even when nothing uses the result. They're harmless.
+* Calls through resolved API pointers can show extra arguments, because Binary Ninja guesses them
+  from whatever registers happen to be set. Giving the pointer a type fixes it.
+
+## Tests
+
+```sh
+uv sync && uv run pytest    # unit tests, no Binary Ninja needed
+tests/samples/build.sh      # build the sample binaries (needs Homebrew LLVM for PE/ELF)
+scripts/binja_pytest.sh     # integration tests, in a hidden Binary Ninja instance
 ```
 
-The Binary Ninja tests build the samples, then run pytest inside a fresh Binary Ninja instance. The instance is launched hidden and in the background (`open -g -j`): no window appears and focus stays where it is. Set `BINJA_D810_VISIBLE=1` to see it. They need pytest installed in Binary Ninja's Python (`uv pip install ... --target "$BN_SITE" pytest`), and Homebrew LLVM's `lld-link` and `ld.lld` for the PE and ELF builds.
-
-```bash
-tests/samples/build.sh                       # ARM64 Mach-O, x64 PE, i686 PE, x64 ELF, each at -O0 and -O2
-scripts/binja_pytest.sh                      # everything (about 25 minutes)
-scripts/binja_pytest.sh tests/binja -k x86_64-pe   # one architecture: arm64, x86_64-pe, i686-pe, x86_64-elf
-```
-
-`.binja-test/coverage.json` holds the latest per-build, per-category coverage, including how each final HLIL was validated (`tests/binja/oracle.py`: proven, exhaustive, sampled). `.binja-test/opaque_coverage.json` holds the opaque-predicate corpus (`tests/samples/gen_opaque.py`: 17 predicates, each direct and mirrored) per build and family.
-
-Opt-in suites, skipped by default:
-
-- `BINJA_D810_SPIKE=1 scripts/binja_pytest.sh tests/binja/spikes` reruns the HLIL, formats and v3 (comparison shapes) spikes.
-- Real samples, static analysis only: `BINJA_D810_SAMPLES=<dir> scripts/real_samples.sh <label>` loads each binary in its own Binary Ninja process and writes `.local/real/<label>/<sample>.json`. `BINJA_D810_PLUGIN=<dir>` measures another plugin revision (for example a `v1.0` worktree) in an isolated Binary Ninja user directory; `BINJA_D810_FUNCTION_SECONDS` sets the per-function budget for the run. Nothing under `.local/` is committed.
-- Workbench, for developing against real obfuscation: list function addresses per sample in `tests/binja/real/workbench.local.toml` (git-ignored; see `workbench.example.toml`) and run `BINJA_D810_SAMPLES=<dir> scripts/binja_pytest.sh tests/binja/real/test_workbench.py`. One Binary Ninja process reanalyzes each listed function with the plugin on (minutes, where the full real-sample run takes hours) and writes `<out>/workbench/summary.txt` and each function's HLIL before and after with both passes' reports.
-- Spot checks: list function addresses per sample in `tests/binja/real/spot_checks.local.toml` (git-ignored; see `spot_checks.example.toml`). Each real-sample run then writes `<out>/real/spot/<sample>/<address>.txt` with the function's HLIL with the plugin off and on, and both passes' reports.
-
-## Rules
-
-`binja_d810/third_party/d810/` is a verbatim subset of d810-ng's MBA rule language and rules. Only the imports are re-rooted. The files there without a "Vendored from" header are small hand-written stand-ins for d810's IDA-dependent modules. To update:
-
-```bash
-uv run python scripts/vendor_d810.py      # re-download from the pinned d810-ng commit
-uv run python scripts/verify_rules.py     # re-prove every rule at 8/16/32/64 bits (about a minute)
-```
-
-`binja_d810/rules/verified_rules.json` records, for each rule, the widths it was proven at, or why it is not used.
+The integration tests need `pytest` installed in Binary Ninja's Python too.
 
 ## License
 
-AGPL-3.0-only (see `LICENSE`).
-
-- **d810-ng.** The MBA rule language and rules come from [d810-ng](https://github.com/w00tzenheimer/d810-ng) (AGPL-3.0), commit `2e59ab4ce18e5e82911880137d1285d95279981a`. d810-ng is a continuation of eShard's [D-810](https://github.com/joydo/d810). The idea of this plugin, and its name, come from D-810.
-- **CoBRA.** The optional Tier 2 solver is [CoBRA](https://github.com/trailofbits/CoBRA) (Apache-2.0), used through the `d810-cobra` package (MIT). It is not distributed with this repository.
+AGPL-3.0, since the rules in `binja_d810/third_party/d810/` come from d810-ng (re-download them
+with `scripts/vendor_d810.py`). CoBRA is Apache-2.0 and isn't included.

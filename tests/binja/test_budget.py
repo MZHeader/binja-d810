@@ -55,7 +55,7 @@ def test_both_passes_share_one_allowance():
     try:
         reports = log.latest_reports(func)
         mlil, hlil = reports["mlil"], reports["hlil"]
-        assert 4.9 < mlil.allowance_seconds <= 5.0
+        assert 9.9 < mlil.allowance_seconds <= 10.0  # the default budget
         assert abs(hlil.allowance_seconds - (mlil.allowance_seconds - mlil.total_seconds)) < 0.05
     finally:
         bv.file.close()

@@ -28,6 +28,17 @@ def test_settings_are_registered():
         assert s.contains(key), key
 
 
+def test_the_default_budget_is_the_most_binary_ninjas_default_limit_allows():
+    # 10 s: half of analysis.limits.maxFunctionAnalysisTime's default 20 s (budget.plugin_allowance).
+    from binja_d810.binja.budget import plugin_allowance
+    from binja_d810.binja.engine import EngineConfig
+
+    s = Settings()
+    assert s.get_integer(settings.FUNCTION_SECONDS) == 10
+    assert EngineConfig().function_seconds == 10
+    assert plugin_allowance(10, s.get_integer("analysis.limits.maxFunctionAnalysisTime")) == 10
+
+
 def test_kill_switch():
     bv, func = _open()
     try:

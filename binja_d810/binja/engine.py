@@ -37,7 +37,10 @@ class EngineConfig:
     max_iterations: int = 10
     tier2: bool = True
     disabled_rules: frozenset[str] = frozenset()
-    function_seconds: float = 5.0  # shared by both passes of one analysis run (spec section 8)
+    # Shared by both passes of one analysis run (spec section 8): half of Binary Ninja's default
+    # 20 s per-function limit. At 5 s, heavily obfuscated functions stopped short (mba_challenge's
+    # mba5 needs 6.9 s to reach arg1 + arg2 + arg3).
+    function_seconds: float = 10.0
 
 
 class RewriteRecord(NamedTuple):

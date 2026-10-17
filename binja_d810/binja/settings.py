@@ -34,11 +34,12 @@ _SPECS = {
                      "description": "Tier 1 rule names to skip."},
     SKIP_FUNCTIONS: {"title": "Skipped functions", "type": "array", "elementType": "string", "default": [],
                      "description": "Function start addresses (hex) that D-810 never rewrites."},
-    FUNCTION_SECONDS: {"title": "Time budget per function (seconds)", "type": "number", "default": 5,
+    FUNCTION_SECONDS: {"title": "Time budget per function (seconds)", "type": "number", "default": 10,
                        "minValue": 1, "maxValue": 600,
                        "description": "Planning and solving time shared by the MLIL and HLIL passes of one "
                                       "analysis run. When it runs out, already verified rewrites are applied "
-                                      "and nothing new is attempted."},
+                                      "and nothing new is attempted. At most half of "
+                                      "analysis.limits.maxFunctionAnalysisTime (10 s at its default)."},
 }
 
 

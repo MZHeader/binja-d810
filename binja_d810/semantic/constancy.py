@@ -8,7 +8,8 @@ from typing import Callable, Iterator, Optional
 
 from ..deadline import Deadline
 from ..ir.evaluate import evaluate, evaluate_shared
-from ..ir.expr import Const, Expr, mask, variables
+from ..ir.expr import Const, Expr, mask, shape_key, variables
+from . import memo
 from .verify import Check, Verdict, _z3_prove, check, sample_envs
 
 _EXHAUSTIVE_BITS = 16
@@ -70,7 +71,19 @@ def fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int = CONSTANCY_Z3_M
     """constant_value for an expression too large to expand as a tree (values shared: snagit.dll's
     export, spec v3.1 goal 1). Samples evaluate each shared value once and the Z3 query is built
     with sharing. (value, check) when constant on every sample; the check says whether it is proven.
-    None as soon as two samples differ, or when a proof refutes it."""
+    None as soon as two samples differ, or when a proof refutes it. Proven and refuted outcomes are
+    remembered by shape (spec v3.2 goal 2)."""
+    key = ("fold", shape_key(e))
+    found = memo.get(key)
+    if found is not memo.MISSING:
+        return found
+    result = _fold_shared(e, deadline, z3_timeout_ms)
+    if result is None or result[1].verdict is Verdict.PROVEN:
+        memo.put(key, result)
+    return result
+
+
+def _fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int) -> Optional[tuple[int, Check]]:
     widths = {v.name: v.width for v in variables(e)}
     if not widths:
         return None

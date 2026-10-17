@@ -15,8 +15,9 @@ from typing import Iterator, Mapping, Optional
 
 from ..deadline import Deadline
 from ..ir.evaluate import evaluate
-from ..ir.expr import CMP_OPS, DIV_OPS, BinOp, Const, Expr, UnOp, Var, mask, variables
+from ..ir.expr import CMP_OPS, DIV_OPS, BinOp, Const, Expr, UnOp, Var, mask, shape_key, variables
 from ..ir.normalize import normalize
+from . import memo
 from .linear_mba import abstract_atoms, is_linear_mba, signature
 
 _SIGNATURE_MAX_VARS = 12
@@ -71,6 +72,20 @@ class Check:
 def check(
     a: Expr, b: Expr, *, samples: int = 64, use_z3: bool = True, z3_timeout_ms: int = 500, seed: int = 0,
     deadline: Optional[Deadline] = None,
+) -> Check:
+    """A PROVEN or REFUTED verdict is remembered by the pair's shape (spec v3.2 goal 2)."""
+    key = ("check", shape_key(a, b))
+    found = memo.get(key)
+    if found is not memo.MISSING:
+        return found
+    result = _check(a, b, samples=samples, use_z3=use_z3, z3_timeout_ms=z3_timeout_ms, seed=seed, deadline=deadline)
+    if result.verdict is not Verdict.TESTED:
+        memo.put(key, result)
+    return result
+
+
+def _check(
+    a: Expr, b: Expr, *, samples: int, use_z3: bool, z3_timeout_ms: int, seed: int, deadline: Optional[Deadline],
 ) -> Check:
     if a.width != b.width:
         return Check(Verdict.REFUTED, "width", "")

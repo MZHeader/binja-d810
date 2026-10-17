@@ -236,6 +236,39 @@ def nodes(e: Expr) -> Iterator[Expr]:
         stack.extend(reversed(children(node)))
 
 
+def shape_key(*exprs: Expr) -> tuple:
+    """The expressions with their variables renamed v0, v1, ... in order of first appearance (pre-order,
+    across the expressions in turn), widths kept: equal exactly for expressions that differ only in
+    their variables' names. A proof's verdict is invariant under such renaming (spec v3.2 goal 2).
+    Shared values stay shared, and the leaves carry no reference."""
+    names: dict[tuple[str, int], str] = {}
+    for e in exprs:
+        for node in nodes(e):
+            if isinstance(node, Var):
+                names.setdefault((node.name, node.width), f"v{len(names)}")
+    built: dict[int, Expr] = {}
+    out = []
+    for e in exprs:
+        stack = [(e, False)]
+        while stack:
+            node, ready = stack.pop()
+            if id(node) in built:
+                continue
+            if isinstance(node, Var):
+                built[id(node)] = Var(names[(node.name, node.width)], node.width)
+            elif isinstance(node, Const):
+                built[id(node)] = node
+            elif not ready:
+                stack.append((node, True))
+                stack.extend((k, False) for k in children(node) if id(k) not in built)
+            elif isinstance(node, UnOp):
+                built[id(node)] = UnOp(node.op, built[id(node.operand)], node.width)
+            else:
+                built[id(node)] = BinOp(node.op, built[id(node.left)], built[id(node.right)], node.width)
+        out.append(built[id(e)])
+    return tuple(out)
+
+
 def variables(e: Expr) -> list[Var]:
     seen: dict[tuple[str, int], Var] = {}
     for node in nodes(e):

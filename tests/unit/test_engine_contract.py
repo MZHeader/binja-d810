@@ -561,3 +561,37 @@ def test_path_alternatives_are_tried_in_order():
         simplify_function(adapter, [], default_backends(), EngineConfig())
         assert (adapter.roots["c"] == Const(0, 1)) == folds, alternatives
 
+
+def test_per_path_constancy_waits_for_every_other_candidate():
+    # v3.3: per-path folding is the costliest mechanism and the rarest; it runs after the last round's
+    # other attempts on every candidate, with what remains of the budget (snagit.dll's 271 shared-value
+    # folds came after per-path attempts on earlier conditions and ran out of time).
+    from binja_d810.ir.expr import Const
+    from binja_d810.semantic.backend import default_backends
+
+    events = []
+    widths = {"x": 32, "y": 32, "z": 32, "i": 32}
+    adapter = PathAdapter([p("eq(udiv(2, (x * x) + 1), (y * y) + 3)", 1, widths)])
+    adapter.roots["m"] = adapter.original["m"] = p("(x ^ y) + 2 * (x & y)")
+    first = Candidate("c", 0x80, adapter.roots["c"])
+
+    def candidates(skip):
+        if adapter.roots["c"] == adapter.original["c"]:
+            yield first  # the condition comes first, as the adapter's last-first order may put it
+        if adapter.roots["m"] == adapter.original["m"]:
+            yield Candidate("m", 0x84, adapter.roots["m"])
+
+    def path_variants(candidate):
+        events.append("paths")
+        return [adapter.variants]
+
+    real_replace = adapter.replace
+    adapter.candidates, adapter.path_variants = candidates, path_variants
+    adapter.replace = lambda candidate, replacement: (events.append(f"replace {candidate.root}"),
+                                                      real_replace(candidate, replacement))
+    backend = default_backends()[0]
+    real_simplify = backend.simplify
+    backend.simplify = lambda e, **kw: (events.append("tier2"), real_simplify(e, **kw))[1]
+    simplify_function(adapter, [], [backend], EngineConfig(max_iterations=1))
+    assert adapter.roots["c"] == Const(0, 1) and adapter.roots["m"] != adapter.original["m"]
+    assert events.index("paths") > max(i for i, e in enumerate(events) if e == "tier2"), events

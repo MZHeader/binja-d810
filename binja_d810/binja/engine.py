@@ -167,6 +167,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
         # applied). Candidates are lifted lazily, so the deadline also bounds lifting.
         order: dict = {}  # candidate -> position in the adapter's (last first) order
         pending = _numbered(adapter.candidates(skip), order, report)
+        by_path: list = []  # last-round candidates left for per-path constancy
         for number, round_backends in enumerate(rounds):
             final = number == len(rounds) - 1
             deferred = []
@@ -244,9 +245,8 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                             break
                         if folded is not None:
                             outcome.skipped = "constant on every sample, not proven"
-                    if (rewrite is None and (candidate.paths is not None or hasattr(adapter, "path_variants"))
-                            and not deadline.expired()):
-                        rewrite = _fold_paths(adapter, candidate, constants, deadline)
+                    if rewrite is None and (candidate.paths is not None or hasattr(adapter, "path_variants")):
+                        by_path.append(candidate)  # per-path constancy comes last (below)
                 if rewrite is None and not final:
                     deferred.append(candidate)
                     continue
@@ -261,6 +261,15 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     planned.append((chosen, rewrite))
                     consumed |= chosen.consumes
             pending = deferred
+        # Per-path constancy (spec v3.2 goal 3) last, with what remains of the budget (v3.3): the costliest
+        # and rarest mechanism must not take the time of other candidates' folds (snagit.dll's export).
+        for candidate in by_path:
+            if deadline.expired():
+                report.budget_exhausted = True
+                break
+            rewrite = _fold_paths(adapter, candidate, constants, deadline)
+            if rewrite is not None:
+                planned.append((candidate, rewrite))
         now = time.monotonic()
         report.plan_seconds += now - planning
         report.plan_cpu_seconds += time.thread_time() - planning_cpu

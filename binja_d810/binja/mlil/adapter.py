@@ -119,7 +119,9 @@ class MLILAdapter:
             return None
         defines, single = self._defines(instr, root)
         nodes, mixed, _ = self._visible(instr, root, inlined)
-        return Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed, instr)
+        # The same statement as the candidate's: the same gate (v3.1 statement kinds).
+        return Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed, instr,
+                         consumer_kinds=self._consumer_kinds(instr, root), root_kinds=self.root_kinds)
 
     def path_variants(self, candidate: Candidate) -> Optional[list[Expr]]:
         """The candidate's condition once per incoming path of the merged values it reads (spec v3.2

@@ -81,7 +81,8 @@ class HLILAdapter:
                     defines, single = self._defines(statement, root)
                     nodes, mixed, dying = self._visible(root, inlined)
                     yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,
-                                    statement, frozenset(inlined) - dying)
+                                    statement, frozenset(inlined) - dying, consumer_kinds=_outside_kinds(statement, root),
+                                    root_kinds=_kinds(root))
 
     def shallow(self, candidate: Candidate, keep: Optional[frozenset] = None) -> Optional[Candidate]:
         """The root lifted with `keep` (default: the definitions that stay alive) as leaves where
@@ -97,7 +98,8 @@ class HLILAdapter:
             return None
         defines, single = self._defines(statement, root)
         nodes, mixed, _ = self._visible(root, inlined)
-        return Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed, statement)
+        return Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed, statement,
+                         consumer_kinds=_outside_kinds(statement, root), root_kinds=_kinds(root))
 
     def _visible(self, root: HighLevelILInstruction, inlined: dict):
         """Size and mix of what the user sees: the root plus the definitions that die with it."""
@@ -200,10 +202,24 @@ def shallow_copy(hlil: HighLevelILFunction, e: HighLevelILInstruction) -> int:
                      source_location=e.source_location)
 
 
-def _expression_nodes(e: HighLevelILInstruction):
+def _kinds(e: HighLevelILInstruction, skip: Optional[int] = None) -> frozenset:
+    """"arith" and/or "bitwise": what the expression shows (without the subtree at `skip`)."""
+    ops = {node.operation for node in _expression_nodes(e, skip)}
+    return frozenset(({"arith"} if ops & _ARITH else set()) | ({"bitwise"} if ops & _BITWISE else set()))
+
+
+def _outside_kinds(statement: HighLevelILInstruction, root: HighLevelILInstruction) -> frozenset:
+    """The kinds of the statement around the root, as HLIL shows it (v3.2: the v3.1 statement gate in
+    the HLIL pass): bcf_id(n) + (p - q) is arithmetic, and -8 | p must not make it mixed."""
+    return _kinds(statement, skip=root.expr_index)
+
+
+def _expression_nodes(e: HighLevelILInstruction, skip: Optional[int] = None):
     stack = [e]
     while stack:
         node = stack.pop()
+        if node.expr_index == skip:
+            continue
         yield node
         stack.extend(child for child in children(node) if child.operation not in _STRUCTURE)
 

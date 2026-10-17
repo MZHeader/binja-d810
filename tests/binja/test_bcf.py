@@ -6,6 +6,8 @@ from arch import IDS, MATRIX, sample
 from binaryninja import HighLevelILOperation as H
 from helpers import function_named, open_sample, set_types
 
+from binja_d810.binja import workflow
+
 TYPES = {
     "bcf_chain": "uint32_t bcf_chain(uint32_t a)",
     "bcf_merge": "uint32_t bcf_merge(uint32_t a, uint32_t c)",
@@ -13,6 +15,7 @@ TYPES = {
     "align_gate": "uint32_t align_gate(uint32_t p, uint32_t n)",
     "const_after_merge": "uint32_t const_after_merge(uint32_t a, uint32_t c)",
     "align_gate2": "uint32_t align_gate2(uint32_t p, uint32_t n)",
+    "align_call": "uint32_t align_call(uint32_t p, uint32_t n)",
 }
 # Builds where a fixture is not folded, with the reason; a listed miss that folds fails the test.
 KNOWN_MISSES = {
@@ -30,6 +33,22 @@ def builds(request):
     on = open_sample(sample("bcf", *request.param), d810=True)
     off = open_sample(sample("bcf", *request.param), d810=False)
     set_types(on, TYPES)
+    set_types(off, TYPES)
+    yield "-".join(request.param), on, off
+    on.file.close()
+    off.file.close()
+
+
+@pytest.fixture(scope="module", params=MATRIX, ids=IDS)
+def hlil_only(request):
+    """The HLIL pass alone (v3.2 Task 6): its own statement gate, without the MLIL pass's."""
+    workflow.set_levels_override({"hlil"})
+    try:
+        on = open_sample(sample("bcf", *request.param), d810=True)
+        set_types(on, TYPES)
+    finally:
+        workflow.set_levels_override(None)
+    off = open_sample(sample("bcf", *request.param), d810=False)
     set_types(off, TYPES)
     yield "-".join(request.param), on, off
     on.file.close()
@@ -73,15 +92,23 @@ def test_a_folded_constant_reaches_its_uses(builds):
     assert not constants, _text(func)
 
 
-@pytest.mark.parametrize("name", ["align_gate", "align_gate2"])
+def _mixed(func) -> list[str]:
+    return [str(i) for i in func.hlil.instructions
+            if {n.operation for n in _nodes(i)} & ARITH and {n.operation for n in _nodes(i)} & BITWISE]
+
+
+@pytest.mark.parametrize("name", ["align_gate", "align_gate2", "align_call"])
 def test_a_rewrite_never_makes_its_statement_mixed(builds, name):
     _, on, off = builds
-    mixed = []
-    for bv in (off, on):
-        func = function_named(bv, name)
-        mixed.append([str(i) for i in func.hlil.instructions
-                      if {n.operation for n in _nodes(i)} & ARITH and {n.operation for n in _nodes(i)} & BITWISE])
-    assert len(mixed[1]) <= len(mixed[0]), (mixed[0], mixed[1])
+    before, after = _mixed(function_named(off, name)), _mixed(function_named(on, name))
+    assert len(after) <= len(before), (before, after)
+
+
+@pytest.mark.parametrize("name", ["align_gate", "align_gate2", "align_call"])
+def test_the_hlil_pass_never_makes_its_statement_mixed(hlil_only, name):
+    _, on, off = hlil_only
+    before, after = _mixed(function_named(off, name)), _mixed(function_named(on, name))
+    assert len(after) <= len(before), (before, after)
 
 
 def test_a_constant_read_after_a_merge_reaches_that_read_only(builds):

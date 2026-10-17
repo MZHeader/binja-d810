@@ -84,3 +84,13 @@ EXPORT uint32_t align_gate2(uint32_t p, uint32_t n) {
     uint32_t d = p - q; B(d);
     return (n + d - 8) >> 3;
 }
+
+// The same inside a larger statement (v3.2): p - q sits beside a call's result, so HLIL's root is
+// p - q alone and the statement is bcf_id(n) + (p - q). -8 | p must not make it mixed.
+EXPORT uint32_t bcf_id(uint32_t v) { B(v); return v; }
+
+EXPORT uint32_t align_call(uint32_t p, uint32_t n) {
+    uint32_t q = (p + 8) & ~7u; B(q);
+    bcf_sink(q);
+    return bcf_id(n) + (p - q);
+}

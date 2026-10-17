@@ -96,3 +96,11 @@ EXPORT uint32_t split_mix(uint32_t x, uint32_t y) {
     uint32_t a = x * 7 + y; B(a);
     return (a & 0xff00ff00) | (~a & 0x00ff00ff);
 }
+
+// mba_challenge: single-use temporaries, each unmixed in three-address MLIL, that HLIL shows as one
+// mixed statement. A smaller mixed result, (x + y) | z, may replace it.
+EXPORT uint32_t mixed_chain(uint32_t x, uint32_t y, uint32_t z) {
+    uint32_t a = x ^ y; B(a);
+    uint32_t b = x & y; B(b);
+    return (a + 2 * b) | z;
+}

@@ -8,7 +8,7 @@ the definitions its own rewrites made dead: dead_after - dead_before.
 
 from __future__ import annotations
 
-from typing import Hashable, Iterable, Mapping
+from typing import Hashable, Iterable, Mapping, Optional
 
 
 def dead_definitions(pure: Mapping[Hashable, Iterable[Hashable]], roots: Iterable[Hashable]) -> set[Hashable]:
@@ -38,3 +38,27 @@ def dying_with_root(uses: Mapping[Hashable, Iterable[int]], defined_at: Mapping[
                 dying.add(key)
                 changed = True
     return dying
+
+
+def shown_in(dying: Iterable[Hashable], uses: Mapping[Hashable, Iterable[int]], defined_at: Mapping[Hashable, int],
+             root_statement: int) -> dict[Hashable, Optional[Hashable]]:
+    """The statement HLIL shows each dying definition in: one used once is folded into the
+    statement that uses it (repeatedly), one used several times is a statement of its own (named
+    by itself); None is the root's statement. MLIL is three-address code, so its statements say
+    little about what the user reads."""
+    dying = set(dying)
+    at = {defined_at[key]: key for key in dying}
+    shown: dict = {}
+    for key in dying:
+        current, seen = key, set()
+        while current not in seen and len(list(uses[current])) == 1:
+            seen.add(current)
+            user = list(uses[current])[0]
+            if user == root_statement:
+                current = None
+                break
+            if user not in at:
+                break
+            current = at[user]
+        shown[key] = current
+    return shown

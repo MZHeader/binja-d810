@@ -172,3 +172,29 @@ def test_statements_that_were_each_unmixed_are_not_merged_into_a_mixed_expressio
             assert not ("*" in r.after and ("^" in r.after or "|" in r.after)), (shown[False], r.before, r.after)
     else:  # already one mixed statement (Binary Ninja folded a): a mixed result may replace it
         assert "^" in shown[True][-1], text
+
+
+@pytest.mark.parametrize("build,level", MATRIX, ids=IDS)
+def test_a_chain_of_single_use_temporaries_is_one_statement(build, level):
+    # The MLIL pass alone: its statements are three-address code, so mixedness is judged on the
+    # statements HLIL shows (mba_challenge lost most of its v2.1 gains to this).
+    from binja_d810.binja import log, workflow
+
+    # x86-64 -O2 reuses x's and y's registers before the combining instruction: the version-safe
+    # MLIL lift cannot see them, and the HLIL pass simplifies the function there.
+    reused = build.startswith("x86_64") and level == "O2"
+    workflow.set_levels_override({"mlil", "hlil"} if reused else {"mlil"})
+    bv = open_sample(sample("hlil_fixtures", build, level), d810=True)
+    try:
+        func = function_named(bv, "mixed_chain")
+        func.set_user_type("uint32_t mixed_chain(uint32_t x, uint32_t y, uint32_t z)")
+        bv.update_analysis_and_wait()
+        text = "\n".join(str(i) for i in func.hlil.instructions)
+        reports = log.latest_reports(func)
+    finally:
+        workflow.set_levels_override(None)
+        bv.file.close()
+    refused = [s for r in reports.values() for s in r.skipped if "newly mixed" in s.reason]
+    assert not refused, (text, refused)
+    assert "^" not in text and "&" not in text, (text, [(s.address, s.reason) for r in reports.values() for s in r.skipped],
+                                                 [r.rewrites for r in reports.values()])

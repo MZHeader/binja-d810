@@ -11,7 +11,7 @@ from binaryninja import (
 from ...deadline import Deadline
 from ...ir.expr import Expr, is_candidate
 from ..adapter import Candidate, Skip
-from ..deadcode import dead_definitions, dying_with_root
+from ..deadcode import dead_definitions, dying_with_root, shown_in
 from .lift import SUPPORTED_OPS, candidate_roots, lift
 from .lower import lower
 
@@ -113,9 +113,16 @@ class MLILAdapter:
         # Copies (rax_6 = var_24 at -O0) are not counted: HLIL propagates them away, so a rewrite
         # that only removes copies while duplicating a kept value's definition grows the code shown.
         trees = [root] + [definitions[key].src for key in dying if definitions[key].src.operation not in _COPIES]
-        # Mixed if one statement is: an arithmetic definition and a bitwise use are each unmixed, and
-        # merging them into one mixed expression is what the gate refuses (snagit.dll).
-        mixed = any(bool(set(_operations(tree)) & _ARITH) and bool(set(_operations(tree)) & _BITWISE) for tree in trees)
+        # Mixed if one statement as HLIL shows it is. Single-use temporaries fold into their use
+        # (mba_challenge: t = a + 3; u = t | b reads as one mixed line); a value used several times
+        # is a statement of its own (snagit.dll: a = x * 7 + y read twice by (a & M) | (~a & ~M) —
+        # each unmixed, and merging them is what the gate refuses).
+        statements: dict = {None: set(_operations(root))}
+        shown = shown_in(dying, uses, {key: d.instr_index for key, d in definitions.items()},
+                         instr.ssa_form.instr_index)
+        for key in dying:
+            statements.setdefault(shown[key], set()).update(_operations(definitions[key].src))
+        mixed = any(ops & _ARITH and ops & _BITWISE for ops in statements.values())
         return sum(_size(tree) for tree in trees), mixed, dying
 
     def _defines(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction):

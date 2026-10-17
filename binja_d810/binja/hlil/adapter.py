@@ -20,7 +20,7 @@ from ...ir.expr import Expr, is_candidate
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root
 from ..effects import hlil_effect
-from .lift import SUPPORTED_OPS, candidate_roots, children, expression_roots, lift
+from .lift import DIVISION_OPS, SUPPORTED_OPS, candidate_roots, children, expression_roots, is_safe_division, lift
 from .lower import lower
 
 _ARITH = frozenset({H.HLIL_ADD, H.HLIL_SUB, H.HLIL_MUL, H.HLIL_NEG, H.HLIL_LSL})
@@ -143,7 +143,8 @@ class HLILAdapter:
         for statement in ssa.instructions:
             dest = _defined(statement)
             if dest is not None and dest.var not in self.aliased and _pure(statement.src) \
-                    and hlil_effect(statement.src, self.aliased, _PURE_FLAG_NAMES) is None:
+                    and hlil_effect(statement.src, self.aliased, _PURE_FLAG_NAMES,
+                                    pure=lambda node: is_safe_division(node, self.aliased)) is None:
                 key = _key(dest)
                 pure[key] = [_key(v) for v in _ssa_vars(statement.src)]
                 partial = _partial(statement)
@@ -241,6 +242,8 @@ def _partial(statement: HighLevelILInstruction):
 def _pure(e: HighLevelILInstruction) -> bool:
     if e.operation in _PURE_LEAVES:
         return True
+    if e.operation in DIVISION_OPS:
+        return is_safe_division(e)  # cannot trap: removable once dead (spec v3.2); aliasing is checked apart
     if e.operation not in SUPPORTED_OPS and e.operation not in _PURE_FLAGS:
         return False
     return all(_pure(child) for child in children(e))

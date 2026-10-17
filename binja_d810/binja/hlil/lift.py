@@ -16,8 +16,10 @@ from typing import Iterator, Optional
 from binaryninja import HighLevelILInstruction, HighLevelILOperation as H
 
 from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
+from ...ir.normalize import narrowed
+from ...semantic.traps import never_traps
 from ..effects import hlil_effect
-from ..storage import contained, field_read, fit
+from ..storage import contained, exact, field_read, fit
 
 _BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: "and", H.HLIL_OR: "or",
            H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr", H.HLIL_ROL: "rol",
@@ -27,6 +29,10 @@ _COMPARE = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne", H.HLIL_CMP_ULT: "ult", H.HL
             H.HLIL_CMP_UGT: "ugt", H.HLIL_CMP_UGE: "uge", H.HLIL_CMP_SLT: "slt", H.HLIL_CMP_SLE: "sle",
             H.HLIL_CMP_SGT: "sgt", H.HLIL_CMP_SGE: "sge"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {H.HLIL_BOOL_TO_INT}
+# Division (spec v3.2 goal 1): lifted only when it cannot trap; otherwise an effect, as before.
+_DIVIDE = {H.HLIL_DIVU: "udiv", H.HLIL_DIVS: "sdiv", H.HLIL_MODU: "urem", H.HLIL_MODS: "srem"}
+_DIVIDE_DP = {H.HLIL_DIVU_DP: "udiv", H.HLIL_DIVS_DP: "sdiv", H.HLIL_MODU_DP: "urem", H.HLIL_MODS_DP: "srem"}
+DIVISION_OPS = frozenset(_DIVIDE) | frozenset(_DIVIDE_DP)
 STRUCTURE = frozenset({H.HLIL_BLOCK, H.HLIL_IF, H.HLIL_WHILE, H.HLIL_DO_WHILE, H.HLIL_FOR, H.HLIL_SWITCH,
                        H.HLIL_CASE})
 _DEFINITIONS = frozenset({H.HLIL_VAR_INIT_SSA, H.HLIL_ASSIGN})
@@ -68,9 +74,12 @@ def candidate_roots(statement: HighLevelILInstruction, aliased: frozenset,
     Calls, dereferences, aliased reads and any other operation bound candidates: their pure
     supported sub-expressions are candidates instead (spec section 5.2).
     """
+    def pure(node) -> bool:
+        return is_safe_division(node, aliased)
+
     def visit(e):
         if e.operation in SUPPORTED_OPS:
-            reason = hlil_effect(e, aliased)
+            reason = hlil_effect(e, aliased, pure=pure)
             if reason is None:
                 yield e
                 return
@@ -81,6 +90,11 @@ def candidate_roots(statement: HighLevelILInstruction, aliased: frozenset,
                 yield from visit(child)
 
     yield from visit(statement)
+
+
+def is_safe_division(node: HighLevelILInstruction, aliased: frozenset = frozenset()) -> bool:
+    """A division the lifter builds: one that cannot trap for any value of its inputs (spec v3.2)."""
+    return node.operation in DIVISION_OPS and lift(node.ssa_form, aliased=aliased, check_versions=False) is not None
 
 
 def lift(ssa_expr: HighLevelILInstruction, *, aliased: frozenset = frozenset(), check_versions: bool = True,
@@ -200,9 +214,41 @@ class _Lifter:
                 return UnOp(_UNARY[op], operand, width)
             except ValueError:
                 return None
+        if op in DIVISION_OPS:
+            found = self.division(e, width, inlined=inlined)
+            if found is not None:
+                return found
         if self.effect_leaves and not inlined:
             return Var(f"effect@{e.expr_index}", width)
         return None
+
+    def division(self, e: HighLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
+        """A division that cannot trap (spec v3.2 goal 1), else None (binja_d810.binja.mlil.lift)."""
+        saved, saved_inlined = self.budget, dict(self.inlined)
+        double = e.operation in _DIVIDE_DP
+        op = (_DIVIDE_DP if double else _DIVIDE)[e.operation]
+        if double:
+            dividend = self.narrow_dividend(e.left, op, width, inlined=inlined)
+        else:
+            dividend = exact(self.expr(e.left, inlined=inlined), width)
+        divisor = exact(self.expr(e.right, inlined=inlined), width) if dividend is not None else None
+        if divisor is not None and never_traps(op, dividend, divisor):
+            return BinOp(op, dividend, divisor, width)
+        self.budget, self.inlined = saved, saved_inlined
+        return None
+
+    def narrow_dividend(self, left: HighLevelILInstruction, op: str, width: int, *, inlined: bool) -> Optional[Expr]:
+        """The low half of a double-width dividend that extends it: 0:x (unsigned) or sx.q(x)
+        (signed). A dividend folded to a constant is never used: its high half is not visible."""
+        ext, wide = ("zx" if op[0] == "u" else "sx"), 2 * width
+        if left.operation == H.HLIL_SPLIT:
+            if ext == "zx" and self.expr(left.high, inlined=inlined) == Const(0, width):
+                return exact(self.expr(left.low, inlined=inlined), width)
+            return None
+        if left.operation in (H.HLIL_CONST, H.HLIL_CONST_PTR) or left.size * 8 != wide:
+            return None
+        whole = self.expr(left, inlined=inlined)
+        return None if whole is None else narrowed(whole, width, ext)
 
     def var(self, ssa_var, width: int) -> Optional[Expr]:
         key = (ssa_var.var.identifier, ssa_var.version, width)
@@ -221,7 +267,7 @@ class _Lifter:
                 and self.budget > self.failed.get(key, 0) and self.visits < self.max_visits
                 and ssa_var.var not in self.aliased):
             saved, saved_inlined = self.budget, dict(self.inlined)
-            if hlil_effect(src, self.aliased) is None:
+            if hlil_effect(src, self.aliased, pure=lambda node: is_safe_division(node, self.aliased)) is None:
                 inner = self.expr(src, inlined=True)
                 if inner is not None and boolean and inner.width != width:
                     # r15_1 = rax_1 != 0: a 1-bit comparison read as an integer of the variable's width

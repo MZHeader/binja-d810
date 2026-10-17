@@ -7,6 +7,8 @@ from arch import IDS, MATRIX, sample
 from binaryninja import HighLevelILOperation as H, MediumLevelILOperation as M
 from helpers import function_named, open_sample, set_types
 
+from binja_d810.binja import workflow
+
 TYPES = {
     "div_opaque": "uint32_t div_opaque(uint32_t a)",
     "rem_opaque": "uint32_t rem_opaque(uint32_t a)",
@@ -26,6 +28,22 @@ def builds(request):
     on = open_sample(sample("div", *request.param), d810=True)
     off = open_sample(sample("div", *request.param), d810=False)
     set_types(on, TYPES)
+    set_types(off, TYPES)
+    yield "-".join(request.param), on, off
+    on.file.close()
+    off.file.close()
+
+
+@pytest.fixture(scope="module", params=MATRIX, ids=IDS)
+def hlil_only(request):
+    """The HLIL pass alone (v3.2 Task 4): what it does when the MLIL pass did not run."""
+    workflow.set_levels_override({"hlil"})
+    try:
+        on = open_sample(sample("div", *request.param), d810=True)
+        set_types(on, TYPES)
+    finally:
+        workflow.set_levels_override(None)
+    off = open_sample(sample("div", *request.param), d810=False)
     set_types(off, TYPES)
     yield "-".join(request.param), on, off
     on.file.close()
@@ -85,3 +103,25 @@ def test_a_division_that_cannot_trap_is_kept_and_proven(builds):
     result = oracle.compare(oracle.function_result(func), oracle.function_result(function_named(off, "div_keep")), 32)
     assert result.kind in ("proven", "exhaustive"), (result, text)
 
+
+def test_the_hlil_pass_folds_a_division_predicate(hlil_only):
+    # An HLIL rewrite never changes control flow: the condition becomes a constant (if (true)), and the
+    # branch it takes returns a + 1.
+    _, on, _ = hlil_only
+    func = function_named(on, "div_opaque")
+    text = _text(func)
+    ifs = [n for statement in func.hlil.instructions for n in _nodes(statement) if n.operation == H.HLIL_IF]
+    assert len(ifs) == 1 and ifs[0].condition.operation == H.HLIL_CONST, text
+    taken = str(ifs[0].true) if ifs[0].condition.constant else text.split(str(ifs[0].true), 1)[1]
+    assert "a + 1" in taken and "0x5a" not in taken, text
+
+
+def test_the_hlil_pass_keeps_a_division_proven(hlil_only):
+    _, on, off = hlil_only
+    func = function_named(on, "div_keep")
+    text = _text(func)
+    for statement in func.hlil.instructions:
+        kinds = {n.operation for n in _nodes(statement)}
+        assert not (kinds & ARITH and kinds & BITWISE), text
+    result = oracle.compare(oracle.function_result(func), oracle.function_result(function_named(off, "div_keep")), 32)
+    assert result.kind in ("proven", "exhaustive"), (result, text)

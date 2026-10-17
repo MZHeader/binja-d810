@@ -10,6 +10,7 @@ from .lift import FieldRef, HLILBacking
 
 _UNARY = {"neg": "neg_expr", "not": "not_expr", "zx": "zero_extend", "sx": "sign_extend", "trunc": "low_part"}
 _BINARY = {"add": "add", "sub": "sub", "mul": "mult", "and": "and_expr", "or": "or_expr", "xor": "xor_expr",
+           "udiv": "div_unsigned", "sdiv": "div_signed", "urem": "mod_unsigned", "srem": "mod_signed",
            "shl": "shift_left", "lshr": "logical_shift_right", "ashr": "arith_shift_right", "rol": "rotate_left",
            "ror": "rotate_right"}
 _COMPARE = {"eq": "compare_equal", "ne": "compare_not_equal", "ult": "compare_unsigned_less_than",

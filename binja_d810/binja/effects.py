@@ -56,12 +56,21 @@ def mlil_effect(tree, pure: Optional[Callable] = None) -> Optional[str]:
 HLIL_LEAVES = frozenset({"HLIL_VAR", "HLIL_VAR_SSA", "HLIL_CONST", "HLIL_CONST_PTR", "HLIL_STRUCT_FIELD"})
 
 
-def hlil_effect(tree, aliased: frozenset = frozenset(), allowed: frozenset = frozenset()) -> Optional[str]:
+def hlil_effect(tree, aliased: frozenset = frozenset(), allowed: frozenset = frozenset(),
+                pure: Optional[Callable] = None) -> Optional[str]:
     """None if the tree only reads variables (not address-taken ones), fields of them and
     constants through supported operations (and the operation names in `allowed`); else the reason
-    it is not a candidate."""
+    it is not a candidate. `pure(node)` may accept a division proven never to trap (spec v3.2), with
+    its double-width dividend (0:x)."""
+    dividends: set = set()
     for node in _nodes(tree):
         name = node.operation.name
+        if name in HLIL_DIVISIONS and pure is not None and pure(node):
+            if name.endswith("_DP"):
+                dividends.add(node.left.expr_index)
+            continue
+        if name == "HLIL_SPLIT" and node.expr_index in dividends:
+            continue
         if name in ("HLIL_VAR", "HLIL_VAR_SSA"):
             var = getattr(node.var, "var", node.var)
             if var in aliased:
@@ -77,6 +86,8 @@ def hlil_effect(tree, aliased: frozenset = frozenset(), allowed: frozenset = fro
     return None
 
 
+HLIL_DIVISIONS = frozenset({"HLIL_DIVU", "HLIL_DIVS", "HLIL_MODU", "HLIL_MODS",
+                            "HLIL_DIVU_DP", "HLIL_DIVS_DP", "HLIL_MODU_DP", "HLIL_MODS_DP"})
 _HLIL_SUPPORTED = frozenset({
     "HLIL_ADD", "HLIL_SUB", "HLIL_MUL", "HLIL_AND", "HLIL_OR", "HLIL_XOR", "HLIL_LSL", "HLIL_LSR", "HLIL_ASR",
     "HLIL_NEG", "HLIL_NOT", "HLIL_ZX", "HLIL_SX", "HLIL_LOW_PART", "HLIL_ROL", "HLIL_ROR",

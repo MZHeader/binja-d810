@@ -187,7 +187,9 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
             planned.append((candidate, rewrite))
             consumed |= candidate.consumes
         pending = rest
-        for number, round_backends in enumerate(rounds):
+        # A pass that folded constants commits them before any backend runs: the folded predicates remove
+        # the code behind them, so the backends work in the next pass on what remains.
+        for number, round_backends in enumerate(rounds if not planned else []):
             final = number == len(rounds) - 1
             deferred = []
             for candidate in pending:

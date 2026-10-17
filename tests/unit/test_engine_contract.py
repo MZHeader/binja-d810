@@ -633,3 +633,37 @@ def test_constant_folds_come_before_every_backend():
     adapter.candidates = candidates
     simplify_function(adapter, [], [Slow()], EngineConfig(max_iterations=1), Deadline.after(1.0))
     assert adapter.roots["c"] == Const(1, 1)
+
+
+def test_a_pass_that_folds_constants_commits_them_before_any_backend_runs():
+    # v3.3: folded predicates remove the code behind them, so the backends wait for the next pass, over
+    # what remains (snagit.dll's sub_180009da0: Tier 2 on junk in branches that were about to disappear).
+    import sys
+    from pathlib import Path
+
+    from binja_d810.ir.expr import Const
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_constancy import _bcf_condition
+
+    calls = []
+
+    class Recording:
+        name = "recording"
+
+        def simplify(self, e, deadline=None):
+            calls.append(adapter.roots["c"])
+            return None
+
+    adapter = FakeAdapter({"c": _bcf_condition(), "m": p("(x ^ y) + 2 * (x & y) + (x | y)")})
+    adapter.has_candidates = lambda: True
+
+    def candidates(skip):
+        if not isinstance(adapter.roots["c"], Const):
+            yield Candidate("c", 0x60, adapter.roots["c"], constant_only=True, shared_dag=adapter.roots["c"])
+        yield Candidate("m", 0x10, adapter.roots["m"])
+
+    adapter.candidates = candidates
+    report = simplify_function(adapter, [], [Recording()], EngineConfig())
+    assert adapter.roots["c"] == Const(1, 1), report
+    assert calls and all(root == Const(1, 1) for root in calls), "a backend ran before the fold was committed"

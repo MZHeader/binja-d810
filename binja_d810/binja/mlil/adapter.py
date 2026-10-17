@@ -82,23 +82,24 @@ class MLILAdapter:
                     if dag is not None and tree_size(dag) > self.max_nodes and is_candidate(dag):
                         shared = dag
                 unchecked = through = None
-                if root.operation in _COMPARES or ir is None:
+                unchecked_inlined: dict = {}
+                if (root.operation in _COMPARES or ir is None) and shared is None:
                     # A condition, or a root the version-safe lift could not see at all: a proven
                     # constant reads no variable, so it may come from a lift through inputs whose
                     # registers were reused before the root (x86-64 -O2). Not values the checked lift
                     # saw partly (stale inputs): folding two such values in mba_linear_030 (x86-64
-                    # -O2) made Binary Ninja's HLIL drop the result's definition.
+                    # -O2) made Binary Ninja's HLIL drop the result's definition. Not when the lift
+                    # over shared values exists: a tree lift as large stops at the same size (v3.3).
                     unchecked = through = lift(root.ssa_form, root_instr=instr, check_versions=False,
-                                               max_nodes=self.max_nodes, definitions=definitions)
+                                               max_nodes=self.max_nodes, inlined=unchecked_inlined,
+                                               definitions=definitions)
                     if unchecked is not None and not is_candidate(unchecked):
                         unchecked = None
                 constant_only = (ir is None or not is_candidate(ir)) and unchecked is not None
                 if shared is not None and (ir is None or not is_candidate(ir)) and unchecked is None:
                     ir, inlined, constant_only = shared, {}, True
                 elif constant_only:
-                    inlined = {}
-                    ir = lift(root.ssa_form, root_instr=instr, check_versions=False, max_nodes=self.max_nodes,
-                              inlined=inlined, definitions=definitions)
+                    ir, inlined = unchecked, unchecked_inlined
                 paths = None
                 if root.operation in _COMPARES and (ir is None or not is_candidate(ir)) and unchecked is None:
                     # A condition over merged values whose per-path variants are candidates (k != 0 with

@@ -15,7 +15,7 @@ from typing import Iterator, Mapping, Optional
 
 from ..deadline import Deadline
 from ..ir.evaluate import evaluate
-from ..ir.expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var, mask, variables
+from ..ir.expr import CMP_OPS, DIV_OPS, BinOp, Const, Expr, UnOp, Var, mask, variables
 from ..ir.normalize import normalize
 from .linear_mba import abstract_atoms, is_linear_mba, signature
 
@@ -209,6 +209,14 @@ def _to_z3(e: Expr, z3_vars: dict, ctx, memo: dict):
                 "ule": lambda: z3.ULE(x, y), "ugt": lambda: z3.UGT(x, y), "uge": lambda: z3.UGE(x, y),
                 "slt": lambda: x < y, "sle": lambda: x <= y, "sgt": lambda: x > y, "sge": lambda: x >= y}[e.op]()
         return z3.If(cond, z3.BitVecVal(1, 1, ctx), z3.BitVecVal(0, 1, ctx))
+    if e.op in DIV_OPS:
+        # ir.evaluate._divide: x / 0 = 0 (Z3: all ones); Z3's remainders by 0 and MIN / -1 already agree.
+        zero = z3.BitVecVal(0, e.width, ctx)
+        if e.op == "udiv":
+            return z3.If(y == zero, zero, z3.UDiv(x, y))
+        if e.op == "sdiv":
+            return z3.If(y == zero, zero, x / y)
+        return z3.URem(x, y) if e.op == "urem" else z3.SRem(x, y)
     if e.op in ("rol", "ror"):
         # ir.evaluate._rotate: the count modulo the width, taken at the count's own width.
         cw = e.right.width

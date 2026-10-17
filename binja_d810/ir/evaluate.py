@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from .expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var, children, mask, to_signed
+from .expr import CMP_OPS, DIV_OPS, BinOp, Const, Expr, UnOp, Var, children, mask, to_signed
 
 
 def evaluate(e: Expr, env: Mapping[str, int]) -> int:
@@ -69,7 +69,25 @@ def _binary(e: BinOp, x: int, y: int) -> int:
         return _rotate(e.op, x, y, e.width)
     if e.op in CMP_OPS:
         return _compare(e.op, x, y, e.left.width)
+    if e.op in DIV_OPS:
+        return _divide(e.op, x, y, e.width)
     return _shift(e.op, x, y, e.width)
+
+
+def _divide(op: str, x: int, y: int, width: int) -> int:
+    """ARM64's division, total (spec v3.2): x / 0 = 0, x % 0 = x, MIN / -1 = MIN, MIN % -1 = 0. Signed
+    division rounds toward zero; the remainder takes the dividend's sign (x86 and C as well)."""
+    if y == 0:
+        return 0 if op in ("udiv", "sdiv") else x
+    if op == "udiv":
+        return x // y
+    if op == "urem":
+        return x % y
+    sx, sy = to_signed(x, width), to_signed(y, width)
+    q = abs(sx) // abs(sy)
+    if (sx < 0) != (sy < 0):
+        q = -q
+    return (q if op == "sdiv" else sx - q * sy) & mask(width)
 
 
 def _compare(op: str, x: int, y: int, width: int) -> int:

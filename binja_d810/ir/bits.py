@@ -31,6 +31,12 @@ def possible_ones(e: Expr) -> int:
         return left & right
     if e.op in ("or", "xor"):
         return left | right
+    if e.op in ("udiv", "urem"):
+        # Never above the dividend (x / 0 = 0, x % 0 = x), and a remainder is below a nonzero divisor.
+        bound = (1 << left.bit_length()) - 1
+        if e.op == "urem" and isinstance(e.right, Const) and e.right.value:
+            bound &= (1 << (e.right.value - 1).bit_length()) - 1
+        return bound
     if e.op in ("shl", "lshr") and isinstance(e.right, Const):
         count = shift_count(e.right.value, e.width)
         return (left << count) & m if e.op == "shl" else left >> count

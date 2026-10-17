@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .bits import compare_with_zero, decided_comparison, possible_ones
 from .evaluate import evaluate
-from .expr import CMP_OPS, COMMUTATIVE_OPS, BinOp, Const, Expr, UnOp, Var, mask, to_signed, to_str
+from .expr import CMP_OPS, COMMUTATIVE_OPS, DIV_OPS, BinOp, Const, Expr, UnOp, Var, mask, to_signed, to_str
 
 _TRUNC_THROUGH = frozenset({"add", "sub", "mul", "and", "or", "xor"})
 
@@ -85,7 +85,25 @@ def _truncate(a: Expr, w: int) -> Expr:
         # trunc_w(trunc_v(x) >> c) with the window inside v: the same bits of x (rdx = x.di; rdx.dh).
         inner = a.left.operand
         return _truncate(BinOp("lshr", inner, Const(a.right.value, inner.width), inner.width), w)
+    if isinstance(a, BinOp) and a.op in DIV_OPS:
+        # A division of extended values is the narrow division, at every value (spec v3.2 goal 1):
+        # x86's divu.dp.d(0:x, y) and divs.dp.d(sx.q(x), y).
+        ext = "zx" if a.op[0] == "u" else "sx"
+        left, right = _narrowed(a.left, w, ext), _narrowed(a.right, w, ext)
+        if left is not None and right is not None:
+            return BinOp(a.op, left, right, w)
     return UnOp("trunc", a, w)
+
+
+def _narrowed(e: Expr, w: int, ext: str):
+    """The w-bit value `e` is the `ext` extension of, or None."""
+    if isinstance(e, UnOp) and e.op == ext and e.operand.width == w:
+        return e.operand
+    if isinstance(e, Const):
+        narrow = Const(e.value, w)
+        if evaluate(UnOp(ext, narrow, e.width), {}) == e.value:
+            return narrow
+    return None
 
 
 def _compare(op: str, a: Expr, b: Expr) -> Expr:

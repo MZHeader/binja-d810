@@ -7,7 +7,11 @@ from typing import Iterator, Mapping, Union
 
 # Comparisons: 1-bit results of two operands of equal width (signed ones use two's complement).
 CMP_OPS = frozenset({"eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge"})
-BINARY_OPS = frozenset({"add", "sub", "mul", "and", "or", "xor", "shl", "lshr", "ashr", "rol", "ror"}) | CMP_OPS
+# Total division (spec v3.2, ARM64's semantics): x / 0 = 0, x % 0 = x, MIN / -1 = MIN, MIN % -1 = 0;
+# signed rounds toward zero. Lifters build one only after proving it cannot trap. Neither arithmetic
+# nor bitwise for is_mba.
+DIV_OPS = frozenset({"udiv", "urem", "sdiv", "srem"})
+BINARY_OPS = frozenset({"add", "sub", "mul", "and", "or", "xor", "shl", "lshr", "ashr", "rol", "ror"}) | CMP_OPS | DIV_OPS
 UNARY_OPS = frozenset({"neg", "not", "zx", "sx", "trunc"})
 SHIFT_OPS = frozenset({"shl", "lshr", "ashr"})
 ROTATE_OPS = frozenset({"rol", "ror"})  # count modulo the width; neither arithmetic nor bitwise for is_mba
@@ -271,7 +275,7 @@ def to_str(e: Expr) -> str:
         return f"{e.op}{e.width}({inner})"
     if e.op == "ashr":
         return f"sar({to_str(e.left)}, {to_str(e.right)})"
-    if e.op in ROTATE_OPS or e.op in CMP_OPS:
+    if e.op in ROTATE_OPS or e.op in CMP_OPS or e.op in DIV_OPS:
         return f"{e.op}({to_str(e.left)}, {to_str(e.right)})"
     return f"({to_str(e.left)} {_SYMBOLS[e.op]} {to_str(e.right)})"
 

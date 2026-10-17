@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Mapping, Optional
 
-from .expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var
+from .expr import CMP_OPS, DIV_OPS, BinOp, Const, Expr, UnOp, Var
 
 _TOKEN = re.compile(r"\s*(?:(0[xX][0-9a-fA-F]+|\d+)|([A-Za-z_][A-Za-z0-9_#@]*)|(<<|>>|[-+*&|^~(),]))")
 _LEVELS = [("|",), ("^",), ("&",), ("<<", ">>"), ("+", "-"), ("*",)]
@@ -132,7 +132,7 @@ def _build(node, width: int, var_widths: Mapping[str, int]) -> Expr:
                 return BinOp(name, _build(args[0], inner, var_widths), _build(args[1], inner, var_widths), 1)
             except ValueError as exc:
                 raise ParseError(str(exc)) from exc
-        if name in ("sar", "rol", "ror") and len(args) == 2:
+        if (name in ("sar", "rol", "ror") or name in DIV_OPS) and len(args) == 2:
             op = "ashr" if name == "sar" else name
             return BinOp(op, _build(args[0], width, var_widths), _build(args[1], width, var_widths), width)
         m = _EXTENSION.match(name)

@@ -17,8 +17,10 @@ from binaryninja import (
 )
 
 from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
+from ...ir.normalize import narrowed
+from ...semantic.traps import never_traps
 from ..effects import mlil_effect
-from ..storage import contained, field_read, fit, merge_partial_write, read_over_write
+from ..storage import contained, exact, field_read, fit, merge_partial_write, read_over_write
 
 _BINARY = {Op.MLIL_ADD: "add", Op.MLIL_SUB: "sub", Op.MLIL_MUL: "mul", Op.MLIL_AND: "and",
            Op.MLIL_OR: "or", Op.MLIL_XOR: "xor", Op.MLIL_LSL: "shl", Op.MLIL_LSR: "lshr", Op.MLIL_ASR: "ashr",
@@ -29,6 +31,10 @@ _COMPARE = {Op.MLIL_CMP_E: "eq", Op.MLIL_CMP_NE: "ne", Op.MLIL_CMP_ULT: "ult", O
             Op.MLIL_CMP_SGT: "sgt", Op.MLIL_CMP_SGE: "sge"}
 _LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {Op.MLIL_BOOL_TO_INT}
+# Division (spec v3.2 goal 1): lifted only when it cannot trap; otherwise an effect, as before.
+_DIVIDE = {Op.MLIL_DIVU: "udiv", Op.MLIL_DIVS: "sdiv", Op.MLIL_MODU: "urem", Op.MLIL_MODS: "srem"}
+_DIVIDE_DP = {Op.MLIL_DIVU_DP: "udiv", Op.MLIL_DIVS_DP: "sdiv", Op.MLIL_MODU_DP: "urem", Op.MLIL_MODS_DP: "srem"}
+DIVISION_OPS = frozenset(_DIVIDE) | frozenset(_DIVIDE_DP)
 
 
 @dataclass(frozen=True)
@@ -38,18 +44,21 @@ class Opaque:
     expr: MediumLevelILInstruction
 
 
-def candidate_roots(instr: MediumLevelILInstruction, rejected: Optional[list] = None) -> Iterator[MediumLevelILInstruction]:
+def candidate_roots(instr: MediumLevelILInstruction, rejected: Optional[list] = None,
+                    divisions: bool = True) -> Iterator[MediumLevelILInstruction]:
     """Maximal supported expressions that contain no effect (spec section 5.2).
 
     A supported expression containing a load, call or other effect is not a candidate: rewriting
     it could delete, duplicate or reorder the effect (0 & [p] -> 0). Its effect-free supported
     sub-expressions are candidates instead. Each such split is appended to `rejected` as
-    (expression, reason).
+    (expression, reason). A division that cannot trap is pure (spec v3.2); `divisions=False` treats
+    every division as an effect without proving anything (the cheap pre-check).
     """
+    pure = (lambda node: is_safe_division(node, instr)) if divisions else None
 
     def visit(e):
         if e.operation in SUPPORTED_OPS:
-            reason = mlil_effect(e.ssa_form)
+            reason = mlil_effect(e.ssa_form, pure)
             if reason is None:
                 yield e
                 return
@@ -64,6 +73,11 @@ def candidate_roots(instr: MediumLevelILInstruction, rejected: Optional[list] = 
                         yield from visit(item)
 
     yield from visit(instr)
+
+
+def is_safe_division(ssa_node: MediumLevelILInstruction, root_instr: MediumLevelILInstruction) -> bool:
+    """A division (SSA form) the lifter builds: one that cannot trap for any value of its inputs."""
+    return ssa_node.operation in DIVISION_OPS and lift(ssa_node, root_instr=root_instr, check_versions=False) is not None
 
 
 def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruction,
@@ -176,12 +190,76 @@ class _Lifter:
             found = self.boolean(e.src, inlined=inlined)
             if found is not None:
                 return UnOp("zx", found, width)
+        elif op in DIVISION_OPS:
+            found = self.division(e, width, inlined=inlined)
+            if found is not None:
+                return found
         if inlined:
             return None  # never move loads or other unsupported expressions across instructions
         if mlil_effect(e) is not None:
             # Only pure leaves may be evaluated again, or not at all.
             return Var(f"effect@{e.expr_index}", width) if self.effect_leaves else None
         return Var(f"opaque@{e.expr_index}", width, ref=Opaque(e.non_ssa_form))
+
+    def division(self, e: MediumLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
+        """A division that cannot trap (spec v3.2 goal 1), else None: it stays an effect. Operands
+        must have the division's own width (a division reads every bit, so a wider operand is not
+        its low bits). x86's double-width forms are the narrow division when the dividend is the
+        zero (unsigned) or sign (signed) extension of its low half."""
+        saved, saved_inlined = self.budget, dict(self.inlined)
+        double = e.operation in _DIVIDE_DP
+        op = (_DIVIDE_DP if double else _DIVIDE)[e.operation]
+        if double:
+            dividend = self.narrow_dividend(e.left, op, width, inlined=inlined)
+        else:
+            dividend = exact(self.expr(e.left, inlined=inlined), width)
+        divisor = exact(self.expr(e.right, inlined=inlined), width) if dividend is not None else None
+        if divisor is not None and never_traps(op, dividend, divisor):
+            return BinOp(op, dividend, divisor, width)
+        self.budget, self.inlined = saved, saved_inlined
+        return None
+
+    def narrow_dividend(self, left: MediumLevelILInstruction, op: str, width: int, *, inlined: bool) -> Optional[Expr]:
+        """The low half of a double-width dividend (x86 edx:eax) that is the zero (unsigned) or sign
+        (signed) extension of it, else None. A dividend Binary Ninja folded to a constant is never
+        used: its high half is not visible."""
+        ext, wide = ("zx" if op[0] == "u" else "sx"), 2 * width
+        if left.operation == Op.MLIL_VAR_SPLIT_SSA:
+            whole = self.split_source(left.high, left.low, wide)
+            if whole is not None:
+                return narrowed(whole, width, ext)  # cdq: edx:eax = sx.q(eax)
+            high = self.var(left.high, width)
+            if ext == "zx" and high == Const(0, width):
+                return self.var(left.low, width)  # xor edx, edx
+            return None
+        if left.operation in (Op.MLIL_CONST, Op.MLIL_CONST_PTR) or left.size * 8 != wide:
+            return None
+        whole = self.expr(left, inlined=inlined)
+        return None if whole is None else narrowed(whole, width, ext)
+
+    def split_source(self, high: SSAVariable, low: SSAVariable, wide: int) -> Optional[Expr]:
+        """The value one instruction wrote to both halves of a split pair (edx:eax = sx.q(eax)),
+        followed through whole copies (x86-64: temp4 = rdx; rdx = temp2), as a `wide`-bit value."""
+        followed = []
+        ends = []
+        for ssa_var in (high, low):
+            for _ in range(8):
+                definition = self.definition_of(ssa_var)
+                if (definition is None or definition.operation != Op.MLIL_SET_VAR_SSA
+                        or definition.src.operation != Op.MLIL_VAR_SSA or definition.src.size != definition.size):
+                    break
+                followed.append(ssa_var)
+                ssa_var = definition.src.src
+            ends.append(ssa_var)
+        definition = self.definition_of(ends[0])
+        if (definition is None or definition.operation != Op.MLIL_SET_VAR_SPLIT_SSA
+                or (definition.high, definition.low) != (ends[0], ends[1]) or definition.src.size * 8 != wide):
+            return None
+        whole = self.expr(definition.src, inlined=True)
+        if whole is not None:
+            for ssa_var in followed + ends:
+                self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
+        return whole
 
     def var(self, ssa_var: SSAVariable, width: int) -> Optional[Expr]:
         key = (ssa_var.var.identifier, ssa_var.version, width)

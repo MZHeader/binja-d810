@@ -29,6 +29,10 @@ _BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: 
 _COMPARE = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne", H.HLIL_CMP_ULT: "ult", H.HLIL_CMP_ULE: "ule",
             H.HLIL_CMP_UGT: "ugt", H.HLIL_CMP_UGE: "uge", H.HLIL_CMP_SLT: "slt", H.HLIL_CMP_SLE: "sle",
             H.HLIL_CMP_SGT: "sgt", H.HLIL_CMP_SGE: "sge"}  # 0 or 1, at the operands' width
+# Division (v3.2), with values for the cases hardware traps on that both sides of a comparison share:
+# x / 0 = 0, x % 0 = x, MIN / -1 = MIN (the plugin only rewrites divisions proven never to trap).
+_DIVIDE = {H.HLIL_DIVU: "udiv", H.HLIL_DIVS: "sdiv", H.HLIL_MODU: "urem", H.HLIL_MODS: "srem"}
+_DIVIDE_DP = {H.HLIL_DIVU_DP: "udiv", H.HLIL_DIVS_DP: "sdiv", H.HLIL_MODU_DP: "urem", H.HLIL_MODS_DP: "srem"}
 _UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx", H.HLIL_LOW_PART: "low"}
 _SKIP = {H.HLIL_NOP, H.HLIL_VAR_DECLARE}
 
@@ -113,6 +117,18 @@ def _expr(e, env, params) -> tuple:
         else:
             left = _fit(left, width, e)
         return ("op", _BINARY[op], width, left, right)
+    if op in _DIVIDE:
+        return ("op", _DIVIDE[op], width, _fit(_expr(e.left, env, params), width, e),
+                _fit(_expr(e.right, env, params), width, e))
+    if op in _DIVIDE_DP:
+        # x86 div/idiv: a double-width dividend (edx:eax), the quotient or remainder at the operation's
+        # width (only the low half is modelled; the plugin never rewrites one whose quotient overflows).
+        name, wide = _DIVIDE_DP[op], 2 * width
+        dividend = _expr(e.left, env, params)
+        if _width(dividend) != wide:
+            raise Unvalidated(f"{_width(dividend)}-bit dividend of a {width}-bit division: {e}")
+        divisor = ("op", "zx" if name[0] == "u" else "sx", wide, _fit(_expr(e.right, env, params), width, e))
+        return ("bits", ("op", name, wide, dividend, divisor), 0, width)
     if op in _UNARY:
         return ("op", _UNARY[op], width, _expr(e.src, env, params))
     if op == H.HLIL_BOOL_TO_INT:  # (x & 1) != 0 ? 1 : 0
@@ -216,6 +232,14 @@ def evaluate(x: tuple, env: dict[str, int]) -> int:
             a, b = _signed(a, width), _signed(b, width)
         return int({"eq": a == b, "ne": a != b, "ult": a < b, "ule": a <= b, "ugt": a > b, "uge": a >= b,
                     "slt": a < b, "sle": a <= b, "sgt": a > b, "sge": a >= b}[name])
+    if name in ("udiv", "urem", "sdiv", "srem"):
+        if b == 0:
+            return 0 if name in ("udiv", "sdiv") else a
+        if name[0] == "u":
+            return a // b if name == "udiv" else a % b
+        sa, sb = _signed(a, width), _signed(b, width)
+        q = abs(sa) // abs(sb) * (1 if (sa < 0) == (sb < 0) else -1)  # toward zero
+        return (q if name == "sdiv" else sa - q * sb) & m
     if name in ("rol", "ror"):  # count modulo the width (Binary Ninja's dataflow)
         c = b % width
         if c == 0:
@@ -261,6 +285,13 @@ def to_z3(x: tuple, symbols: dict):
                 "ugt": lambda: z3.UGT(a, b), "uge": lambda: z3.UGE(a, b), "slt": lambda: a < b, "sle": lambda: a <= b,
                 "sgt": lambda: a > b, "sge": lambda: a >= b}[name]()
         return z3.If(cond, z3.BitVecVal(1, width), z3.BitVecVal(0, width))
+    if name in ("udiv", "urem", "sdiv", "srem"):
+        zero = z3.BitVecVal(0, width)
+        if name == "udiv":
+            return z3.If(b == zero, zero, z3.UDiv(a, b))
+        if name == "sdiv":
+            return z3.If(b == zero, zero, a / b)
+        return z3.URem(a, b) if name == "urem" else z3.SRem(a, b)
     if name in ("rol", "ror"):
         bw = b.size()
         b = z3.ZeroExt(width - bw, b) if bw < width else z3.Extract(width - 1, 0, z3.URem(b, z3.BitVecVal(width, bw))) if bw > width else b

@@ -89,13 +89,13 @@ def _truncate(a: Expr, w: int) -> Expr:
         # A division of extended values is the narrow division, at every value (spec v3.2 goal 1):
         # x86's divu.dp.d(0:x, y) and divs.dp.d(sx.q(x), y).
         ext = "zx" if a.op[0] == "u" else "sx"
-        left, right = _narrowed(a.left, w, ext), _narrowed(a.right, w, ext)
+        left, right = narrowed(a.left, w, ext), narrowed(a.right, w, ext)
         if left is not None and right is not None:
             return BinOp(a.op, left, right, w)
     return UnOp("trunc", a, w)
 
 
-def _narrowed(e: Expr, w: int, ext: str):
+def narrowed(e: Expr, w: int, ext: str):
     """The w-bit value `e` is the `ext` extension of, or None."""
     if isinstance(e, UnOp) and e.op == ext and e.operand.width == w:
         return e.operand

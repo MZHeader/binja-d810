@@ -13,7 +13,7 @@ from ...deadline import Deadline
 from ...ir.expr import Expr, is_candidate, tree_size
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root, shown_in
-from .lift import SUPPORTED_OPS, candidate_roots, lift
+from .lift import DIVISION_OPS, SUPPORTED_OPS, candidate_roots, is_safe_division, lift
 from .lower import lower
 
 _ARITH = frozenset({Op.MLIL_ADD, Op.MLIL_SUB, Op.MLIL_MUL, Op.MLIL_NEG, Op.MLIL_LSL})
@@ -44,7 +44,7 @@ class MLILAdapter:
             if self.deadline.expired():
                 return False
             rejected: list = []
-            for root in candidate_roots(instr, rejected):
+            for root in candidate_roots(instr, rejected, divisions=False):  # operations seen either way
                 seen.update(_operations(root))
             for expr, _ in rejected:
                 seen.update(_operations(expr))
@@ -268,6 +268,8 @@ def _size(e: MediumLevelILInstruction) -> int:
 def _pure(e: MediumLevelILInstruction) -> bool:
     if e.operation in _PURE_LEAVES:
         return True
+    if e.operation in DIVISION_OPS:
+        return is_safe_division(e, e)  # cannot trap: removable once dead (spec v3.2)
     if e.operation not in SUPPORTED_OPS and e.operation not in _PURE_FLAGS:
         return False
     return all(_pure(op) for op in e.operands if isinstance(op, MediumLevelILInstruction))

@@ -87,6 +87,16 @@ def fit(e: Expr, width: int) -> Optional[Expr]:
     return UnOp("trunc", e, width)
 
 
+def exact(e: Optional[Expr], width: int) -> Optional[Expr]:
+    """`e` as a division operand of `width` bits (spec v3.2): its own width, or a constant whose value
+    fits. Never `fit`: a division reads every bit, so a wider operand's low bits are not its value."""
+    if e is None or e.width == width:
+        return e
+    if isinstance(e, Const) and e.value >> width == 0:
+        return Const(e.value, width)
+    return None
+
+
 def visible_size(e: Expr) -> int:
     """Nodes as they will appear in the IL: a read of part of a variable (trunc(b >> 8), lowered as
     one field read) counts once."""

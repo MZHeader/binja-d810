@@ -9,9 +9,10 @@ earlier instruction already materialized from a load or call is an ordinary SSA 
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
-# Pure functions of their operands, which never trap (division may; it is not here). Anything
+# Pure functions of their operands, which never trap (division may: it is pure only once proven never
+# to trap, which the lifter decides, spec v3.2). Anything
 # not listed, including operations added to Binary Ninja later, is treated as an effect.
 MLIL_PURE = frozenset({
     "MLIL_VAR_SSA", "MLIL_VAR_SSA_FIELD", "MLIL_VAR_SPLIT_SSA", "MLIL_VAR", "MLIL_VAR_FIELD", "MLIL_VAR_SPLIT",
@@ -38,11 +39,12 @@ def _nodes(tree):
             stack.extend(item.operands)
 
 
-def mlil_effect(tree) -> Optional[str]:
-    """None if every operation in the (SSA-form) tree is pure, else "effect: <operation>"."""
+def mlil_effect(tree, pure: Optional[Callable] = None) -> Optional[str]:
+    """None if every operation in the (SSA-form) tree is pure, else "effect: <operation>". `pure(node)`
+    may accept a node outside the table: a division proven never to trap (spec v3.2 goal 1)."""
     for node in _nodes(tree):
         name = node.operation.name
-        if name not in MLIL_PURE:
+        if name not in MLIL_PURE and (pure is None or not pure(node)):
             return f"effect: {name}"
     return None
 

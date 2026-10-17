@@ -44,5 +44,7 @@ def lower(mlil: MediumLevelILFunction, e: Expr, loc: ILSourceLocation) -> Expres
         return compare(e.left.width // 8, left, right, loc)
     build = {"add": mlil.add, "sub": mlil.sub, "mul": mlil.mult, "and": mlil.and_expr, "or": mlil.or_expr,
              "xor": mlil.xor_expr, "shl": mlil.shift_left, "lshr": mlil.logical_shift_right,
-             "ashr": mlil.arith_shift_right, "rol": mlil.rotate_left, "ror": mlil.rotate_right}[e.op]
+             "ashr": mlil.arith_shift_right, "rol": mlil.rotate_left, "ror": mlil.rotate_right,
+             "udiv": mlil.div_unsigned, "sdiv": mlil.div_signed, "urem": mlil.mod_unsigned,
+             "srem": mlil.mod_signed}[e.op]
     return build(size, left, right, loc)

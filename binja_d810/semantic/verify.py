@@ -86,6 +86,13 @@ def check(
         return Check(Verdict.PROVEN if by_signature else Verdict.REFUTED, "signature")
     if _atom_signature_proof(a, b):
         return Check(Verdict.PROVEN, "signature")
+    if isinstance(a, BinOp) and a.op in ("eq", "ne") and isinstance(b, Const) and b.value == int(a.op == "eq"):
+        # eq(L, R) is always 1 (ne always 0) exactly when L == R is an identity, which signatures
+        # prove for MBAs where Z3 on the comparison often times out.
+        inner = check(a.left, a.right, samples=samples, use_z3=use_z3, z3_timeout_ms=z3_timeout_ms, seed=seed,
+                      deadline=deadline)
+        if inner.verdict is not Verdict.TESTED:
+            return inner
     if not use_z3:
         return Check(Verdict.TESTED, "sampling", "z3 disabled")
     if deadline is not None and deadline.at != float("inf"):

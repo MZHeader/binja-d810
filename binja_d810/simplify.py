@@ -6,10 +6,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence, Union
 
-from .ir.expr import BinOp, Const, Expr, UnOp, is_mba, node_count, relink, to_str, variables
+from .ir.expr import BinOp, Const, Expr, UnOp, is_candidate, is_mba, node_count, relink, to_str, variables
 from .ir.normalize import normalize
 from .rules.base import Rewrite, Rule
 from .semantic.backend import Tier2Backend
+from .semantic.constancy import CONSTANCY_Z3_MS, sampled_constant
 from .semantic.linear_mba import is_linear_mba
 from .deadline import Deadline
 from .semantic.verify import Check, Verdict
@@ -59,7 +60,7 @@ def simplify_expression(
     `tier1_cache` (shared by the calls of one function's run) reuses Tier 1 results: the engine
     asks again about candidates that cheap backends did not simplify, and in later passes."""
     out = Outcome()
-    step_check = check
+    step_check, custom_check = check, check
     if check is None:
         check = lambda a, b: verify_check(a, b, deadline=deadline)  # noqa: E731
         # Each Tier 2 step is checked without Z3 (sampling, signatures): a wrong step is rejected
@@ -94,16 +95,30 @@ def simplify_expression(
         out.skipped = "budget exhausted"
     if out.skipped is None and is_mba(current) and len(variables(current)) > limits.max_vars:
         out.skipped = f"too complex: {len(variables(current))} variables > {limits.max_vars}"
+    if not isinstance(current, Const) and is_candidate(expr) and not deadline.expired():
+        # Constancy (v3): the same value on every sample; the final check below is the proof.
+        value = sampled_constant(current)
+        if value is not None:
+            current, out.skipped = Const(value, current.width), None
+            sources.append("constancy")
     if not sources:
         if not _cancelled_by_normalization(current, expr):
             return out
         sources.append("normalize")  # its own gate: the mix is gone and the size at least halved
     elif not _worth_applying(current, expr):
         return out
-    final = _checked(check, expr, current)
+    folding = "constancy" in sources or current.width == 1
+    if folding and custom_check is None:
+        # A fold changes what is shown as reachable: it gets the longer proof budget, and needs it.
+        final = verify_check(expr, current, deadline=deadline, z3_timeout_ms=CONSTANCY_Z3_MS)
+    else:
+        final = _checked(check, expr, current)
     if final.verdict is Verdict.REFUTED:
         out.refuted += 1
         out.errors.append(("verify", f"refuted {to_str(expr)} -> {to_str(current)} via {sources}"))
+        return out
+    if folding and final.verdict is not Verdict.PROVEN:
+        out.skipped = "constant on every sample, not proven" if "constancy" in sources else "condition not proven"
         return out
     out.rewrite = Rewrite(original=expr, replacement=current, source="+".join(dict.fromkeys(sources)),
                           verdict=final.verdict, method=final.method, reason=final.reason)

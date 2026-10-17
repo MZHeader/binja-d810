@@ -87,7 +87,7 @@ uv sync
 uv run pytest
 ```
 
-The Binary Ninja tests build the samples, then run pytest inside a fresh Binary Ninja instance. A window opens and closes by itself. They need pytest installed in Binary Ninja's Python (`uv pip install ... --target "$BN_SITE" pytest`), and Homebrew LLVM's `lld-link` and `ld.lld` for the PE and ELF builds.
+The Binary Ninja tests build the samples, then run pytest inside a fresh Binary Ninja instance. The instance is launched hidden and in the background (`open -g -j`): no window appears and focus stays where it is. Set `BINJA_D810_VISIBLE=1` to see it. They need pytest installed in Binary Ninja's Python (`uv pip install ... --target "$BN_SITE" pytest`), and Homebrew LLVM's `lld-link` and `ld.lld` for the PE and ELF builds.
 
 ```bash
 tests/samples/build.sh                       # ARM64 Mach-O, x64 PE, i686 PE, x64 ELF, each at -O0 and -O2

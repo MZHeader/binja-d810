@@ -7,9 +7,9 @@ import random
 from typing import Callable, Iterator, Optional
 
 from ..deadline import Deadline
-from ..ir.evaluate import evaluate
+from ..ir.evaluate import evaluate, evaluate_shared
 from ..ir.expr import Const, Expr, mask, variables
-from .verify import Check, Verdict, check, sample_envs
+from .verify import Check, Verdict, _z3_prove, check, sample_envs
 
 _EXHAUSTIVE_BITS = 16
 CONSTANCY_Z3_MS = 2000
@@ -64,3 +64,29 @@ def constant_value(e: Expr, deadline: Deadline, prove: Optional[Prover] = None) 
     if found.verdict is Verdict.REFUTED:
         return None
     return value, found
+
+
+def fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int = CONSTANCY_Z3_MS) -> Optional[tuple[int, Check]]:
+    """constant_value for an expression too large to expand as a tree (values shared: snagit.dll's
+    export, spec v3.1 goal 1). Samples evaluate each shared value once and the Z3 query is built
+    with sharing. (value, check) when constant on every sample; the check says whether it is proven.
+    None as soon as two samples differ, or when a proof refutes it."""
+    widths = {v.name: v.width for v in variables(e)}
+    if not widths:
+        return None
+    value = None
+    for env in itertools.chain(_joint_envs(widths), sample_envs(widths, 256, seed=11)):
+        found = evaluate_shared(e, env)
+        if value is None:
+            value = found
+        elif found != value:
+            return None
+    if deadline.at != float("inf"):
+        remaining_ms = deadline.remaining() * 1000
+        if remaining_ms < 2:
+            return value, Check(Verdict.TESTED, "sampling", "proof budget exhausted")
+        z3_timeout_ms = min(z3_timeout_ms, int(remaining_ms))
+    proven, reason = _z3_prove(e, Const(value, e.width), widths, z3_timeout_ms)
+    if proven is False:
+        return None
+    return value, Check(Verdict.PROVEN, "z3") if proven else Check(Verdict.TESTED, "sampling", reason)

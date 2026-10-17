@@ -33,6 +33,9 @@ class Candidate:
     # there is no version-safe lift (ir is the unchecked one).
     unchecked: Optional[Expr] = None
     constant_only: bool = False
+    # The root lifted with shared values counted once (v3.1), when its tree is over maxNodes: only
+    # a proven constant may come from it (constancy.fold_shared), and no tree algorithm touches it.
+    shared_dag: Optional[Expr] = None
 
 
 Skip = Callable[[int, str], None]

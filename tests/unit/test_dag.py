@@ -66,3 +66,9 @@ def test_brief_text_is_bounded():
     text, seconds = timed(lambda: brief(chain(), limit=200))
     assert seconds < 0.5 and len(text) <= 260, text
     assert brief(parse("a + 1", 32)) == "(a + 1)"
+
+
+def test_repr_is_bounded():
+    text, seconds = timed(lambda: repr(chain()))
+    assert seconds < 0.5 and len(text) < 400, text[:400]
+    assert repr(parse("a + 1", 32)) == "BinOp(op='add', left=Var(name='a', width=32), right=Const(value=1, width=32), width=32)"

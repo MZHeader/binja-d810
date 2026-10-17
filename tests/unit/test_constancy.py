@@ -78,3 +78,30 @@ def test_a_refuted_constant_falls_back_to_the_simplified_condition():
     assert out.rewrite is not None and out.rewrite.verdict is Verdict.PROVEN, out
     assert out.rewrite.replacement == normalize(c("ne((x + y) & 0xffff, 0x1234)")), to_str(out.rewrite.replacement)
     assert "constancy" not in out.rewrite.source and not out.errors, out
+
+
+def _bcf_condition(depth=30):
+    """((t ^ K) & 1) == 0 with t the 30-step chain over x * (x - 1): always 1, 2^30 tree nodes."""
+    from test_dag import MASKS, chain
+
+    from binja_d810.ir.expr import BinOp
+
+    k = 0
+    for m in MASKS[:depth]:
+        k ^= ~m & 0xFFFFFFFF
+    t = BinOp("xor", chain(depth), Const(k, 32), 32)
+    return BinOp("eq", BinOp("and", t, Const(1, 32), 32), Const(0, 32), 1)
+
+
+def test_constants_over_shared_values_are_proven_without_expanding_the_tree():
+    import time
+
+    from binja_d810.ir.expr import BinOp
+    from binja_d810.semantic.constancy import fold_shared
+
+    started = time.perf_counter()
+    found = fold_shared(_bcf_condition(), Deadline.after(10))
+    assert found is not None and found[0] == 1 and found[1].verdict is Verdict.PROVEN, found
+    varying = BinOp("eq", BinOp("and", _bcf_condition().left.left, Const(2, 32), 32), Const(0, 32), 1)
+    assert fold_shared(varying, Deadline.after(10)) is None
+    assert time.perf_counter() - started < 3

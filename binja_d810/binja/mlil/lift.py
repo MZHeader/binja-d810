@@ -66,17 +66,23 @@ def candidate_roots(instr: MediumLevelILInstruction, rejected: Optional[list] = 
 def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruction,
          check_versions: bool = True, max_nodes: int = 200, effect_leaves: bool = False,
          inlined: Optional[set] = None, stats: Optional[dict] = None,
-         definitions: Optional[dict] = None, keep: frozenset = frozenset()) -> Optional[Expr]:
+         definitions: Optional[dict] = None, keep: frozenset = frozenset(),
+         shared_once: bool = False) -> Optional[Expr]:
     """`effect_leaves` is for diagnostics only: effectful sub-expressions of the root become leaves
     without a Binary Ninja ref, so the result can be classified but never lowered. `stats` receives
     the number of IL nodes visited ("visits"), failed inlining attempts included. `definitions`
     memoizes SSA definitions across lifts of one SSA form. `keep` holds (identifier, version) keys of
-    SSA values left as leaves when live at the root (ILAdapter.shallow)."""
+    SSA values left as leaves when live at the root (ILAdapter.shallow). `shared_once` (v3.1): a value
+    read again costs nothing, so max_nodes bounds the distinct nodes and the result may be far larger
+    as a tree (for constancy.fold_shared only). stats["budget_hit"]: the size bound left values as
+    leaves (or failed the lift)."""
     lifter = _Lifter(ssa_expr.function, root_instr, check_versions, max_nodes, effect_leaves, definitions)
     lifter.keep = keep
+    lifter.shared_once = shared_once
     e = lifter.expr(ssa_expr, inlined=False)
     if stats is not None:
         stats["visits"] = lifter.visits
+        stats["budget_hit"] = lifter.budget_hit
     if e is not None and inlined is not None:
         inlined.update(lifter.inlined)  # (variable identifier, version) -> SSA variable, each definition followed
     return None if e is None else lifter.relate(e)
@@ -115,11 +121,14 @@ class _Lifter:
         self.names: dict[tuple, str] = {}  # leaf identity -> IR name; names are labels, not identities
         self.backings: dict[tuple, Var] = {}
         self.inlined: dict[tuple[int, int], object] = {}  # (identifier, version) -> SSA variable
+        self.shared_once = False
+        self.budget_hit = False
 
     def expr(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
         self.visits += 1
         self.budget -= 1
         if self.budget < 0:
+            self.budget_hit = True
             return None
         op, width = e.operation, e.size * 8
         if op in _COMPARE:
@@ -198,14 +207,18 @@ class _Lifter:
         return self.definitions[key]
 
     def may_inline(self, key: tuple) -> bool:
-        return self.budget > self.failed.get(key, 0) and self.visits < self.max_visits
+        if self.budget > self.failed.get(key, 0) and self.visits < self.max_visits:
+            return True
+        self.budget_hit = True
+        return False
 
     def reuse(self, key: tuple) -> Optional[Expr]:
         found = self.done.get(key)
-        if found is None or found[1] > self.budget:
+        if found is None or (found[1] > self.budget and not self.shared_once):
             return None
         expr, nodes, inlined = found
-        self.budget -= nodes
+        if not self.shared_once:
+            self.budget -= nodes
         self.inlined.update(inlined)
         return expr
 
@@ -375,15 +388,22 @@ class _Lifter:
         return self.names[identity]
 
 
-def _substitute_leaves(e: Expr, mapping: dict[tuple[str, int], Expr]) -> Expr:
-    """Like ir.expr.substitute, keyed by (name, width): one name may be read at two widths."""
+def _substitute_leaves(e: Expr, mapping: dict[tuple[str, int], Expr], memo: Optional[dict] = None) -> Expr:
+    """Like ir.expr.substitute, keyed by (name, width): one name may be read at two widths. Each
+    shared value is rebuilt once and stays shared."""
+    memo = {} if memo is None else memo
+    if id(e) in memo:
+        return memo[id(e)]
     if isinstance(e, Var):
-        return mapping.get((e.name, e.width), e)
-    if isinstance(e, Const):
-        return e
-    if isinstance(e, UnOp):
-        return UnOp(e.op, _substitute_leaves(e.operand, mapping), e.width)
-    return BinOp(e.op, _substitute_leaves(e.left, mapping), _substitute_leaves(e.right, mapping), e.width)
+        out = mapping.get((e.name, e.width), e)
+    elif isinstance(e, Const):
+        out = e
+    elif isinstance(e, UnOp):
+        out = UnOp(e.op, _substitute_leaves(e.operand, mapping, memo), e.width)
+    else:
+        out = BinOp(e.op, _substitute_leaves(e.left, mapping, memo), _substitute_leaves(e.right, mapping, memo), e.width)
+    memo[id(e)] = out
+    return out
 
 
 def _is_flag(e: MediumLevelILInstruction) -> bool:

@@ -430,3 +430,36 @@ def test_an_unchecked_lift_never_gives_a_non_constant_rewrite():
     from binja_d810.ir.expr import variables
 
     assert {v.name for v in variables(adapter.roots["c"])} <= {"rcx", "y"}  # from the checked lift only
+
+
+class SharedDagAdapter(FakeAdapter):
+    """A condition whose lift, as a tree, is far over maxNodes (snagit.dll's export): the adapter
+    offers it as shared values only, and only a proven constant may replace it."""
+
+    def __init__(self, condition):
+        super().__init__({"c": condition})
+
+    def has_candidates(self):
+        return True
+
+    def candidates(self, skip):
+        from binja_d810.ir.expr import Const as C
+
+        if not isinstance(self.roots["c"], C):
+            yield Candidate("c", 0x60, self.roots["c"], constant_only=True, shared_dag=self.roots["c"])
+
+
+def test_a_condition_over_shared_values_is_folded_by_constancy_only():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_constancy import _bcf_condition
+
+    from binja_d810.ir.expr import Const
+
+    adapter = SharedDagAdapter(_bcf_condition())
+    report = simplify_function(adapter, [], [LinearMBABackend()], EngineConfig())
+    assert adapter.roots["c"] == Const(1, 1), report
+    record = report.rewrites[0]
+    assert record.verdict == "PROVEN" and "shared" in record.source and len(record.before) < 400, record

@@ -79,7 +79,10 @@ class BinOp:
         return _same(self, other) if isinstance(other, (BinOp, UnOp, Var, Const)) else NotImplemented
 
     def __reduce__(self):
-        return BinOp, (self.op, self.left, self.right, self.width)  # the cached hash is per process
+        return BinOp, (self.op, self.left, self.right, self.width)
+
+    def __repr__(self) -> str:
+        return _repr(self)  # the cached hash is per process
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,24 @@ class UnOp:
 
     def __reduce__(self):
         return UnOp, (self.op, self.operand, self.width)
+
+    def __repr__(self) -> str:
+        return _repr(self)
+
+
+def _repr(e: "Expr") -> str:
+    """The dataclass repr, or a summary when the tree is large (shared values: assertion messages
+    and logs must not expand a 2^30-node tree)."""
+    if tree_size(e) > 2000:
+        return f"{type(e).__name__}(op={e.op!r}, <{distinct_nodes(e)} nodes, shared values counted once>, width={e.width})"
+
+    def plain(n: "Expr") -> str:
+        if isinstance(n, BinOp):
+            return f"BinOp(op={n.op!r}, left={plain(n.left)}, right={plain(n.right)}, width={n.width})"
+        if isinstance(n, UnOp):
+            return f"UnOp(op={n.op!r}, operand={plain(n.operand)}, width={n.width})"
+        return repr(n)
+    return plain(e)
 
 
 def _same(a: "Expr", b: "Expr") -> bool:
@@ -199,16 +220,28 @@ def brief(e: Expr, limit: int = 400) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+def nodes(e: Expr) -> Iterator[Expr]:
+    """Each distinct node once, pre-order (first appearance): linear when values are shared."""
+    seen, stack = set(), [e]
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        yield node
+        stack.extend(reversed(children(node)))
+
+
 def variables(e: Expr) -> list[Var]:
     seen: dict[tuple[str, int], Var] = {}
-    for node in walk(e):
+    for node in nodes(e):
         if isinstance(node, Var):
             seen.setdefault((node.name, node.width), node)
     return list(seen.values())
 
 
 def ops(e: Expr) -> set[str]:
-    return {node.op for node in walk(e) if isinstance(node, (BinOp, UnOp))}
+    return {node.op for node in nodes(e) if isinstance(node, (BinOp, UnOp))}
 
 
 def is_mba(e: Expr) -> bool:
@@ -251,15 +284,15 @@ def is_candidate(e: Expr) -> bool:
 
     if is_mba(e):
         return True
-    nodes = list(walk(e))
-    comparisons = [n for n in nodes if isinstance(n, BinOp) and n.op in CMP_OPS]
+    found = list(nodes(e))
+    comparisons = [n for n in found if isinstance(n, BinOp) and n.op in CMP_OPS]
     if not comparisons:
         return False
     if any(decided_comparison(n.op, n.left, n.right) is not None for n in comparisons):
         return True
     return any((isinstance(n, (BinOp, UnOp)) and n.op in BITWISE_OPS)
                or (isinstance(n, BinOp) and n.op == "mul" and not isinstance(n.left, Const)
-                   and not isinstance(n.right, Const)) for n in nodes)
+                   and not isinstance(n.right, Const)) for n in found)
 
 
 def without_refs(e: Expr) -> Expr:

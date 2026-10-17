@@ -54,6 +54,14 @@ def function_result(func) -> tuple:
             continue
         if result is not None:
             raise Unvalidated(f"statement after return: {statement}")
+        if op == H.HLIL_DEREF:
+            continue  # a load whose value is unused (OLLVM's global inputs once its predicate is folded)
+        if op in (H.HLIL_VAR_INIT, H.HLIL_ASSIGN) and statement.src.operation == H.HLIL_DEREF:
+            # A loaded value: unknown, like an uninitialized read (see _read).
+            dest = statement.dest if op == H.HLIL_VAR_INIT else getattr(statement.dest, "var", None)
+            if dest is not None:
+                env[dest.identifier] = ("memory", str(statement.src))
+                continue
         if op == H.HLIL_VAR_INIT:
             env[statement.dest.identifier] = _expr(statement.src, env, params)
         elif op == H.HLIL_ASSIGN and statement.dest.operation == H.HLIL_VAR:
@@ -132,6 +140,8 @@ def _fit(x: tuple, width: int, e) -> tuple:
 def _read(var, offset: int, width: int, env, params) -> tuple:
     if var.identifier in env:
         value = env[var.identifier]
+        if value[0] == "memory":  # an unknown loaded value: a result that depends on it is a mismatch
+            return ("bits", ("param", f"?{value[1]}"), offset * 8, width)
         if offset == 0 and width == _width(value):
             return value
         if offset * 8 + width > _width(value):

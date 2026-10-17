@@ -13,9 +13,10 @@ from dataclasses import dataclass, field, replace
 from typing import NamedTuple, Sequence
 
 from ..deadline import Deadline
-from ..ir.expr import is_mba, node_count, to_str, variables
+from ..ir.expr import Const, brief, is_mba, tree_size, variables
 from ..semantic import cobra_shim
-from ..rules.base import Rule
+from ..rules.base import Rewrite, Rule
+from ..semantic.constancy import fold_shared
 from ..semantic.backend import Tier2Backend
 from ..simplify import Limits, Outcome, simplify_expression
 from .adapter import ILAdapter
@@ -207,6 +208,18 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     if (found is not None and not variables(found.replacement)
                             and found.verdict is not None and found.verdict.name == "PROVEN"):
                         rewrite = found
+                if (rewrite is None and not grows and final and candidate.shared_dag is not None
+                        and not deadline.expired()):
+                    # Too large as a tree, small as shared values (v3.1): a proven constant only. Once,
+                    # in the last round: no backend changes what it finds.
+                    folded = fold_shared(candidate.shared_dag, deadline)
+                    if folded is not None and folded[1].verdict.name == "PROVEN":
+                        dag = candidate.shared_dag
+                        rewrite = Rewrite(original=dag, replacement=Const(folded[0], dag.width),
+                                          source="constancy (shared values)", verdict=folded[1].verdict,
+                                          method=folded[1].method, reason=folded[1].reason)
+                    elif folded is not None:
+                        outcome.skipped = "constant on every sample, not proven"
                 if rewrite is None and not final:
                     deferred.append(candidate)
                     continue
@@ -235,7 +248,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
         for candidate, rewrite in planned:
             adapter.replace(candidate, rewrite.replacement)
             report.rewrites.append(RewriteRecord(
-                candidate.address, rewrite.source, to_str(rewrite.original), to_str(rewrite.replacement),
+                candidate.address, rewrite.source, brief(rewrite.original, 2000), brief(rewrite.replacement, 2000),
                 rewrite.verdict.name if rewrite.verdict else "UNCHECKED", rewrite.method, rewrite.reason, level))
         adapter.finish()
         # Only what these rewrites made dead: ordinary dead stores (z_1 = z at -O0) stay.
@@ -268,7 +281,7 @@ def _numbered(candidates, order: dict, report: FunctionReport):
 
 def _note_slowest(report: FunctionReport, candidate, seconds: float, rewrite, outcome) -> None:
     note = "rewrite" if rewrite is not None else (outcome.skipped or "no rewrite")
-    report.slowest.append((candidate.address, round(seconds, 3), node_count(candidate.ir), note))
+    report.slowest.append((candidate.address, round(seconds, 3), tree_size(candidate.ir), note))
     report.slowest.sort(key=lambda item: -item[1])
     del report.slowest[5:]
 

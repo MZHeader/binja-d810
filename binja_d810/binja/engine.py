@@ -302,10 +302,20 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
 
 def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline):
     """Per-path constancy (spec v3.2 goal 3): the condition once per incoming path of the merged values
-    it reads (adapter.path_variants); a rewrite only if every variant is the same proven constant."""
-    variants = candidate.paths if candidate.paths is not None else adapter.path_variants(candidate)
-    if not variants:
-        return None
+    it reads. The adapter gives alternatives, cheapest first (v3.3: invariant merges alone, then every
+    merge split); one folds only if every variant in it is the same proven constant."""
+    alternatives = candidate.paths if candidate.paths is not None else adapter.path_variants(candidate)
+    for variants in alternatives or ():
+        value = _same_constant(variants, constants, deadline)
+        if value is not None:
+            original = candidate.unchecked if candidate.unchecked is not None else candidate.ir
+            return Rewrite(original=original, replacement=Const(value, original.width), source="constancy (per path)",
+                           verdict=Verdict.PROVEN, method="z3", reason="")
+    return None
+
+
+def _same_constant(variants, constants: dict, deadline: Deadline):
+    """The constant every variant is proven to be, or None."""
     value = None
     for variant in variants:
         if deadline.expired():
@@ -319,9 +329,7 @@ def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline):
         if folded is None or folded[1].verdict is not Verdict.PROVEN or value not in (None, folded[0]):
             return None
         value = folded[0]
-    original = candidate.unchecked if candidate.unchecked is not None else candidate.ir
-    return Rewrite(original=original, replacement=Const(value, original.width), source="constancy (per path)",
-                   verdict=Verdict.PROVEN, method="z3", reason="")
+    return value
 
 
 def _numbered(candidates, order: dict, report: FunctionReport):

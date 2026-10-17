@@ -103,9 +103,9 @@ class MLILAdapter:
                 if root.operation in _COMPARES and (ir is None or not is_candidate(ir)) and unchecked is None:
                     # A condition over merged values whose per-path variants are candidates (k != 0 with
                     # k = phi((x - 1) * x & 1, (x + x * x) & 1)): constant-only, from its paths.
-                    variants = None if through is None else self._path_variants(through, instr)
-                    if variants and any(is_candidate(v) for v in variants):
-                        ir, inlined, constant_only, paths = through, {}, True, tuple(variants)
+                    alternatives = None if through is None else self._path_variants(through, instr)
+                    if alternatives and any(is_candidate(v) for variants in alternatives for v in variants):
+                        ir, inlined, constant_only, paths = through, {}, True, tuple(map(tuple, alternatives))
                 if ir is not None and (is_candidate(ir) or paths is not None):
                     defines, single = self._defines(instr, root)
                     nodes, mixed, dying = self._visible(instr, root, inlined)
@@ -130,10 +130,11 @@ class MLILAdapter:
         return Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed, instr,
                          consumer_kinds=self._consumer_kinds(instr, root), root_kinds=self.root_kinds)
 
-    def path_variants(self, candidate: Candidate) -> Optional[list[Expr]]:
+    def path_variants(self, candidate: Candidate) -> Optional[list[list[Expr]]]:
         """The candidate's condition once per incoming path of the merged values it reads (spec v3.2
         goal 3), from its lift through every input (versions unchecked: only a proven constant may
-        come from it). Conditions only; None when it reads no merged value."""
+        come from it), as alternatives: invariant merges alone, then every merge split (v3.3).
+        Conditions only; None when it reads no merged value."""
         if candidate.context is None or candidate.root.operation not in _COMPARES:
             return None
         base = candidate.unchecked if candidate.unchecked is not None else candidate.ir
@@ -151,7 +152,12 @@ class MLILAdapter:
                 merges[key] = self._merge(leaf.ref, leaf.width, instr, definitions)
             return merges[key]
 
-        return path_variants(base, merge_of)
+        alternatives = []
+        for invariant_only in (True, False):
+            variants = path_variants(base, merge_of, invariant_only=invariant_only)
+            if variants and variants not in alternatives:
+                alternatives.append(variants)
+        return alternatives or None
 
     def _merge(self, ssa_var: SSAVariable, width: int, instr: MediumLevelILInstruction,
                definitions: dict) -> Optional[Merge]:
@@ -161,6 +167,13 @@ class MLILAdapter:
         phi = ssa.get_ssa_var_definition(ssa_var)
         if phi is None or phi.operation != Op.MLIL_VAR_PHI:
             return None
+        source = _invariant_source(ssa, ssa_var)
+        if source is not None:
+            # Every value of the merge is some instance of `source` (v3.3): one incoming value, which
+            # path_variants renames apart like any other.
+            return Merge(f"invariant:{ssa_var.var.identifier}:{ssa_var.version}",
+                         (lift_value(ssa, source, width, root_instr=instr, max_nodes=self.max_nodes,
+                                     definitions=definitions),))
         sources = {(s.var.identifier, s.version) for s in phi.src}
         block = phi.il_basic_block
         incoming = []
@@ -303,6 +316,31 @@ class MLILAdapter:
         if self.backups:
             self.finish()
         self.backups.clear()
+
+
+def _invariant_source(ssa, ssa_var: SSAVariable, limit: int = 64) -> Optional[SSAVariable]:
+    """The one value entering a web of merges and whole copies from outside it, if there is exactly one
+    (v3.3): i = phi(i0, i'), i' = esi, esi = phi(i0, i), as x-tunnel.bin carries y * y + 3 round a loop.
+    Every member then holds some instance of that value. None otherwise."""
+    web, outside, stack = set(), {}, [ssa_var]
+    while stack:
+        var = stack.pop()
+        key = (var.var.identifier, var.version)
+        if key in web or key in outside:
+            continue
+        definition = ssa.get_ssa_var_definition(var)
+        if definition is not None and definition.operation == Op.MLIL_VAR_PHI:
+            web.add(key)
+            stack.extend(definition.src)
+        elif (definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA
+              and definition.src.operation == Op.MLIL_VAR_SSA and definition.src.size == definition.size):
+            web.add(key)
+            stack.append(definition.src.src)
+        else:
+            outside[key] = var
+        if len(web) + len(outside) > limit or len(outside) > 1:
+            return None
+    return next(iter(outside.values())) if len(outside) == 1 else None
 
 
 def _reaching(ssa, block, var) -> Optional[SSAVariable]:

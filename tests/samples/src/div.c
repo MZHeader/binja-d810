@@ -66,3 +66,22 @@ EXPORT uint32_t div_keep(uint32_t a) {
     uint32_t q = a / d;
     return (q ^ a) + 2 * (q & a);
 }
+
+// x-tunnel.bin 0x4485a0: r = y * y + 3 is computed before a loop and carried round it unchanged
+// through copies (t = r; r = t), while the loop updates x. The quotient is compared with r in the
+// loop: r is a merge whose only value from outside is y * y + 3, and x a merge of two values. The
+// comparison is false for every x. Always a + n.
+EXPORT uint32_t div_loop(uint32_t a, uint32_t n) {
+    uint32_t y = div_y; B(y);
+    uint32_t r = y * y + 3; B(r);
+    uint32_t x = div_x; B(x);
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t d = x * x + 1; B(d);
+        uint32_t q = 2u / d; B(q);
+        if (q == r) a ^= 0x5a;
+        a += 1;
+        uint32_t t = r; B(t); r = t;
+        x = x * 3 + k; B(x);
+    }
+    return a;
+}

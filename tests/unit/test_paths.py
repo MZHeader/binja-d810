@@ -1,7 +1,7 @@
 """Per-path variants over merged values (spec v3.2 goal 3), independent of Binary Ninja."""
 
 from binja_d810.deadline import Deadline
-from binja_d810.ir.expr import BinOp, Const, Var
+from binja_d810.ir.expr import BinOp, Const, Var, variables
 from binja_d810.ir.paths import Merge, path_variants
 from binja_d810.semantic.constancy import fold_shared
 from binja_d810.semantic.verify import Verdict
@@ -86,3 +86,26 @@ def test_too_many_paths():
         total = BinOp("add", total, leaf, W)
     assert path_variants(cmp("eq", BinOp("and", total, Const(1, W), W), Const(0, W)), merges(table)) is None
     assert path_variants(cmp("eq", BinOp("and", total, Const(1, W), W), Const(0, W)), merges(table), limit=32)
+
+
+def test_an_invariant_merge_is_its_one_source():
+    # x-tunnel 0x4485a0 (v3.3): i is merged round a loop with copies of itself, so its only value from
+    # outside is y * y + 3 (Merge with one incoming value). It is substituted, renamed apart, without
+    # multiplying the variants; x, merged from two values, may stay a free leaf.
+    x, i = v("x"), v("i")
+    quotient = BinOp("udiv", Const(2, W), BinOp("add", BinOp("mul", x, x, W), Const(1, W), W), W)
+    square = BinOp("add", BinOp("mul", v("y"), v("y"), W), Const(3, W), W)
+    table = {"i": Merge(("web", "i"), (square,)), "x": Merge(3, (v("a"), v("b")))}
+    condition = cmp("eq", quotient, i)
+    invariant = path_variants(condition, merges(table), invariant_only=True)
+    assert invariant is not None and len(invariant) == 1 and constant(invariant[0]) == 0
+    assert "x" in {leaf.name for leaf in variables(invariant[0])}  # x stays free: not split
+    split = path_variants(condition, merges(table))
+    assert split is not None and len(split) == 2 and [constant(e) for e in split] == [0, 0]
+
+
+def test_invariant_only_without_an_invariant_merge():
+    x = v("x")
+    table = {"x": Merge(3, (Const(1, W), Const(3, W)))}
+    assert path_variants(cmp("eq", BinOp("and", x, Const(1, W), W), Const(1, W)), merges(table),
+                         invariant_only=True) is None

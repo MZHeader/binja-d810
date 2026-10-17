@@ -509,7 +509,7 @@ class PathAdapter(FakeAdapter):
             yield Candidate("c", 0x80, self.roots["c"])
 
     def path_variants(self, candidate):
-        return self.variants
+        return [self.variants]  # alternatives, cheapest first: one here
 
 
 def test_a_condition_constant_on_every_incoming_path_is_folded():
@@ -539,7 +539,25 @@ def test_a_condition_offered_with_its_paths_is_folded_from_them():
     adapter = PathAdapter(None)
     adapter.roots["c"] = adapter.original["c"] = p("ne(k, 0)", 1, widths)
     paths = (p("ne(((x - 1) * x) & 1, 0)", 1, widths), p("ne((y + (y * y)) & 1, 0)", 1, widths))
-    adapter.candidates = lambda skip: iter([Candidate("c", 0x90, adapter.roots["c"], constant_only=True, paths=paths)]
+    adapter.candidates = lambda skip: iter([Candidate("c", 0x90, adapter.roots["c"], constant_only=True, paths=(paths,))]
                                            if adapter.roots["c"] == adapter.original["c"] else [])
     report = simplify_function(adapter, [], default_backends(), EngineConfig())
     assert adapter.roots["c"] == Const(0, 1), report
+
+
+def test_path_alternatives_are_tried_in_order():
+    # v3.3: invariant merges substituted alone first (one variant, the other merges free), then the
+    # full split. Either may fold; a set folds only if all its variants are the same proven constant.
+    from binja_d810.ir.expr import Const
+    from binja_d810.semantic.backend import default_backends
+
+    widths = {"x": 32, "y": 32, "z": 32}
+    never = p("eq(udiv(2, (x * x) + 1), (y * y) + 3)", 1, widths)
+    varies = p("eq(udiv(2, (x * x) + 1), z)", 1, widths)
+    for alternatives, folds in (([[never], [varies]], True), ([[varies], [never, never]], True),
+                                ([[varies], [never, varies]], False)):
+        adapter = PathAdapter(None)
+        adapter.path_variants = lambda candidate, alternatives=alternatives: alternatives
+        simplify_function(adapter, [], default_backends(), EngineConfig())
+        assert (adapter.roots["c"] == Const(0, 1)) == folds, alternatives
+

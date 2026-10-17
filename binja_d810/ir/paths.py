@@ -26,21 +26,28 @@ _TAG = "~"  # leaf name suffix: the path a renamed leaf belongs to (never in Bin
 @dataclass(frozen=True)
 class Merge:
     """A merged value: its block (merges of one block share their incoming edges) and its incoming
-    value along each edge, in the block's edge order (leaves keep their references)."""
+    value along each edge, in the block's edge order (leaves keep their references). One incoming
+    value: an invariant merge, whose every value is some instance of that one value (a value carried
+    round a loop through copies of itself, v3.3); its block key is its own."""
 
     block: Hashable
     incoming: tuple[Expr, ...]
 
 
 def path_variants(e: Expr, merge_of: Callable[[Var], Optional[Merge]], *, depth: int = 2,
-                  limit: int = 16) -> Optional[list[Expr]]:
+                  limit: int = 16, invariant_only: bool = False) -> Optional[list[Expr]]:
     """`e` once per combination of incoming edges of the merges it reads, `depth` merges deep; None
-    if it reads no merged value or the variants would exceed `limit`."""
+    if it reads no merged value or the variants would exceed `limit`. An invariant merge never
+    multiplies the variants. `invariant_only`: only invariant merges are substituted (one variant),
+    the others stay free leaves."""
     variants, split = [e], False
     for _ in range(depth):
         out, changed = [], False
         for variant in variants:
             groups = _groups(variant, merge_of)
+            if invariant_only:
+                groups = {key: group for key, group in groups.items()
+                          if len(next(iter(group.values())).incoming) == 1}
             if not groups:
                 out.append(variant)
                 continue

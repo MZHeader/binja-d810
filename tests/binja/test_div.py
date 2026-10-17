@@ -15,6 +15,7 @@ TYPES = {
     "div_trap": "uint32_t div_trap(uint32_t a, uint32_t b)",
     "div_merge": "uint32_t div_merge(uint32_t a, uint32_t c)",
     "div_keep": "uint32_t div_keep(uint32_t a)",
+    "div_loop": "uint32_t div_loop(uint32_t a, uint32_t n)",
 }
 UNSIGNED = {M.MLIL_DIVU, M.MLIL_DIVU_DP}
 SIGNED = {M.MLIL_DIVS, M.MLIL_DIVS_DP}
@@ -78,6 +79,15 @@ def test_division_predicates_are_folded(builds, name):
     assert "if (" not in text and "0x5a" not in text, text
     result = oracle.compare(oracle.function_result(func), oracle.reference("a + 1", 32), 32)
     assert result.kind in ("proven", "exhaustive"), (result, text)
+
+
+def test_a_value_carried_round_a_loop_is_its_one_source(builds):
+    # x-tunnel 0x4485a0 (v3.3): the predicate's y * y + 3 reaches the comparison through a merge whose
+    # only value from outside is y * y + 3 (the loop copies it round), beside x merged from two values.
+    _, on, off = builds
+    assert "0x5a" in _text(function_named(off, "div_loop"))
+    text = _text(function_named(on, "div_loop"))
+    assert "0x5a" not in text and "2 u/" not in text and ".dp." not in text, text
 
 
 def test_divisions_that_may_trap_stay(builds):

@@ -37,6 +37,9 @@ _DIVIDE_DP = {Op.MLIL_DIVU_DP: "udiv", Op.MLIL_DIVS_DP: "sdiv", Op.MLIL_MODU_DP:
 DIVISION_OPS = frozenset(_DIVIDE) | frozenset(_DIVIDE_DP)
 
 
+_UNREAD = object()
+
+
 @dataclass(frozen=True)
 class Opaque:
     """Leaf for a pure unsupported sub-expression of the root instruction (non-SSA form)."""
@@ -154,6 +157,16 @@ class _Lifter:
         self.budget_hit = False
         self.stale = False  # an input was overwritten before the root (version safety stopped inlining)
 
+    def get(self, e, name: str):
+        """`e.<name>`, read once per SSA form (v3.3): Binary Ninja builds a new Python object at every
+        read of an operand, and roots read the same definitions again and again (snagit.dll's
+        sub_180009da0 spent half its budget building them). Shared with `definitions` (other keys)."""
+        key = (e.expr_index, name)
+        found = self.definitions.get(key, _UNREAD)
+        if found is _UNREAD:
+            found = self.definitions[key] = getattr(e, name)
+        return found
+
     def expr(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
         self.visits += 1
         self.budget -= 1
@@ -170,14 +183,14 @@ class _Lifter:
         if op in (Op.MLIL_CONST, Op.MLIL_CONST_PTR):
             return Const(e.constant, width)
         if op == Op.MLIL_VAR_SSA:
-            return self.var(e.src, width)
+            return self.var(self.get(e, "src"), width)
         if op == Op.MLIL_VAR_SSA_FIELD:
-            found = self.field(e.src, e.offset, width)
+            found = self.field(self.get(e, "src"), self.get(e, "offset"), width)
             if found is not None or inlined:
                 return found
         elif op in _BINARY:
-            left = self.expr(e.left, inlined=inlined)
-            right = self.expr(e.right, inlined=inlined)
+            left = self.expr(self.get(e, "left"), inlined=inlined)
+            right = self.expr(self.get(e, "right"), inlined=inlined)
             if left is None or right is None:
                 return None
             if _BINARY[op] not in COUNT_OPS:
@@ -190,7 +203,7 @@ class _Lifter:
             except ValueError:
                 return None
         elif op in _UNARY:
-            operand = self.expr(e.src, inlined=inlined)
+            operand = self.expr(self.get(e, "src"), inlined=inlined)
             if operand is None:
                 return None
             try:
@@ -198,7 +211,7 @@ class _Lifter:
             except ValueError:
                 return None
         elif op == Op.MLIL_BOOL_TO_INT:
-            found = self.boolean(e.src, inlined=inlined)
+            found = self.boolean(self.get(e, "src"), inlined=inlined)
             if found is not None:
                 return UnOp("zx", found, width)
         elif op in DIVISION_OPS:
@@ -221,10 +234,10 @@ class _Lifter:
         double = e.operation in _DIVIDE_DP
         op = (_DIVIDE_DP if double else _DIVIDE)[e.operation]
         if double:
-            dividend = self.narrow_dividend(e.left, op, width, inlined=inlined)
+            dividend = self.narrow_dividend(self.get(e, "left"), op, width, inlined=inlined)
         else:
-            dividend = exact(self.expr(e.left, inlined=inlined), width)
-        divisor = exact(self.expr(e.right, inlined=inlined), width) if dividend is not None else None
+            dividend = exact(self.expr(self.get(e, "left"), inlined=inlined), width)
+        divisor = exact(self.expr(self.get(e, "right"), inlined=inlined), width) if dividend is not None else None
         if divisor is not None and never_traps(op, dividend, divisor):
             return BinOp(op, dividend, divisor, width)
         self.budget, self.inlined = saved, saved_inlined
@@ -236,12 +249,12 @@ class _Lifter:
         used: its high half is not visible."""
         ext, wide = ("zx" if op[0] == "u" else "sx"), 2 * width
         if left.operation == Op.MLIL_VAR_SPLIT_SSA:
-            whole = self.split_source(left.high, left.low, wide)
+            whole = self.split_source(self.get(left, "high"), self.get(left, "low"), wide)
             if whole is not None:
                 return narrowed(whole, width, ext)  # cdq: edx:eax = sx.q(eax)
-            high = self.var(left.high, width)
+            high = self.var(self.get(left, "high"), width)
             if ext == "zx" and high == Const(0, width):
-                return self.var(left.low, width)  # xor edx, edx
+                return self.var(self.get(left, "low"), width)  # xor edx, edx
             return None
         if left.operation in (Op.MLIL_CONST, Op.MLIL_CONST_PTR) or left.size * 8 != wide:
             return None
@@ -256,17 +269,20 @@ class _Lifter:
         for ssa_var in (high, low):
             for _ in range(8):
                 definition = self.definition_of(ssa_var)
-                if (definition is None or definition.operation != Op.MLIL_SET_VAR_SSA
-                        or definition.src.operation != Op.MLIL_VAR_SSA or definition.src.size != definition.size):
+                if definition is None or definition.operation != Op.MLIL_SET_VAR_SSA:
+                    break
+                src = self.get(definition, "src")
+                if src.operation != Op.MLIL_VAR_SSA or src.size != definition.size:
                     break
                 followed.append(ssa_var)
-                ssa_var = definition.src.src
+                ssa_var = self.get(src, "src")
             ends.append(ssa_var)
         definition = self.definition_of(ends[0])
         if (definition is None or definition.operation != Op.MLIL_SET_VAR_SPLIT_SSA
-                or (definition.high, definition.low) != (ends[0], ends[1]) or definition.src.size * 8 != wide):
+                or (self.get(definition, "high"), self.get(definition, "low")) != (ends[0], ends[1])
+                or self.get(definition, "src").size * 8 != wide):
             return None
-        whole = self.expr(definition.src, inlined=True)
+        whole = self.expr(self.get(definition, "src"), inlined=True)
         if whole is not None:
             for ssa_var in followed + ends:
                 self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
@@ -302,7 +318,8 @@ class _Lifter:
         """Binary Ninja's dataflow value of a leaf, when it is a single constant (v3.1): a merge of
         equal constants (phi), or a definition a rewrite made constant. Never a loaded value: memory
         may change. A constant reads no variable, so it is version-safe."""
-        if definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA and definition.src.operation in _LOADS:
+        if (definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA
+                and self.get(definition, "src").operation in _LOADS):
             return None
         try:
             value = self.ssa.get_ssa_var_value(ssa_var)
@@ -341,7 +358,7 @@ class _Lifter:
     def compare(self, e: MediumLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
         """A comparison: 1 bit, over operands of the comparison's own size, or of their own size
         when it has none (HLIL gives loop conditions size 0 over 4-byte operands)."""
-        left, right = self.expr(e.left, inlined=inlined), self.expr(e.right, inlined=inlined)
+        left, right = self.expr(self.get(e, "left"), inlined=inlined), self.expr(self.get(e, "right"), inlined=inlined)
         if left is None or right is None:
             return None
         width = e.size * 8 or max(left.width, right.width)
@@ -358,12 +375,13 @@ class _Lifter:
             return self.compare(e, inlined=inlined)
         if e.operation != Op.MLIL_VAR_SSA or e.size != 0:
             return None
-        ssa_var = e.src
+        ssa_var = self.get(e, "src")
         definition = self.definition_of(ssa_var)
-        if (definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA and _is_flag(definition.src)
+        if (definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA
+                and _is_flag(self.get(definition, "src"))
                 and self.budget > 0 and self.visits < self.max_visits
                 and (ssa_var.var.identifier, ssa_var.version) not in self.keep):
-            found = self.boolean(definition.src, inlined=True)
+            found = self.boolean(self.get(definition, "src"), inlined=True)
             if found is not None:
                 self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
                 return found
@@ -373,31 +391,31 @@ class _Lifter:
                    1, ref=ssa_var)
 
     def definition(self, definition, ssa_var: SSAVariable, width: int) -> Optional[Expr]:
-        if definition.operation == Op.MLIL_SET_VAR_SSA and _is_flag(definition.src):
-            found = self.boolean(definition.src, inlined=True)  # r15 = cond:0, r15 = (x != 0)
+        if definition.operation == Op.MLIL_SET_VAR_SSA and _is_flag(self.get(definition, "src")):
+            found = self.boolean(self.get(definition, "src"), inlined=True)  # r15 = cond:0, r15 = (x != 0)
             return found if found is None or width == 1 else UnOp("zx", found, width)
-        if definition.operation == Op.MLIL_SET_VAR_SSA and definition.src.size * 8 == width:
-            return self.expr(definition.src, inlined=True)
+        if definition.operation == Op.MLIL_SET_VAR_SSA and self.get(definition, "src").size * 8 == width:
+            return self.expr(self.get(definition, "src"), inlined=True)
         if definition.operation == Op.MLIL_SET_VAR_SSA_FIELD and _declared_bits(ssa_var.var) == width:
             # A write of part of the variable that keeps the rest of it: rax#2 = rax#1 with .al = e.
             value = self.written(definition)
-            if value is None or 8 * definition.offset + value.width > width:
+            if value is None or 8 * self.get(definition, "offset") + value.width > width:
                 return None
-            old = self.var(definition.prev, width)
+            old = self.var(self.get(definition, "prev"), width)
             if old is None:
                 return None
             try:
-                return merge_partial_write(old, value, 8 * definition.offset)
+                return merge_partial_write(old, value, 8 * self.get(definition, "offset"))
             except ValueError:
                 return None
         return None
 
     def written(self, definition) -> Optional[Expr]:
         """The value a partial write (SET_VAR_SSA_FIELD) stores: rcx#2.cl = rax#2 != 0 @ rcx#1."""
-        if _is_flag(definition.src):
-            found = self.boolean(definition.src, inlined=True)
+        if _is_flag(self.get(definition, "src")):
+            found = self.boolean(self.get(definition, "src"), inlined=True)
             return None if found is None else UnOp("zx", found, 8 * _written_bytes(definition))
-        return self.expr(definition.src, inlined=True)
+        return self.expr(self.get(definition, "src"), inlined=True)
 
     def field(self, ssa_var: SSAVariable, offset: int, width: int) -> Optional[Expr]:
         """A read of `width` bits at byte `offset` of a variable's storage (spec section 6.1)."""
@@ -407,15 +425,15 @@ class _Lifter:
         if (definition is not None and definition.operation == Op.MLIL_SET_VAR_SSA_FIELD and self.budget > 0
                 and self.visits < self.max_visits and not kept):
             # Read over a partial write: x86 -O0 spills bytes into one slot (var_8:7.b = y; ...).
-            kind = read_over_write(offset, width // 8, definition.offset, _written_bytes(definition))
+            kind = read_over_write(offset, width // 8, self.get(definition, "offset"), _written_bytes(definition))
             saved = self.budget
             if kind == "inside":
                 value = self.written(definition)
                 if value is not None:
                     self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
-                    return field_read(value, 8 * (offset - definition.offset), width)
+                    return field_read(value, 8 * (offset - self.get(definition, "offset")), width)
             elif kind == "disjoint":
-                found = self.field(definition.prev, offset, width)
+                found = self.field(self.get(definition, "prev"), offset, width)
                 if found is not None:
                     return found
             self.budget = saved
@@ -447,10 +465,11 @@ class _Lifter:
                 return SSAVariable(ssa_var.var, current)
             definition = self.definition_of(SSAVariable(ssa_var.var, version))
             if (definition is None or definition.operation != Op.MLIL_SET_VAR_SSA_FIELD
-                    or definition.prev.var != ssa_var.var
-                    or read_over_write(offset, size, definition.offset, _written_bytes(definition)) != "disjoint"):
+                    or self.get(definition, "prev").var != ssa_var.var
+                    or read_over_write(offset, size, self.get(definition, "offset"),
+                                       _written_bytes(definition)) != "disjoint"):
                 return ssa_var
-            version = definition.prev.version
+            version = self.get(definition, "prev").version
         return ssa_var
 
     def backing(self, ssa_var: SSAVariable) -> Optional[Var]:

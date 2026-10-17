@@ -88,13 +88,13 @@ def fit(e: Expr, width: int) -> Optional[Expr]:
 
 
 def exact(e: Optional[Expr], width: int) -> Optional[Expr]:
-    """`e` as a division operand of `width` bits (spec v3.2): its own width, or a constant whose value
-    fits. Never `fit`: a division reads every bit, so a wider operand's low bits are not its value."""
+    """`e` as a division operand of `width` bits (spec v3.2): its own width, or a wider constant whose
+    value fits. Never `fit`: a division reads every bit, so a wider operand's low bits are not its value."""
     if e is None or e.width == width:
         return e
-    if isinstance(e, Const) and e.value >> width == 0:
+    if isinstance(e, Const) and e.width > width and e.value >> width == 0:
         return Const(e.value, width)
-    return None
+    return None  # a narrower constant is never widened: its extension is not stated
 
 
 def visible_size(e: Expr) -> int:

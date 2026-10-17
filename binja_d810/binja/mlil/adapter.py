@@ -81,15 +81,15 @@ class MLILAdapter:
                                max_nodes=_SHARED_FACTOR * self.max_nodes, definitions=definitions)
                     if dag is not None and tree_size(dag) > self.max_nodes and is_candidate(dag):
                         shared = dag
-                unchecked = None
+                unchecked = through = None
                 if root.operation in _COMPARES or ir is None:
                     # A condition, or a root the version-safe lift could not see at all: a proven
                     # constant reads no variable, so it may come from a lift through inputs whose
                     # registers were reused before the root (x86-64 -O2). Not values the checked lift
                     # saw partly (stale inputs): folding two such values in mba_linear_030 (x86-64
                     # -O2) made Binary Ninja's HLIL drop the result's definition.
-                    unchecked = lift(root.ssa_form, root_instr=instr, check_versions=False,
-                                     max_nodes=self.max_nodes, definitions=definitions)
+                    unchecked = through = lift(root.ssa_form, root_instr=instr, check_versions=False,
+                                               max_nodes=self.max_nodes, definitions=definitions)
                     if unchecked is not None and not is_candidate(unchecked):
                         unchecked = None
                 constant_only = (ir is None or not is_candidate(ir)) and unchecked is not None
@@ -103,8 +103,6 @@ class MLILAdapter:
                 if root.operation in _COMPARES and (ir is None or not is_candidate(ir)) and unchecked is None:
                     # A condition over merged values whose per-path variants are candidates (k != 0 with
                     # k = phi((x - 1) * x & 1, (x + x * x) & 1)): constant-only, from its paths.
-                    through = lift(root.ssa_form, root_instr=instr, check_versions=False,
-                                   max_nodes=self.max_nodes, definitions=definitions)
                     variants = None if through is None else self._path_variants(through, instr)
                     if variants and any(is_candidate(v) for v in variants):
                         ir, inlined, constant_only, paths = through, {}, True, tuple(variants)

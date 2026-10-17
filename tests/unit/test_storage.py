@@ -125,3 +125,17 @@ def test_visible_size_counts_a_field_read_as_one_node():
     read = storage.field_read(b, 8, 8)  # rax.ah: one IL node once lowered
     assert storage.visible_size(BinOp("add", read, storage.field_read(Var("@rdx#0", 64), 8, 8), 8)) == 3
     assert storage.visible_size(BinOp("add", Var("x", 32), Const(1, 32), 32)) == 3
+
+
+def test_division_operands_keep_their_value():
+    # A division reads every bit (spec v3.2): only an operand of its own width, or a wider constant whose
+    # value fits. A narrower constant is never widened: 0xff as an 8-bit -1 is not 255 to a signed division.
+    from binja_d810.binja.storage import exact
+    from binja_d810.ir.expr import Const, UnOp, Var
+
+    assert exact(Var("x", 32), 32) == Var("x", 32)
+    assert exact(Const(7, 64), 32) == Const(7, 32)
+    assert exact(Const(1 << 40, 64), 32) is None
+    assert exact(Const(0xFF, 8), 32) is None
+    assert exact(UnOp("zx", Var("x", 32), 64), 32) is None  # a wider value is not its low bits here
+    assert exact(None, 32) is None

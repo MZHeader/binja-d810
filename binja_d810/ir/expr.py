@@ -216,12 +216,62 @@ def distinct_nodes(e: Expr) -> int:
 
 
 def brief(e: Expr, limit: int = 400) -> str:
-    """to_str for reports, bounded: a shared value too large to print as a tree is summarized."""
-    if tree_size(e) > 4 * limit:
+    """to_str for reports, bounded: its first `limit` characters, rendered no further (v3.3), and a shared
+    value far too large to print as a tree summarized."""
+    size = tree_size(e)
+    if size > 4 * limit and distinct_nodes(e) < size:
         head = e.op if isinstance(e, (BinOp, UnOp)) else to_str(e)
-        return f"{head}(...) [{distinct_nodes(e)} nodes, shared values counted once; {tree_size(e)} as a tree]"
-    text = to_str(e)
-    return text if len(text) <= limit else text[:limit] + "..."
+        return f"{head}(...) [{distinct_nodes(e)} nodes, shared values counted once; {size} as a tree]"
+    out: list[str] = []
+    try:
+        _render(e, out, [limit + 1])
+    except _Shown:
+        return "".join(out)[:limit] + "..."
+    return "".join(out)
+
+
+class _Shown(Exception):
+    """brief has rendered more than it shows."""
+
+
+def _render(e: Expr, out: list[str], room: list[int]) -> None:
+    """to_str(e), appended to `out` piece by piece, stopping (_Shown) once `room` characters are written."""
+    def put(text: str) -> None:
+        out.append(text)
+        room[0] -= len(text)
+        if room[0] <= 0:
+            raise _Shown
+
+    if isinstance(e, (Var, Const)):
+        put(to_str(e))
+    elif isinstance(e, UnOp):
+        if e.op == "neg":  # as to_str: "(-(...))" around a literal or a negation, else "(-...)"
+            inner = e.operand
+            literal = (isinstance(inner, Const) or (isinstance(inner, UnOp) and inner.op == "neg")
+                       or (isinstance(inner, Var) and inner.name[:1].isdigit()))
+            put("(-(" if literal else "(-")
+            _render(inner, out, room)
+            put("))" if literal else ")")
+        elif e.op == "not":
+            put("(~")
+            _render(e.operand, out, room)
+            put(")")
+        else:
+            put(f"{e.op}{e.width}(")
+            _render(e.operand, out, room)
+            put(")")
+    elif e.op == "ashr" or e.op in ROTATE_OPS or e.op in CMP_OPS or e.op in DIV_OPS:
+        put(f"{'sar' if e.op == 'ashr' else e.op}(")
+        _render(e.left, out, room)
+        put(", ")
+        _render(e.right, out, room)
+        put(")")
+    else:
+        put("(")
+        _render(e.left, out, room)
+        put(f" {_SYMBOLS[e.op]} ")
+        _render(e.right, out, room)
+        put(")")
 
 
 def nodes(e: Expr) -> Iterator[Expr]:

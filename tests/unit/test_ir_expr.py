@@ -84,3 +84,28 @@ def test_var_ref_is_ignored_by_equality():
 def test_substitute_replaces_by_name():
     e = substitute(BinOp("xor", a, b, 32), {"a": Var("x", 32)})
     assert e == BinOp("xor", Var("x", 32), b, 32)
+
+
+def test_brief_renders_only_what_it_shows():
+    # v3.3: reports rendered whole expressions only to cut them at 2000 characters (10 s of a large
+    # function's 133). brief stops at its limit and shows exactly the start of to_str.
+    import random
+    import time
+
+    from exprgen import random_expr
+
+    from binja_d810.ir.expr import UnOp, brief, to_str
+
+    rng = random.Random(3)
+    for _ in range(300):
+        e = random_expr(rng, depth=6, ops=("add", "sub", "mul", "and", "or", "xor", "neg", "not", "shl"))
+        if rng.random() < 0.2:
+            e = UnOp("neg", e, e.width)
+        full = to_str(e)
+        for limit in (5, 40, 400):
+            assert brief(e, limit) == (full if len(full) <= limit else full[:limit] + "..."), (limit, full)
+    big = random_expr(random.Random(4), depth=11)
+    started = time.perf_counter()
+    for _ in range(200):
+        brief(big, 40)
+    assert time.perf_counter() - started < 0.5

@@ -105,3 +105,20 @@ def test_constants_over_shared_values_are_proven_without_expanding_the_tree():
     varying = BinOp("eq", BinOp("and", _bcf_condition().left.left, Const(2, 32), 32), Const(0, 32), 1)
     assert fold_shared(varying, Deadline.after(10)) is None
     assert time.perf_counter() - started < 3
+
+
+def test_an_unproven_constant_is_not_proven_again_in_the_same_function_run():
+    # x-tunnel.bin 0x42a673: a 17-node condition spent its 2 s proof in both rounds of a pass.
+    from binja_d810.semantic.verify import Check
+
+    calls = []
+
+    def check(a, b):
+        calls.append(b)
+        return Check(Verdict.TESTED, "sampling", "z3 timeout")
+
+    cache: dict = {}
+    for _ in range(3):
+        out = simplify_expression(c("eq((x * (x + 1)) & 1, 0)"), [], [], check=check, tier1_cache=cache)
+        assert out.rewrite is None and out.skipped == "constant on every sample, not proven", out
+    assert len(calls) == 1, calls

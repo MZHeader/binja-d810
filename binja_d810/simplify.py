@@ -98,11 +98,18 @@ def simplify_expression(
     if not isinstance(current, Const) and is_candidate(expr) and not deadline.expired():
         # Constancy (v3): the same value on every sample, applied only if proven. Otherwise the
         # Tier 1 / Tier 2 result stands on its own.
-        value = sampled_constant(current)
-        if value is not None:
+        # A constant that was refuted or not proven is not tried again in this function's run (v3.1:
+        # its proof costs up to 2 s, and the engine asks about a candidate in each round and pass).
+        known = tier1_cache.get(("constancy", current)) if tier1_cache is not None else None
+        value = None if known is not None else sampled_constant(current)
+        if known is not None:
+            out.skipped = known
+        elif value is not None:
             skipped, out.skipped = out.skipped, None
             if _finish(expr, Const(value, current.width), sources + ["constancy"], out, check, custom_check, deadline):
                 return out
+            if tier1_cache is not None and out.skipped is not None and not deadline.expired():
+                tier1_cache[("constancy", current)] = out.skipped
             out.skipped = out.skipped or skipped
     _finish(expr, current, sources, out, check, custom_check, deadline)
     return out

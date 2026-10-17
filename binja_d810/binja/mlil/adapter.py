@@ -81,10 +81,12 @@ class MLILAdapter:
                     if dag is not None and tree_size(dag) > self.max_nodes and is_candidate(dag):
                         shared = dag
                 unchecked = None
-                if root.operation in _COMPARES or ir is None or (stats.get("stale") and not is_candidate(ir)):
-                    # A condition, or a value whose inputs the version-safe lift could not see: a proven
+                if root.operation in _COMPARES or ir is None:
+                    # A condition, or a root the version-safe lift could not see at all: a proven
                     # constant reads no variable, so it may come from a lift through inputs whose
-                    # registers were reused before the root (x86-64 -O2; arm64 -O2's per-path values).
+                    # registers were reused before the root (x86-64 -O2). Not values the checked lift
+                    # saw partly (stale inputs): folding two such values in mba_linear_030 (x86-64
+                    # -O2) made Binary Ninja's HLIL drop the result's definition.
                     unchecked = lift(root.ssa_form, root_instr=instr, check_versions=False,
                                      max_nodes=self.max_nodes, definitions=definitions)
                     if unchecked is not None and not is_candidate(unchecked):
@@ -100,7 +102,8 @@ class MLILAdapter:
                     defines, single = self._defines(instr, root)
                     nodes, mixed, dying = self._visible(instr, root, inlined)
                     yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,
-                                    instr, frozenset(inlined) - dying, unchecked, constant_only, shared)
+                                    instr, frozenset(inlined) - dying, unchecked, constant_only, shared,
+                                    self._consumer_kinds(instr, root), self.root_kinds)
 
     def shallow(self, candidate: Candidate, keep: Optional[frozenset] = None) -> Optional[Candidate]:
         """The root lifted with `keep` (default: the definitions that stay alive) as leaves where
@@ -138,7 +141,27 @@ class MLILAdapter:
         for key in dying:
             statements.setdefault(shown[key], set()).update(_operations(definitions[key].src))
         mixed = any(ops & _ARITH and ops & _BITWISE for ops in statements.values())
+        self.root_kinds = _kinds(statements[None])
         return sum(_size(tree) for tree in trees), mixed, dying
+
+    def _consumer_kinds(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction) -> Optional[frozenset]:
+        """The kinds of the statements the root's value flows into through single uses, as HLIL
+        merges them into one statement (v3.1); None if the root is not a whole definition."""
+        if instr.operation != Op.MLIL_SET_VAR or instr.src.expr_index != root.expr_index:
+            return None
+        ssa = self.mlil.ssa_form
+        value, kinds = instr.ssa_form.dest, set()
+        for _ in range(16):
+            uses = ssa.get_ssa_var_uses(value)
+            if len(uses) != 1 or uses[0].operation == Op.MLIL_VAR_PHI:
+                break
+            use = uses[0]
+            tree = use.src if use.operation == Op.MLIL_SET_VAR_SSA else use
+            kinds |= _kinds(set(_operations(tree)))
+            if use.operation != Op.MLIL_SET_VAR_SSA or not _pure(use.src):
+                break
+            value = use.dest
+        return frozenset(kinds)
 
     def _defines(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction):
         """The SSA value the root is the whole definition of, and whether it has one use."""
@@ -289,3 +312,7 @@ def _var_reads(instr: MediumLevelILInstruction, var) -> list:
             elif isinstance(operand, list):
                 stack.extend(o for o in operand if isinstance(o, MediumLevelILInstruction))
     return found
+
+
+def _kinds(operations: set) -> frozenset:
+    return frozenset(({"arith"} if operations & _ARITH else set()) | ({"bitwise"} if operations & _BITWISE else set()))

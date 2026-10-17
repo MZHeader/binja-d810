@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from typing import NamedTuple, Sequence
 
 from ..deadline import Deadline
-from ..ir.expr import Const, brief, is_mba, tree_size
+from ..ir.expr import ARITH_OPS, BITWISE_OPS, Const, brief, is_mba, ops, tree_size
 from ..semantic import cobra_shim
 from ..rules.base import Rewrite, Rule
 from ..semantic.constancy import fold_shared
@@ -103,11 +103,26 @@ def _grows_visible_code(candidate, replacement) -> bool:
     `arg2 - arg1 + rdi_1` (rdi_1 = arg1 & ~0x7f, used elsewhere) became `arg2 - (0x7f & arg1)`. A
     rewrite must not grow what is visible, nor mix arithmetic and bitwise operations where the
     visible code did not."""
+    if candidate.consumer_kinds is not None and _newly_mixes(candidate, replacement):
+        return True
     if candidate.visible_nodes is None:
         return False
     if visible_size(replacement) > candidate.visible_nodes:
         return True
     return not candidate.visible_mixed and is_mba(replacement)
+
+
+def _kinds(e) -> frozenset:
+    found = ops(e)
+    return frozenset({"arith"} if found & ARITH_OPS else set()) | frozenset({"bitwise"} if found & BITWISE_OPS else set())
+
+
+def _newly_mixes(candidate, replacement) -> bool:
+    """The statement HLIL shows the root in (its value's single-use consumers, v3.1) was arithmetic
+    or bitwise only and would mix: n + d - 8 with d = -8 | p (halflife_keygen 0x415890)."""
+    both = {"arith", "bitwise"}
+    before = candidate.consumer_kinds | candidate.root_kinds
+    return not both <= before and both <= (candidate.consumer_kinds | _kinds(replacement))
 
 
 def simplify_function(adapter: ILAdapter, rules: Sequence[Rule], backends: Sequence[Tier2Backend],

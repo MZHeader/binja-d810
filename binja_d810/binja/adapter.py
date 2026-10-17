@@ -36,6 +36,11 @@ class Candidate:
     # The root lifted with shared values counted once (v3.1), when its tree is over maxNodes: only
     # a proven constant may come from it (constancy.fold_shared), and no tree algorithm touches it.
     shared_dag: Optional[Expr] = None
+    # The statement HLIL shows the root in, beyond the root itself (v3.1): the kinds ("arith",
+    # "bitwise") of the statements its value flows into through single uses, None if unknown, and
+    # the kinds of the root's own statement. A replacement must not make that statement mixed.
+    consumer_kinds: Optional[frozenset] = None
+    root_kinds: frozenset = frozenset()
 
 
 Skip = Callable[[int, str], None]

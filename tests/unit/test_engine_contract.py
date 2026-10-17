@@ -463,3 +463,31 @@ def test_a_condition_over_shared_values_is_folded_by_constancy_only():
     assert adapter.roots["c"] == Const(1, 1), report
     record = report.rewrites[0]
     assert record.verdict == "PROVEN" and "shared" in record.source and len(record.before) < 400, record
+
+
+class EnclosedAdapter(FakeAdapter):
+    """halflife_keygen 0x415890: d = p - ((p + 8) & -8) is its own instruction, used once by
+    n + d - 8, which HLIL shows as one arithmetic statement with it. d is -8 | p: correct and
+    smaller, but the statement would read n + (-8 | p) - 8, mixed where it was not."""
+
+    def __init__(self, consumer):
+        super().__init__({"d": p("p - ((p + 8) & 0xfffffff8)")})
+        self.consumer = consumer
+
+    def candidates(self, skip):
+        if self.roots["d"] == self.original["d"]:
+            yield Candidate("d", 0x70, self.roots["d"], visible_nodes=7, visible_mixed=True,
+                            consumer_kinds=self.consumer, root_kinds=frozenset({"arith"}))  # q is its own statement
+
+
+def test_a_rewrite_never_makes_the_statement_that_uses_it_mixed():
+    from binja_d810.rules.registry import load_rules
+    from binja_d810.semantic.backend import default_backends
+
+    refused = EnclosedAdapter(frozenset({"arith"}))
+    report = simplify_function(refused, load_rules(), default_backends(), EngineConfig())
+    assert refused.roots["d"] == refused.original["d"], report.rewrites
+    assert any("newly mixed" in s.reason for s in report.skipped), report.skipped
+    allowed = EnclosedAdapter(frozenset({"bitwise"}))  # a bitwise user: -8 | p reads fine there
+    simplify_function(allowed, load_rules(), default_backends(), EngineConfig())
+    assert allowed.roots["d"] != allowed.original["d"]

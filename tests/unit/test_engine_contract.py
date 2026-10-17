@@ -667,3 +667,30 @@ def test_a_pass_that_folds_constants_commits_them_before_any_backend_runs():
     report = simplify_function(adapter, [], [Recording()], EngineConfig())
     assert adapter.roots["c"] == Const(1, 1), report
     assert calls and all(root == Const(1, 1) for root in calls), "a backend ran before the fold was committed"
+
+
+def test_a_stuck_candidate_still_gets_its_constant_only_attempts():
+    # The cache of stuck candidates is keyed by the version-safe lift, but the per-path variants and the
+    # constant-only lifts depend on more (x-tunnel.bin 0x4485a0: a merge that resolves only once other
+    # folds changed the IL). Only the simplification is skipped; those attempts run again.
+    from binja_d810.ir.expr import Const
+    from binja_d810.semantic.backend import default_backends
+
+    widths = {"x": 32, "y": 32, "z": 32}
+    other = p("(z ^ y) + 2 * (z & y)")
+    adapter = PathAdapter([p("eq(udiv(2, (x * x) + 1), z)", 1, widths)])  # not constant in the first pass
+    adapter.roots["m"] = adapter.original["m"] = other
+    real_candidates = adapter.candidates
+
+    def candidates(skip):
+        yield from real_candidates(skip)
+        if adapter.roots["m"] == adapter.original["m"]:
+            yield Candidate("m", 0x90, adapter.roots["m"])  # its rewrite gives a second pass
+
+    def replace(candidate, replacement):
+        adapter.roots[candidate.root] = replacement
+        adapter.variants = [p("eq(udiv(2, (x * x) + 1), (y * y) + 3)", 1, widths)]  # the IL around changed
+
+    adapter.candidates, adapter.replace = candidates, replace
+    simplify_function(adapter, [], default_backends(), EngineConfig())
+    assert adapter.roots["c"] == Const(0, 1)

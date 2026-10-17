@@ -200,7 +200,12 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     # No new solver or proof work; candidates already verified are still applied.
                     report.budget_exhausted = True
                     break
-                if candidate.ir in stuck:
+                # A candidate stuck in an earlier pass skips the simplification, a function of its lift. Its
+                # constant-only and per-path attempts depend on more (the merges around it, v3.3) and run
+                # again in the last round, remembered by their own lifts.
+                known = stuck.get(candidate.ir)
+                if known is not None and not final:
+                    deferred.append(candidate)
                     continue
                 def attempt(target):
                     result = simplify_expression(target.ir, rules, round_backends, config.limits, frozenset(dead),
@@ -213,12 +218,14 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     return result
 
                 started = time.monotonic()
-                outcome = Outcome() if candidate.constant_only else attempt(candidate)
+                outcome = (Outcome() if candidate.constant_only
+                           else Outcome(skipped=known.skipped) if known is not None else attempt(candidate))
                 chosen, rewrite, grows = candidate, outcome.rewrite, False
                 if rewrite is not None and _grows_visible_code(candidate, rewrite.replacement):
                     rewrite, grows = None, True
                 worth = outcome.rewrite is not None or (outcome.skipped or "").startswith("too complex")
-                if candidate.shared and worth and hasattr(adapter, "shallow") and not deadline.expired():
+                if (known is None and candidate.shared and worth and hasattr(adapter, "shallow")
+                        and not deadline.expired()):
                     # The lift inlined definitions that stay alive (values used several times, as in
                     # tigress_vm's handlers): a result over those shared values may be smaller, and
                     # never copies them. The smaller visible result wins. Only worth a second
@@ -231,7 +238,8 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                                 and (rewrite is None
                                      or visible_size(found.replacement) < visible_size(rewrite.replacement))):
                             chosen, rewrite, grows = local, found, False
-                if grows and candidate.consumes and hasattr(adapter, "shallow") and not deadline.expired():
+                if (known is None and grows and candidate.consumes and hasattr(adapter, "shallow")
+                        and not deadline.expired()):
                     # The inlined form was refused (larger, or mixing statements that were each
                     # arithmetic or bitwise only): the root alone, over its inputs as they are.
                     local = adapter.shallow(candidate, keep=candidate.consumes)

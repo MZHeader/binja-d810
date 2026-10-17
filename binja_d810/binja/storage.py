@@ -87,6 +87,25 @@ def fit(e: Expr, width: int) -> Optional[Expr]:
     return UnOp("trunc", e, width)
 
 
+def as_integer(e: Expr, width: int) -> Expr:
+    """A 1-bit value (a comparison or a flag) read as a `width`-bit integer. Binary Ninja gives a
+    comparison the value 0 or 1, whatever reads it, so this is its zero extension: (y s< 10).b (snagit.dll,
+    MSVC's setl r8b), sx.q(x < y) (1, never -1)."""
+    return UnOp("zx", e, width) if e.width == 1 and width > 1 else e
+
+
+def unary(op: str, operand: Expr, width: int) -> Optional[Expr]:
+    """An IL unary operation of `width` bits on a lifted operand; None if the widths do not fit."""
+    if operand.width == 1 and width > 1:
+        operand = as_integer(operand, width)
+        if op in ("zx", "sx", "trunc"):
+            return operand
+    try:
+        return UnOp(op, operand, width)
+    except ValueError:
+        return None
+
+
 def exact(e: Optional[Expr], width: int) -> Optional[Expr]:
     """`e` as a division operand of `width` bits (spec v3.2): its own width, or a wider constant whose
     value fits. Never `fit`: a division reads every bit, so a wider operand's low bits are not its value."""

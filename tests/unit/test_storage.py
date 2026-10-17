@@ -139,3 +139,23 @@ def test_division_operands_keep_their_value():
     assert exact(Const(0xFF, 8), 32) is None
     assert exact(UnOp("zx", Var("x", 32), 64), 32) is None  # a wider value is not its low bits here
     assert exact(None, 32) is None
+
+
+def test_a_comparison_read_as_an_integer_is_zero_or_one():
+    # Binary Ninja gives a comparison the value 0 or 1 at its operand size: (y s< 10).b (snagit.dll,
+    # MSVC's setl r8b) is its zero extension, and so is sx.q(x < y) - never -1.
+    from binja_d810.binja.storage import as_integer, unary
+    from binja_d810.ir.evaluate import evaluate
+
+    lt = BinOp("slt", Var("y", 32), Const(10, 32), 1)
+    assert unary("trunc", lt, 8) == UnOp("zx", lt, 8)
+    assert unary("sx", lt, 64) == UnOp("zx", lt, 64)
+    assert unary("zx", lt, 32) == UnOp("zx", lt, 32)
+    assert evaluate(unary("sx", lt, 64), {"y": 3}) == 1
+    assert evaluate(unary("neg", lt, 32), {"y": 3}) == 0xFFFFFFFF  # -(1)
+    assert evaluate(unary("not", lt, 32), {"y": 30}) == 0xFFFFFFFF  # ~0
+    assert as_integer(lt, 8) == UnOp("zx", lt, 8) and as_integer(lt, 1) is lt
+    # Ordinary operands are unchanged; widths that do not fit are still refused.
+    x = Var("x", 32)
+    assert unary("trunc", x, 8) == UnOp("trunc", x, 8)
+    assert unary("not", Var("b", 8), 32) is None

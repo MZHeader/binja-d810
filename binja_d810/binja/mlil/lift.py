@@ -20,7 +20,9 @@ from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ...ir.normalize import narrowed
 from ...semantic.traps import never_traps
 from ..effects import mlil_effect
-from ..storage import contained, exact, field_read, fit, merge_partial_write, read_over_write
+from ..storage import (
+    as_integer, contained, exact, field_read, fit, merge_partial_write, read_over_write, unary,
+)
 
 _BINARY = {Op.MLIL_ADD: "add", Op.MLIL_SUB: "sub", Op.MLIL_MUL: "mul", Op.MLIL_AND: "and",
            Op.MLIL_OR: "or", Op.MLIL_XOR: "xor", Op.MLIL_LSL: "shl", Op.MLIL_LSR: "lshr", Op.MLIL_ASR: "ashr",
@@ -193,9 +195,10 @@ class _Lifter:
             right = self.expr(self.get(e, "right"), inlined=inlined)
             if left is None or right is None:
                 return None
+            left = as_integer(left, width)  # a comparison read as an integer: 0 or 1
             if _BINARY[op] not in COUNT_OPS:
                 # HLIL folds lea into x * 5 with an 8-byte constant under a 4-byte multiply.
-                left, right = fit(left, width), fit(right, width)
+                left, right = fit(left, width), fit(as_integer(right, width), width)
                 if left is None or right is None:
                     return None
             try:
@@ -204,12 +207,7 @@ class _Lifter:
                 return None
         elif op in _UNARY:
             operand = self.expr(self.get(e, "src"), inlined=inlined)
-            if operand is None:
-                return None
-            try:
-                return UnOp(_UNARY[op], operand, width)
-            except ValueError:
-                return None
+            return None if operand is None else unary(_UNARY[op], operand, width)
         elif op == Op.MLIL_BOOL_TO_INT:
             found = self.boolean(self.get(e, "src"), inlined=inlined)
             if found is not None:
@@ -362,7 +360,8 @@ class _Lifter:
         if left is None or right is None:
             return None
         width = e.size * 8 or max(left.width, right.width)
-        left, right = fit(left, width), fit(right, width)  # never extends: operands of two sizes stay
+        # Never extends operands of two sizes, but a comparison read as an integer is 0 or 1 (as_integer).
+        left, right = fit(as_integer(left, width), width), fit(as_integer(right, width), width)
         if left is None or right is None:
             return None
         return BinOp(_COMPARE[e.operation], left, right, 1)

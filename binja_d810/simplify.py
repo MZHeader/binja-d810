@@ -102,9 +102,10 @@ def simplify_expression(
             current, out.skipped = Const(value, current.width), None
             sources.append("constancy")
     if not sources:
-        if not _cancelled_by_normalization(current, expr):
+        # Normalization alone: a condition its form decides (x == x), or its own gate below.
+        if not (isinstance(current, Const) and is_candidate(expr)) and not _cancelled_by_normalization(current, expr):
             return out
-        sources.append("normalize")  # its own gate: the mix is gone and the size at least halved
+        sources.append("normalize")
     elif not _worth_applying(current, expr):
         return out
     folding = "constancy" in sources or current.width == 1

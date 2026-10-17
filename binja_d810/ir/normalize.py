@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .bits import compare_with_zero, possible_ones
+from .bits import compare_with_zero, decided_comparison, possible_ones
 from .evaluate import evaluate
 from .expr import CMP_OPS, COMMUTATIVE_OPS, BinOp, Const, Expr, UnOp, Var, mask, to_signed, to_str
 
@@ -89,15 +89,9 @@ def _truncate(a: Expr, w: int) -> Expr:
 
 
 def _compare(op: str, a: Expr, b: Expr) -> Expr:
-    """Comparisons decided by their form: equal operands, and unsigned bounds 0 and all-ones."""
-    if a == b:
-        return Const(int(op in ("eq", "ule", "uge", "sle", "sge")), 1)
-    if isinstance(b, Const):
-        m = mask(b.width)
-        decided = {("ult", 0): 0, ("uge", 0): 1, ("ugt", m): 0, ("ule", m): 1}.get((op, b.value))
-        if decided is not None:
-            return Const(decided, 1)
-    return BinOp(op, a, b, 1)
+    """Comparisons decided by their form: equal operands, and unsigned bounds from known bits."""
+    decided = decided_comparison(op, a, b)
+    return Const(decided, 1) if decided is not None else BinOp(op, a, b, 1)
 
 
 def _key(e: Expr) -> tuple[int, str]:

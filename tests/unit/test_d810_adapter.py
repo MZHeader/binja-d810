@@ -69,7 +69,11 @@ def test_rule_matches_its_own_instantiated_pattern(name):
     if raw is None:  # symbolic constants: solve the rule's constraints for them (v2.1)
         def matches(values):
             candidate = instantiate(rule.pattern, width, constants=values)
-            return candidate is not None and rule.match(normalize(candidate)) is not None
+            if candidate is None:
+                return False
+            replacement = instantiate(rule.replacement, width, constants=values)
+            simplified = replacement is not None and normalize(candidate) == normalize(replacement)
+            return simplified or rule.match(normalize(candidate)) is not None  # simplified: skipped below
 
         constants = solve_constants(instance(name), width, accept=matches)
         assert constants is not None, f"{name}: no constants satisfy its constraints at {width} bits"

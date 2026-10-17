@@ -2,7 +2,7 @@ import random
 
 from exprgen import random_expr
 
-from binja_d810.ir.bits import possible_ones
+from binja_d810.ir.bits import decided_comparison, possible_ones
 from binja_d810.ir.evaluate import evaluate
 from binja_d810.ir.expr import BinOp, Const, UnOp, Var, mask
 from binja_d810.ir.parse import parse
@@ -61,3 +61,21 @@ def test_other_comparisons_with_zero_are_not_modelled():
 
     assert compare_with_zero(parse("x & 3", 32), "ne", 32) is None
     assert compare_with_zero(x, "eq", 32) is None
+
+
+def test_comparisons_decided_by_bounds_hold_on_every_input():
+    rng = random.Random(13)
+    ops = ("and", "or", "xor", "add", "not")
+    decided = 0
+    for _ in range(300):
+        e = random_expr(rng, width=8, depth=3, ops=ops)
+        for op in ("eq", "ne", "ult", "ule", "ugt", "uge"):
+            c = Const(rng.choice([0, 1, 0x7F, 0x80, 0xFF, rng.getrandbits(8)]), 8)
+            for a, b in ((e, c), (c, e)):
+                value = decided_comparison(op, a, b)
+                if value is None:
+                    continue
+                decided += 1
+                for env in ({"a": i, "b": rng.getrandbits(8), "c": rng.getrandbits(8)} for i in range(256)):
+                    assert evaluate(BinOp(op, a, b, 1), env) == value, (op, a, b)
+    assert decided > 50

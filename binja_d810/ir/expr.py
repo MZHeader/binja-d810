@@ -148,12 +148,18 @@ def to_str(e: Expr) -> str:
 
 def is_candidate(e: Expr) -> bool:
     """Worth simplifying: an MBA, or a comparison over a bitwise operation or a product of two
-    non-constants (opaque predicates). Plain comparisons (i < n - 1) are left to Binary Ninja."""
+    non-constants, or one its form decides (x == x after a copy; zx.d(x.b) u> 0xff): opaque
+    predicates, before and after a compiler. Plain comparisons (i < n - 1) are left to Binary Ninja."""
+    from .bits import decided_comparison  # bits builds on this module
+
     if is_mba(e):
         return True
     nodes = list(walk(e))
-    if not any(isinstance(n, BinOp) and n.op in CMP_OPS for n in nodes):
+    comparisons = [n for n in nodes if isinstance(n, BinOp) and n.op in CMP_OPS]
+    if not comparisons:
         return False
+    if any(decided_comparison(n.op, n.left, n.right) is not None for n in comparisons):
+        return True
     return any((isinstance(n, (BinOp, UnOp)) and n.op in BITWISE_OPS)
                or (isinstance(n, BinOp) and n.op == "mul" and not isinstance(n.left, Const)
                    and not isinstance(n.right, Const)) for n in nodes)

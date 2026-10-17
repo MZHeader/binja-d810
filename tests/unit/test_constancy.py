@@ -48,3 +48,11 @@ def test_an_unproven_constant_is_reported_and_left_alone():
     out = simplify_expression(c("eq((x * (x + 1)) & 1, 0)"), [], [],
                               check=lambda a, b: Check(Verdict.TESTED, "sampling", "z3 timeout"))
     assert out.rewrite is None and out.skipped == "constant on every sample, not proven"
+
+
+def test_conditions_decided_by_form_or_bounds_are_folded_and_proven():
+    for text, value in [("eq(x, x)", 1), ("ne(x, x)", 0), ("ugt(zx32(trunc8(x)), 0xff)", 0),
+                        ("ule(zx32(trunc8(x)), 0xff)", 1), ("uge(zx32(b), 0x100)", 0)]:
+        out = simplify_expression(c(text), [], [])
+        assert out.rewrite is not None and out.rewrite.replacement == Const(value, 1), (text, out)
+        assert out.rewrite.verdict is Verdict.PROVEN, (text, out.rewrite)

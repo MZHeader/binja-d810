@@ -76,3 +76,15 @@ def test_candidates_are_mbas_or_comparisons_over_bitwise_operations_or_products(
     assert is_candidate(parse("eq(x * y, 3)", 1, {"x": 32, "y": 32}))
     assert not is_candidate(parse("ult(x, y - 1)", 1, {"x": 32, "y": 32}))
     assert not is_candidate(parse("x + 1", 32))
+
+
+def test_comparisons_decided_by_their_form_or_bit_bounds_are_candidates():
+    # Compilers reduce opaque predicates to these: a copy makes both operands one variable
+    # (opaque_mba_or at -O2), and (x & 0xff) <= 0xff becomes a zero-extended low byte.
+    assert is_candidate(parse("eq(x, x)", 1, {"x": 32}))
+    assert is_candidate(parse("ugt(zx32(trunc8(x)), 0xff)", 1, {"x": 32}))
+    assert is_candidate(parse("uge(zx32(c), 0x100)", 1, {"c": 8}))
+    assert is_candidate(parse("eq(zx32(c), 0x100)", 1, {"c": 8}))
+    assert not is_candidate(parse("eq(zx32(c), 0x41)", 1, {"c": 8}))
+    assert not is_candidate(parse("ult(zx32(c), 0x80)", 1, {"c": 8}))
+    assert not is_candidate(parse("eq(x, y)", 1, {"x": 32, "y": 32}))

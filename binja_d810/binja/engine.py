@@ -187,6 +187,14 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                                 and (rewrite is None
                                      or visible_size(found.replacement) < visible_size(rewrite.replacement))):
                             chosen, rewrite, grows = local, found, False
+                if grows and candidate.consumes and hasattr(adapter, "shallow") and not deadline.expired():
+                    # The inlined form was refused (larger, or mixing statements that were each
+                    # arithmetic or bitwise only): the root alone, over its inputs as they are.
+                    local = adapter.shallow(candidate, keep=candidate.consumes)
+                    if local is not None and local.ir != candidate.ir:
+                        found = attempt(local).rewrite
+                        if found is not None and not _grows_visible_code(local, found.replacement):
+                            chosen, rewrite, grows = local, found, False
                 _note_slowest(report, candidate, time.monotonic() - started, rewrite, outcome)
                 if rewrite is None and not final:
                     deferred.append(candidate)

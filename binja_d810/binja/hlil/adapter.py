@@ -79,15 +79,17 @@ class HLILAdapter:
                     yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,
                                     statement, frozenset(inlined) - dying)
 
-    def shallow(self, candidate: Candidate) -> Optional[Candidate]:
-        """The root lifted with the definitions that stay alive as leaves (ILAdapter.shallow)."""
-        if not candidate.shared or candidate.context is None:
+    def shallow(self, candidate: Candidate, keep: Optional[frozenset] = None) -> Optional[Candidate]:
+        """The root lifted with `keep` (default: the definitions that stay alive) as leaves where
+        they are live (ILAdapter.shallow)."""
+        keep = candidate.shared if keep is None else keep
+        if not keep or candidate.context is None:
             return None
         statement, root = candidate.context, candidate.root
         inlined: dict = {}
         ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, inlined=inlined,
-                  keep=candidate.shared)
-        if ir is None or not is_mba(ir):
+                  keep=keep)
+        if ir is None:  # bitwise-only is fine: Tier 1 rules simplify it (a ^ 0xff00ff)
             return None
         defines, single = self._defines(statement, root)
         nodes, mixed, _ = self._visible(root, inlined)
@@ -102,13 +104,14 @@ class HLILAdapter:
         dying = dying_with_root(uses, {key: d.instr_index for key, d in definitions.items()},
                                 root.ssa_form.instr_index)
         trees = [root] + [definitions[key].src for key in dying]
-        ops = set()
-        size = 0
-        for tree in trees:
+        size, mixed = 0, False
+        for tree in trees:  # mixed if one statement is (see MLILAdapter._visible)
+            ops = set()
             for node in _expression_nodes(tree):
                 ops.add(node.operation)
                 size += 1
-        return size, bool(ops & _ARITH) and bool(ops & _BITWISE), dying
+            mixed = mixed or (bool(ops & _ARITH) and bool(ops & _BITWISE))
+        return size, mixed, dying
 
     def _defines(self, statement: HighLevelILInstruction, root: HighLevelILInstruction):
         """The SSA value the root is the whole definition of, and whether it has one use."""

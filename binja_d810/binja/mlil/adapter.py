@@ -70,14 +70,16 @@ class MLILAdapter:
                     yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,
                                     instr, frozenset(inlined) - dying)
 
-    def shallow(self, candidate: Candidate) -> Optional[Candidate]:
-        """The root lifted with the definitions that stay alive as leaves (ILAdapter.shallow)."""
-        if not candidate.shared or candidate.context is None:
+    def shallow(self, candidate: Candidate, keep: Optional[frozenset] = None) -> Optional[Candidate]:
+        """The root lifted with `keep` (default: the definitions that stay alive) as leaves where
+        they are live (ILAdapter.shallow)."""
+        keep = candidate.shared if keep is None else keep
+        if not keep or candidate.context is None:
             return None
         instr, root = candidate.context, candidate.root
         inlined: dict = {}
-        ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes, inlined=inlined, keep=candidate.shared)
-        if ir is None or not is_mba(ir):
+        ir = lift(root.ssa_form, root_instr=instr, max_nodes=self.max_nodes, inlined=inlined, keep=keep)
+        if ir is None:  # bitwise-only is fine: Tier 1 rules simplify it (a ^ 0xff00ff)
             return None
         defines, single = self._defines(instr, root)
         nodes, mixed, _ = self._visible(instr, root, inlined)
@@ -94,8 +96,10 @@ class MLILAdapter:
         # Copies (rax_6 = var_24 at -O0) are not counted: HLIL propagates them away, so a rewrite
         # that only removes copies while duplicating a kept value's definition grows the code shown.
         trees = [root] + [definitions[key].src for key in dying if definitions[key].src.operation not in _COPIES]
-        ops = set().union(*(set(_operations(tree)) for tree in trees))
-        return sum(_size(tree) for tree in trees), bool(ops & _ARITH) and bool(ops & _BITWISE), dying
+        # Mixed if one statement is: an arithmetic definition and a bitwise use are each unmixed, and
+        # merging them into one mixed expression is what the gate refuses (snagit.dll).
+        mixed = any(bool(set(_operations(tree)) & _ARITH) and bool(set(_operations(tree)) & _BITWISE) for tree in trees)
+        return sum(_size(tree) for tree in trees), mixed, dying
 
     def _defines(self, instr: MediumLevelILInstruction, root: MediumLevelILInstruction):
         """The SSA value the root is the whole definition of, and whether it has one use."""

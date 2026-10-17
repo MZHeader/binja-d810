@@ -89,3 +89,10 @@ EXPORT uint32_t shared_value(uint32_t x, uint32_t y, uint32_t z, uint32_t *out) 
     *out = a;
     return (a ^ z) + 2 * (a & z);
 }
+
+// snagit.dll: an arithmetic definition and a bitwise use, each unmixed; merging them made one
+// mixed expression. Over a itself the use is a ^ 0x00ff00ff.
+EXPORT uint32_t split_mix(uint32_t x, uint32_t y) {
+    uint32_t a = x * 7 + y; B(a);
+    return (a & 0xff00ff00) | (~a & 0x00ff00ff);
+}

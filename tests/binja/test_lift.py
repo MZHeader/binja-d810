@@ -149,3 +149,26 @@ def test_a_root_over_a_value_that_stays_visible_is_simplified_over_that_value(bu
         assert "&" not in str(returns[0]), text  # a + z, not a copy of a's definition
     finally:
         bv.file.close()
+
+
+@pytest.mark.parametrize("build,level", MATRIX, ids=IDS)
+def test_statements_that_were_each_unmixed_are_not_merged_into_a_mixed_expression(build, level):
+    from binja_d810.binja import log
+
+    shown = {}
+    for d810 in (False, True):
+        bv = open_sample(sample("hlil_fixtures", build, level), d810=d810)
+        try:
+            func = function_named(bv, "split_mix")
+            func.set_user_type("uint32_t split_mix(uint32_t x, uint32_t y)")
+            bv.update_analysis_and_wait()
+            shown[d810] = [str(i) for i in func.hlil.instructions]
+            rewrites = [r for report in log.latest_reports(func).values() for r in report.rewrites]
+        finally:
+            bv.file.close()
+    text = "\n".join(shown[True])
+    if len(shown[False]) > 1:  # the definition and its use shown apart, each unmixed
+        for r in rewrites:
+            assert not ("*" in r.after and ("^" in r.after or "|" in r.after)), (shown[False], r.before, r.after)
+    else:  # already one mixed statement (Binary Ninja folded a): a mixed result may replace it
+        assert "^" in shown[True][-1], text

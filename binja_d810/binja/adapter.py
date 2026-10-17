@@ -43,9 +43,10 @@ class ILAdapter(Protocol):
         """Every candidate whose lift is an MBA, last first (a candidate before the definitions it
         inlines), lifted lazily; roots split by effects are reported to `skip`."""
 
-    def shallow(self, candidate: Candidate) -> Optional[Candidate]:
-        """Optional. The same root lifted without inlining definitions that other instructions also
-        use (they stay visible); None if that changes nothing or is not possible."""
+    def shallow(self, candidate: Candidate, keep: Optional[frozenset] = None) -> Optional[Candidate]:
+        """Optional. The same root lifted with the definitions in `keep` (default: those that other
+        instructions also use, which stay visible) left as leaves where they are live; None if that
+        changes nothing or is not possible."""
 
     def replace(self, candidate: Candidate, replacement: Expr) -> None:
         """Lower `replacement` and put it in place of the candidate's root, keeping a backup."""

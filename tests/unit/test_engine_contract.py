@@ -2,7 +2,7 @@
 
 from binja_d810.binja.adapter import Candidate
 from binja_d810.binja.engine import EngineConfig, simplify_function
-from binja_d810.ir.expr import is_mba
+from binja_d810.ir.expr import is_mba, node_count
 from binja_d810.ir.parse import parse
 from binja_d810.semantic.linear_mba import LinearMBABackend
 
@@ -250,7 +250,7 @@ class SharedAdapter(FakeAdapter):
         if is_mba(self.roots["r"]):  # as the real adapters: only MBA roots are candidates
             yield Candidate("r", 0x40, self.roots["r"], visible_nodes=7, visible_mixed=True, shared=frozenset({"a"}))
 
-    def shallow(self, candidate):
+    def shallow(self, candidate, keep=None):
         self.shallow_asked.append(candidate.root)
         return Candidate("r", 0x40, p("(a ^ z) + 2 * (a & z)"), visible_nodes=7, visible_mixed=True)
 
@@ -357,3 +357,37 @@ def test_reports_say_where_planning_time_goes():
     report = simplify_function(adapter, [], [Slow()], EngineConfig(max_iterations=1))
     assert report.enumerate_seconds >= 0
     assert len(report.slowest) == 2 and report.slowest[0][1] >= 0.05  # (address, seconds, nodes, outcome)
+
+
+class SplitAdapter(FakeAdapter):
+    """snagit.dll: b = (a & M) | (~a & ~M) over a = x * K + y (single use). Inlining a gives a mixed
+    expression where each visible statement was arithmetic or bitwise only; over a alone, b is
+    ~(a ^ M)."""
+
+    def __init__(self):
+        super().__init__({"b": p("((x * 7 + y) & 0xff00ff00) | (~(x * 7 + y) & 0x00ff00ff)")})
+        self.asked: list = []
+
+    def candidates(self, skip):
+        if self.roots["b"] == self.original["b"]:
+            yield Candidate("b", 0x50, self.roots["b"], visible_nodes=12, visible_mixed=False,
+                            consumes=frozenset({"a"}))
+
+    def shallow(self, candidate, keep=None):
+        self.asked.append(keep)
+        if keep == frozenset({"a"}):
+            return Candidate("b", 0x50, p("(a & 0xff00ff00) | (~a & 0x00ff00ff)"), visible_nodes=12,
+                             visible_mixed=False)
+        return None
+
+
+def test_a_rewrite_refused_as_newly_mixed_is_tried_over_the_roots_own_inputs():
+    from binja_d810.semantic.backend import default_backends
+
+    from binja_d810.rules.registry import load_rules
+
+    adapter = SplitAdapter()
+    simplify_function(adapter, load_rules(), default_backends(), EngineConfig())  # a d810 rule does it
+    assert frozenset({"a"}) in adapter.asked
+    result = adapter.roots["b"]
+    assert result != adapter.original["b"] and not is_mba(result) and node_count(result) <= 5, result

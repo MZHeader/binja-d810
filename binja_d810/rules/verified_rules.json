@@ -1099,9 +1099,14 @@
     },
     "Pred0Rule4": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: unresolved: Z3Exception: b'Sorts (_ BitVec 8) and (_ BitVec 32) are incompatible' (width-correct constraints, 60s)",
+        "16-bit: unresolved: Z3Exception: b'Sorts (_ BitVec 16) and (_ BitVec 32) are incompatible' (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: unresolved: Z3Exception: b'Sorts (_ BitVec 64) and (_ BitVec 32) are incompatible' (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        32
+      ]
     },
     "Pred0Rule5": {
       "notes": [],
@@ -1132,39 +1137,87 @@
     },
     "PredFFRule1": {
       "notes": [
-        "excluded: pattern or replacement is not a symbolic expression"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredFFRule2": {
       "notes": [
-        "excluded: pattern or replacement is not a symbolic expression"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 120s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredFFRule3": {
       "notes": [
-        "excluded: pattern or replacement is not a symbolic expression"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredFFRule4": {
       "notes": [
-        "excluded: pattern or replacement is not a symbolic expression"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredOdd1": {
       "notes": [
-        "excluded: pattern or replacement is not a symbolic expression"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredOdd2": {
       "notes": [
-        "excluded: pattern or replacement is not a symbolic expression"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredOr1_Rule_1": {
       "notes": [],
@@ -1186,69 +1239,157 @@
     },
     "PredSetbRule1": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetnzRule1": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetnzRule2": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetnzRule3": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetnzRule4": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetnzRule5": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetnzRule6": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetnzRule8": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetzRule1": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetzRule2": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "PredSetzRule3": {
       "notes": [
-        "deferred: unsupported ops ['bool_to_int']"
+        "8-bit: proven (width-correct constraints, 60s)",
+        "16-bit: proven (width-correct constraints, 60s)",
+        "32-bit: proven (width-correct constraints, 60s)",
+        "64-bit: proven (width-correct constraints, 60s)"
       ],
-      "widths": []
+      "widths": [
+        8,
+        16,
+        32,
+        64
+      ]
     },
     "Sub1Add_HackersDelightRule_1": {
       "notes": [],

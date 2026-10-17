@@ -33,11 +33,19 @@ def test_known_incorrect_and_unsupported_rules_are_never_enabled():
 
 
 def test_rules_without_symbolic_sides_are_never_enabled():
-    # verify_rule returns True without proving anything when either side is not symbolic
-    # (e.g. PredFFRule1, whose REPLACEMENT is a bare DynamicConst).
+    # d810's verify_rule returns True without proving anything when either side is not symbolic. A
+    # constant replacement (a DynamicConst: PredFFRule1, PredOdd1) is evaluated and proven by
+    # binja_d810.rules.prove at each width; nothing else that is not symbolic is ever enabled.
+    from binja_d810.rules.d810_ops import rule_replacement
+    from binja_d810.third_party.d810.mba.dsl import DynamicConst
+
     m = manifest()
     for name, rule in instances().items():
-        if not (isinstance(rule.pattern, SymbolicExpression) and isinstance(rule.replacement, SymbolicExpression)):
+        replacement = rule_replacement(rule)
+        if isinstance(replacement, DynamicConst):
+            for width in m[name]["widths"]:
+                assert any(n.startswith(f"{width}-bit: proven (width-correct") for n in m[name]["notes"]), name
+        elif not (isinstance(rule.pattern, SymbolicExpression) and isinstance(replacement, SymbolicExpression)):
             assert m[name]["widths"] == [], name
 
 

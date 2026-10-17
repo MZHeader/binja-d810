@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from ..ir.expr import BinOp, Const, Expr, UnOp, mask, walk
+from ..ir.expr import CMP_OPS, BinOp, Const, Expr, UnOp, mask, walk
 from ..ir.normalize import normalize
-from ..matching.matcher import D810_BINARY, D810_UNARY, match
+from ..matching.matcher import D810_BINARY, D810_UNARY, comparison_of, match
 from ..third_party.d810.mba.constraints import ConstraintExpr
 from ..third_party.d810.mba.dsl import DynamicConst
 from .base import Rewrite
-from .d810_ops import unsupported_ops
+from .d810_ops import rule_replacement, unsupported_ops
 
 _CONSTRAINT_ERRORS = (KeyError, ValueError, AttributeError, TypeError, ArithmeticError)
 
@@ -90,7 +90,7 @@ class D810Rule:
         self.name = type(rule).__name__
         # The public properties, not cls._dsl_*: those are absent when a side is not symbolic.
         self.pattern = rule.pattern
-        self.replacement = rule.replacement
+        self.replacement = rule_replacement(rule)
         self.constraints = list(getattr(rule, "CONSTRAINTS", None) or [])
         self.dynamic_consts = dict(getattr(rule, "DYNAMIC_CONSTS", None) or {})
         self.widths = frozenset(widths)
@@ -99,10 +99,13 @@ class D810Rule:
             raise ValueError(f"{self.name}: unsupported d810 ops {sorted(bad)}")
 
     def match(self, e: Expr) -> Optional[Rewrite]:
-        if e.width not in self.widths:
+        # A 1-bit target (a branch condition) is matched by a bool_to_int pattern at the width of
+        # the compared operands, which is the width the rule was proven at.
+        width = e.left.width if e.width == 1 and isinstance(e, BinOp) and e.op in CMP_OPS else e.width
+        if width not in self.widths:
             return None
         for bindings in match(self.pattern, e):
-            ctx = self._context(bindings, e.width)
+            ctx = self._context(bindings, width)
             if ctx is None:
                 continue
             try:
@@ -117,6 +120,7 @@ class D810Rule:
     def _context(self, bindings: dict[str, Expr], width: int) -> Optional[dict[str, Any]]:
         ctx: dict[str, Any] = {name: Binding(expr) for name, expr in bindings.items()}
         ctx["_width"] = width
+        ctx["size"] = width // 8  # DynamicConst computations read the operand size (AND_TABLE[size])
         changed = True
         while changed:  # defining constraints, e.g. c_res == c_1 + ONE
             changed = False
@@ -171,6 +175,12 @@ def build(sym: Any, ctx: dict[str, Any], width: int) -> Expr:
         if sym.value is not None:
             return Const(sym.value, width)
         raise KeyError(sym.name)
+    if op == "bool_to_int":
+        constraint = sym.constraint
+        inner_width = _natural_width(constraint.left, ctx) or _natural_width(constraint.right, ctx) or ctx["_width"]
+        cmp = BinOp(comparison_of(constraint), build(constraint.left, ctx, inner_width),
+                    build(constraint.right, ctx, inner_width), 1)
+        return cmp if width == 1 else UnOp("zx", cmp, width)
     if op == "zext":
         inner_width = _natural_width(sym.left, ctx)
         if inner_width is None:

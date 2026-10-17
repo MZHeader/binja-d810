@@ -12,7 +12,11 @@ from binja_d810.semantic.verify import Verdict, check_equivalent
 RULES = {r.name: r for r in load_rules()}
 
 # Rules that cannot match their own instantiated pattern, each with a reason. Keep empty unless justified.
-SELF_MATCH_XFAIL: dict[str, str] = {}
+SELF_MATCH_XFAIL: dict[str, str] = {
+    # Zext(x & 1, 32) == 2: the zero extension's source width is not given by the pattern, so no
+    # instance can be built; tests/unit/test_predicate_rules.py covers the comparison rules.
+    "Pred0Rule4": "zext source width not determined by the pattern",
+}
 
 
 def ir(text, width=32):

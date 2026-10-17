@@ -11,6 +11,13 @@ from ..matching.matcher import D810_BINARY, D810_UNARY
 DEFAULT_NAMES = {"x_0": "x", "x_1": "y", "x_2": "z"}
 
 
+class _Value:
+    """What a DynamicConst computation reads as ctx[name].value."""
+
+    def __init__(self, value: int):
+        self.value = value
+
+
 def instantiate(sym: Any, width: int, names: Optional[Mapping[str, str]] = None,
                 constants: Optional[Mapping[str, int]] = None) -> Optional[Expr]:
     """Var leaves become IR Vars (renamed via `names`); `bnot_<v>` leaves become ~<v>.
@@ -19,7 +26,25 @@ def instantiate(sym: Any, width: int, names: Optional[Mapping[str, str]] = None,
     without one the result is None, as it is for zext.
     """
     names = DEFAULT_NAMES if names is None else names
+    if type(sym).__name__ == "DynamicConst":  # a constant computed from the match (PredOdd1: 0)
+        ctx = {name: _Value(value) for name, value in (constants or {}).items()}
+        ctx["size"] = width // 8
+        try:
+            return Const(sym.compute(ctx), width)
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return None
     op = getattr(sym, "operation", None)
+    if op == "bool_to_int":  # (l op r).to_int(): zx(cmp), or the bare comparison at width 1
+        from ..matching.matcher import comparison_of
+
+        kind = comparison_of(sym.constraint)
+        operand = 32 if width == 1 else width
+        left = instantiate(sym.constraint.left, operand, names, constants)
+        right = instantiate(sym.constraint.right, operand, names, constants)
+        if kind is None or left is None or right is None:
+            return None
+        cmp = BinOp(kind, left, right, 1)
+        return cmp if width == 1 else UnOp("zx", cmp, width)
     if op is None:
         if getattr(sym, "value", None) is not None:
             return Const(sym.value, width)

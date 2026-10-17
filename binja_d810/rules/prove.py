@@ -80,7 +80,9 @@ def solve_constants(rule: Any, width: int, *, timeout_ms: int = 10_000, accept=N
 
 def _pattern_constant_names(rule: Any) -> set[str]:
     names: set[str] = set()
-    for side in (rule.pattern, rule.replacement):
+    from .d810_ops import rule_replacement
+
+    for side in (rule.pattern, rule_replacement(rule)):
         stack = [side]
         while stack:
             node = stack.pop()
@@ -90,7 +92,9 @@ def _pattern_constant_names(rule: Any) -> set[str]:
                 names.add(node.name)
             if type(node).__name__ == "DynamicConst":
                 names.add(node.name)
-            stack.extend([getattr(node, "left", None), getattr(node, "right", None)])
+            constraint = getattr(node, "constraint", None)  # bool_to_int: the compared sides
+            stack.extend([getattr(node, "left", None), getattr(node, "right", None),
+                          getattr(constraint, "left", None), getattr(constraint, "right", None)])
     names |= set(getattr(rule, "DYNAMIC_CONSTS", None) or {})
     return names
 
@@ -106,13 +110,20 @@ def _build(rule: Any, width: int, *, declarative_only: bool = False):
     from ..third_party.d810.mba.constraints import ConstraintExpr
     from ..third_party.d810.mba.dsl import SymbolicExpressionProtocol
 
-    pattern, replacement = rule.pattern, rule.replacement
-    if not isinstance(pattern, SymbolicExpressionProtocol) or not isinstance(replacement, SymbolicExpressionProtocol):
+    from ..third_party.d810.mba.dsl import DynamicConst
+
+    from .d810_ops import rule_replacement
+
+    pattern, replacement = rule.pattern, rule_replacement(rule)
+    constant_replacement = isinstance(replacement, DynamicConst)  # PredOdd1: (x * (x - 1)) & 1 -> 0
+    if not isinstance(pattern, SymbolicExpressionProtocol) or not (
+            isinstance(replacement, SymbolicExpressionProtocol) or constant_replacement):
         return "unresolved: pattern or replacement is not symbolic"
     constraints = list(getattr(rule, "CONSTRAINTS", None) or [])
     names: set = set()
     _collect_symbolic_names(pattern, names)
-    _collect_symbolic_names(replacement, names)
+    if not constant_replacement:
+        _collect_symbolic_names(replacement, names)
     for constraint in constraints:
         if isinstance(constraint, ConstraintExpr):
             _collect_constraint_names(constraint, names)
@@ -135,14 +146,16 @@ def _build(rule: Any, width: int, *, declarative_only: bool = False):
         facts += list(rule.get_constraints(z3_vars))
     except Exception as exc:
         return f"unresolved: get_constraints: {type(exc).__name__}: {exc}"
-    ctx = {name: _Z3Binding(term, width) for name, term in z3_vars.items()}
+    ctx: dict = {name: _Z3Binding(term, width) for name, term in z3_vars.items()}
+    ctx["size"] = width // 8  # as the runtime adapter: DynamicConst computations read AND_TABLE[size]
     for name, compute in dynamic.items():
         try:
             facts.append(z3_vars[name] == compute(ctx))
         except Exception as exc:
             return f"unresolved: dynamic constant {name}: {type(exc).__name__}: {exc}"
     try:
-        lhs, rhs = visitor.visit(pattern), visitor.visit(replacement)
+        lhs = visitor.visit(pattern)
+        rhs = (z3.BitVecVal(replacement.compute(ctx), width) if constant_replacement else visitor.visit(replacement))
         facts += _shift_guards(pattern, z3_vars, width, z3) + _shift_guards(replacement, z3_vars, width, z3)
     except Exception as exc:
         return f"unresolved: {type(exc).__name__}: {exc}"

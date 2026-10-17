@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterator, Mapping, Optional
 
-from ..ir.expr import BinOp, Const, Expr, UnOp, mask
+from ..ir.expr import CMP_OPS, BinOp, Const, Expr, UnOp, mask
 from ..ir.normalize import normalize
 
 D810_BINARY = {"add": "add", "sub": "sub", "mul": "mul", "and": "and", "or": "or", "xor": "xor",
@@ -63,10 +63,39 @@ def _match_leaf(p: Any, t: Expr, b: Bindings) -> Iterator[Bindings]:
         yield out
 
 
+# d810's constraint comparisons are unsigned (its Z3 visitor uses ULT); == is an EqualityConstraint.
+_COMPARISONS = {"ne": "ne", "lt": "ult", "le": "ule", "gt": "ugt", "ge": "uge"}
+
+
+def comparison_of(constraint: Any) -> Optional[str]:
+    """The IR comparison a d810 bool_to_int constraint tests, or None."""
+    kind = type(constraint).__name__
+    if kind == "EqualityConstraint":
+        return "eq"
+    if kind == "ComparisonConstraint":
+        return _COMPARISONS.get(constraint.op_name)
+    return None
+
+
+def _match_bool(p: Any, t: Expr, b: Bindings) -> Iterator[Bindings]:
+    """(l op r).to_int() matches zx(cmp) at the pattern's width, and a bare 1-bit cmp (a branch
+    condition or flag)."""
+    inner = t.operand if isinstance(t, UnOp) and t.op == "zx" else t
+    if not (isinstance(inner, BinOp) and inner.op in CMP_OPS) or inner.op != comparison_of(p.constraint):
+        return
+    sides = (p.constraint.left, p.constraint.right)
+    yield from _pairs([(sides[0], inner.left), (sides[1], inner.right)], b)
+    if inner.op in ("eq", "ne"):
+        yield from _pairs([(sides[0], inner.right), (sides[1], inner.left)], b)
+
+
 def _match(p: Any, t: Expr, b: Bindings) -> Iterator[Bindings]:
     op = p.operation
     if op is None:
         yield from _match_leaf(p, t, b)
+        return
+    if op == "bool_to_int":
+        yield from _match_bool(p, t, b)
         return
     if op == "zext":
         if isinstance(t, UnOp) and t.op == "zx" and t.width == p.value:

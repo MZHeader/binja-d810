@@ -121,15 +121,17 @@ def main() -> None:
         reprove(args)
         return
 
-    from binja_d810.rules.d810_ops import unsupported_ops
-    from binja_d810.third_party.d810.mba.dsl import SymbolicExpression
+    from binja_d810.rules.d810_ops import rule_replacement, unsupported_ops
+    from binja_d810.third_party.d810.mba.dsl import DynamicConst, SymbolicExpression
 
     entries: dict[str, dict] = {}
     jobs: list[tuple[str, int]] = []
     for name, rule in sorted(_rules().items()):
         notes = []
-        symbolic = isinstance(rule.pattern, SymbolicExpression) and isinstance(rule.replacement, SymbolicExpression)
-        bad = unsupported_ops(rule.pattern) | unsupported_ops(rule.replacement)
+        replacement = rule_replacement(rule)
+        symbolic = isinstance(rule.pattern, SymbolicExpression) and isinstance(
+            replacement, (SymbolicExpression, DynamicConst))  # a constant replacement: PredOdd1
+        bad = unsupported_ops(rule.pattern) | unsupported_ops(replacement)
         if getattr(rule, "KNOWN_INCORRECT", False):
             notes.append("excluded: marked KNOWN_INCORRECT upstream")
         elif not symbolic:

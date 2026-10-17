@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence, Union
 
-from .ir.expr import BinOp, Const, Expr, UnOp, is_candidate, is_mba, node_count, relink, to_str, variables
+from .ir.expr import CMP_OPS, BinOp, Const, Expr, UnOp, is_candidate, is_mba, node_count, relink, to_str, variables
 from .ir.normalize import normalize
 from .rules.base import Rewrite, Rule
 from .semantic.backend import Tier2Backend
@@ -190,6 +190,7 @@ _TARGETS_OF_ROOT = {
     "add": {"add", "sub"}, "sub": {"sub", "add", "neg"}, "mul": {"mul", "neg"}, "and": {"and"}, "or": {"or"},
     "xor": {"xor", "not"}, "shl": {"shl", "mul"}, "shr": {"lshr"}, "sar": {"ashr"},
     "bnot": {"not", "const"}, "neg": {"neg", "const"}, "zext": {"zx"},
+    "bool_to_int": {"zx"} | CMP_OPS,  # (l op r).to_int(): zx(cmp), or a bare 1-bit cmp (a condition)
 }
 
 

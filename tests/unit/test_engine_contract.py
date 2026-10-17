@@ -341,3 +341,19 @@ def test_concurrent_passes_are_limited_and_waiting_counts_against_the_deadline()
     assert peak[0] <= engine.PASS_SLOTS
     assert any(r.budget_exhausted and r.plan_seconds == 0 for r in reports)
     assert all(r.total_seconds < 0.3 + 0.15 for r in reports)
+
+
+def test_reports_say_where_planning_time_goes():
+    import time
+
+    class Slow:
+        name = "slow"
+
+        def simplify(self, e, deadline=None):
+            time.sleep(0.05)
+            return None
+
+    adapter = FakeAdapter({"a": p("(x * y) ^ (x + z)"), "b": p("(x * z) ^ (y + z)")})
+    report = simplify_function(adapter, [], [Slow()], EngineConfig(max_iterations=1))
+    assert report.enumerate_seconds >= 0
+    assert len(report.slowest) == 2 and report.slowest[0][1] >= 0.05  # (address, seconds, nodes, outcome)

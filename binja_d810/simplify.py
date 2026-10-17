@@ -271,6 +271,9 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
                 continue
             if linear_decided and not abstracting:
                 continue
+            names = getattr(backend, "names", None)
+            if names is not None and names(node) > limits.max_vars:
+                continue  # variables plus atoms: CoBRA's real input size
             source = f"tier2:{backend.name}"
             if source in dead:
                 continue

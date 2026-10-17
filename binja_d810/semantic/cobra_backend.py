@@ -41,6 +41,13 @@ class CobraBackend:
         self._cache_size = cache_size
         self._lock = threading.Lock()
 
+    def names(self, e: Expr) -> int:
+        """How many names CoBRA would get for `e`: its variables plus atoms (shifts, extensions).
+        Its signature has 2**names entries; on real samples it answered none of 33 queries with 5
+        or more names and spent up to 2.45 s on each, past its own time limit."""
+        atoms: dict[Expr, Var] = {}
+        return len(variables(_atomize(e, e.width, atoms)))
+
     def simplify(self, e: Expr, deadline=None) -> Optional[Expr]:
         atoms: dict[Expr, Var] = {}
         solvable = _atomize(e, e.width, atoms)

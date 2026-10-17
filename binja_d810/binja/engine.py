@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import NamedTuple, Sequence
 
 from ..deadline import Deadline
-from ..ir.expr import is_mba, to_str
+from ..ir.expr import is_mba, node_count, to_str
 from ..semantic import cobra_shim
 from ..rules.base import Rule
 from ..semantic.backend import Tier2Backend
@@ -83,6 +83,8 @@ class FunctionReport:
     commit_seconds: float = 0.0
     lock_wait_seconds: float = 0.0
     slot_wait_seconds: float = 0.0  # waiting for one of PASS_SLOTS
+    enumerate_seconds: float = 0.0  # lifting candidates (inside planning)
+    slowest: list = field(default_factory=list)  # [(address, seconds, nodes, outcome)], at most 5, slowest first
     overrun_seconds: float = 0.0
     total_seconds: float = 0.0
 
@@ -142,7 +144,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
         # makes rewriting that definition on its own wasted work (it is dead once the later one is
         # applied). Candidates are lifted lazily, so the deadline also bounds lifting.
         order: dict = {}  # candidate -> position in the adapter's (last first) order
-        pending = _numbered(adapter.candidates(skip), order)
+        pending = _numbered(adapter.candidates(skip), order, report)
         for number, round_backends in enumerate(rounds):
             final = number == len(rounds) - 1
             deferred = []
@@ -166,6 +168,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                         report.errors.append(ErrorRecord(source, message, level))
                     return result
 
+                started = time.monotonic()
                 outcome = attempt(candidate)
                 chosen, rewrite, grows = candidate, outcome.rewrite, False
                 if rewrite is not None and _grows_visible_code(candidate, rewrite.replacement):
@@ -184,6 +187,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                                 and (rewrite is None
                                      or visible_size(found.replacement) < visible_size(rewrite.replacement))):
                             chosen, rewrite, grows = local, found, False
+                _note_slowest(report, candidate, time.monotonic() - started, rewrite, outcome)
                 if rewrite is None and not final:
                     deferred.append(candidate)
                     continue
@@ -228,10 +232,26 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
     report.still_firing = last_sources
 
 
-def _numbered(candidates, order: dict):
-    for position, candidate in enumerate(candidates):
+def _numbered(candidates, order: dict, report: FunctionReport):
+    position = 0
+    while True:
+        started = time.monotonic()
+        try:
+            candidate = next(candidates)
+        except StopIteration:
+            report.enumerate_seconds += time.monotonic() - started
+            return
+        report.enumerate_seconds += time.monotonic() - started
         order[id(candidate)] = position
+        position += 1
         yield candidate
+
+
+def _note_slowest(report: FunctionReport, candidate, seconds: float, rewrite, outcome) -> None:
+    note = "rewrite" if rewrite is not None else (outcome.skipped or "no rewrite")
+    report.slowest.append((candidate.address, round(seconds, 3), node_count(candidate.ir), note))
+    report.slowest.sort(key=lambda item: -item[1])
+    del report.slowest[5:]
 
 
 def _run(adapter, rules, backends, config, deadline, report) -> None:

@@ -67,6 +67,9 @@ def render(report: FunctionReport) -> str:
     lines += [f"error [{r.level} {r.source}]: {r.message}" for r in report.errors]
     if report.capped:
         lines.append(f"iteration cap reached; still firing: {report.still_firing}")
+    if getattr(report, "slowest", None):
+        lines.append(f"enumerating candidates {report.enumerate_seconds:.3f} s; slowest: "
+                     + ", ".join(f"{a:#x} {s:.2f} s ({n} nodes, {note})" for a, s, n, note in report.slowest))
     if report.rolled_back:
         lines.append(f"rolled back: {report.rolled_back_rewrites} rewrites undone, original IL kept")
     lines.append(f"time: {report.total_seconds:.3f} s (planning {report.plan_seconds:.3f} s, "

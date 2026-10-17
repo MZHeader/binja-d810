@@ -90,3 +90,27 @@ def test_cobra_answers_are_reused_for_identical_queries():
     assert len(calls) == 1
     other = ir("(a ^ b) + 2 * (a & b)")  # the same query once variables are renamed v0, v1
     assert backend.simplify(other) == ir("a + b") and len(calls) == 1
+
+
+def test_cobra_is_not_asked_beyond_the_variable_limit_counting_atoms():
+    # On real samples CoBRA answered none of 33 queries with 5 or more names (variables and atoms)
+    # and spent up to 2.45 s on each, past its own time limit; a 4-variable expression with shifts
+    # has more names than variables.
+    from binja_d810.simplify import Limits, simplify_expression
+
+    asked = []
+
+    def fake_solve(text, width, deadline=None):
+        asked.append(text)
+        return None
+
+    backend = CobraBackend(fake_solve)
+    four_atoms = ir("((a >> 1) ^ (b >> 2)) + 2 * ((c >> 3) & (d >> 4)) + (a & b)")  # 4 variables; 4 atoms + a, b
+    assert backend.names(four_atoms) == 6
+    simplify_expression(four_atoms, [], [backend], Limits(max_vars=4))
+    import re
+
+    assert asked and all(len(set(re.findall(r"v\d+", text))) <= 4 for text in asked)  # subtrees only
+    asked.clear()
+    simplify_expression(ir("(a ^ b) + 2 * (a & b) + (c | (a >> 1))"), [], [backend], Limits(max_vars=4))
+    assert asked  # 4 names: asked

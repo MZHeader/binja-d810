@@ -15,7 +15,6 @@ from typing import Iterator, Optional
 
 from binaryninja import HighLevelILInstruction, HighLevelILOperation as H
 
-from ...ir.bits import compare_with_zero
 from ...ir.expr import COUNT_OPS, BinOp, Const, Expr, UnOp, Var, variables
 from ..effects import hlil_effect
 from ..storage import contained, field_read, fit
@@ -24,8 +23,10 @@ _BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: 
            H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr", H.HLIL_ROL: "rol",
            H.HLIL_ROR: "ror"}
 _UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx", H.HLIL_LOW_PART: "trunc"}
-SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY)
-_COMPARE_ZERO = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne"}
+_COMPARE = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne", H.HLIL_CMP_ULT: "ult", H.HLIL_CMP_ULE: "ule",
+            H.HLIL_CMP_UGT: "ugt", H.HLIL_CMP_UGE: "uge", H.HLIL_CMP_SLT: "slt", H.HLIL_CMP_SLE: "sle",
+            H.HLIL_CMP_SGT: "sgt", H.HLIL_CMP_SGE: "sge"}
+SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {H.HLIL_BOOL_TO_INT}
 STRUCTURE = frozenset({H.HLIL_BLOCK, H.HLIL_IF, H.HLIL_WHILE, H.HLIL_DO_WHILE, H.HLIL_FOR, H.HLIL_SWITCH,
                        H.HLIL_CASE})
 _DEFINITIONS = frozenset({H.HLIL_VAR_INIT_SSA, H.HLIL_ASSIGN})
@@ -111,18 +112,6 @@ class HLILBacking:
     version: int
 
 
-def _compared(e: HighLevelILInstruction) -> Optional[HighLevelILInstruction]:
-    """The value a comparison with zero (possibly under BOOL_TO_INT) tests, else None."""
-    if e.operation == H.HLIL_BOOL_TO_INT:
-        e = e.src
-    if e.operation not in _COMPARE_ZERO:
-        return None
-    for value, other in ((e.left, e.right), (e.right, e.left)):
-        if other.operation in (H.HLIL_CONST, H.HLIL_CONST_PTR) and other.constant == 0:
-            return value
-    return None
-
-
 def _relate(e: Expr) -> Expr:
     groups: dict[tuple, list[Var]] = {}
     for leaf in variables(e):
@@ -177,6 +166,11 @@ class _Lifter:
         if self.budget < 0:
             return None
         op, width = e.operation, e.size * 8
+        if op in _COMPARE:
+            return self.compare(e, inlined=inlined)
+        if op == H.HLIL_BOOL_TO_INT:
+            found = self.expr(e.src, inlined=inlined)
+            return None if found is None or found.width != 1 or width == 0 else UnOp("zx", found, width)
         if width == 0:
             return None
         if op in (H.HLIL_CONST, H.HLIL_CONST_PTR):
@@ -206,8 +200,6 @@ class _Lifter:
                 return UnOp(_UNARY[op], operand, width)
             except ValueError:
                 return None
-        if inlined and (op in _COMPARE_ZERO or op == H.HLIL_BOOL_TO_INT):
-            return self.flag(e, width)  # inside a definition: t = ((x & 1) != 0) & 1
         if self.effect_leaves and not inlined:
             return Var(f"effect@{e.expr_index}", width)
         return None
@@ -224,13 +216,16 @@ class _Lifter:
         if key[:2] in self.keep and self.live(ssa_var):
             definition = None  # a value that stays visible elsewhere (ILAdapter.shallow)
         src = definition.src if definition is not None and definition.operation in _DEFINITIONS else None
-        compared = _compared(src) if src is not None else None  # r15_1 = rax_1 != 0
-        if (src is not None and (compared is not None or src.size * 8 == width)
+        boolean = src is not None and (src.operation in _COMPARE or src.operation == H.HLIL_BOOL_TO_INT)
+        if (src is not None and (boolean or src.size * 8 == width)
                 and self.budget > self.failed.get(key, 0) and self.visits < self.max_visits
                 and ssa_var.var not in self.aliased):
             saved, saved_inlined = self.budget, dict(self.inlined)
-            if hlil_effect(src if compared is None else compared, self.aliased) is None:
-                inner = self.expr(src, inlined=True) if compared is None else self.flag(src, width)
+            if hlil_effect(src, self.aliased) is None:
+                inner = self.expr(src, inlined=True)
+                if inner is not None and boolean and inner.width != width:
+                    # r15_1 = rax_1 != 0: a 1-bit comparison read as an integer of the variable's width
+                    inner = UnOp("zx", inner, width) if inner.width == 1 and width > 1 else None
                 if inner is not None:
                     self.inlined[(ssa_var.var.identifier, ssa_var.version)] = ssa_var
                     added = {k: v for k, v in self.inlined.items() if k not in saved_inlined}
@@ -244,15 +239,15 @@ class _Lifter:
         return Var(self.name(("var", ssa_var.var.identifier, ssa_var.version, width), label), width,
                    ref=ssa_var)
 
-    def flag(self, e: HighLevelILInstruction, width: int) -> Optional[Expr]:
-        """A comparison with zero of a value that can only be 0 or 1, as a `width`-bit 0 or 1
-        (ir.bits.compare_with_zero); other comparisons are not modelled."""
-        operand = _compared(e)
-        if operand is None:
+    def compare(self, e: HighLevelILInstruction, *, inlined: bool) -> Optional[Expr]:
+        """A comparison: 1 bit, over operands of the comparison's own size."""
+        width = e.size * 8
+        left, right = self.expr(e.left, inlined=inlined), self.expr(e.right, inlined=inlined)
+        left = None if left is None else fit(left, width)
+        right = None if right is None else fit(right, width)
+        if left is None or right is None:
             return None
-        value = self.expr(operand, inlined=True)
-        kind = _COMPARE_ZERO[(e.src if e.operation == H.HLIL_BOOL_TO_INT else e).operation]
-        return None if value is None else compare_with_zero(value, kind, width)
+        return BinOp(_COMPARE[e.operation], left, right, 1)
 
     def definition_of(self, ssa_var):
         key = (ssa_var.var.identifier, ssa_var.version)

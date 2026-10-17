@@ -16,7 +16,7 @@ from binaryninja import (
 )
 
 from ...deadline import Deadline
-from ...ir.expr import Expr, is_mba
+from ...ir.expr import Expr, is_candidate
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root
 from ..effects import hlil_effect
@@ -26,6 +26,8 @@ from .lower import lower
 _ARITH = frozenset({H.HLIL_ADD, H.HLIL_SUB, H.HLIL_MUL, H.HLIL_NEG, H.HLIL_LSL})
 _BITWISE = frozenset({H.HLIL_AND, H.HLIL_OR, H.HLIL_XOR, H.HLIL_NOT})
 _PURE_LEAVES = frozenset({H.HLIL_VAR_SSA, H.HLIL_CONST, H.HLIL_CONST_PTR})
+_COMPARES = frozenset({H.HLIL_CMP_E, H.HLIL_CMP_NE, H.HLIL_CMP_ULT, H.HLIL_CMP_ULE, H.HLIL_CMP_UGT,
+                       H.HLIL_CMP_UGE, H.HLIL_CMP_SLT, H.HLIL_CMP_SLE, H.HLIL_CMP_SGT, H.HLIL_CMP_SGE})
 # Flags a rewrite may leave dead (r15_1 = rax_1 != 0 once its 0/1 value is inlined): pure, never trap.
 _PURE_FLAGS = frozenset({H.HLIL_CMP_E, H.HLIL_CMP_NE, H.HLIL_BOOL_TO_INT})
 _PURE_FLAG_NAMES = frozenset(op.name for op in _PURE_FLAGS)
@@ -52,7 +54,9 @@ class HLILAdapter:
                 node = stack.pop()
                 seen.add(node.operation)
                 stack.extend(child for child in children(node) if child.operation not in _STRUCTURE)
-        return bool(seen & _ARITH) and bool(seen & _BITWISE)
+        # MBA, or a comparison over a bitwise operation or a product (opaque predicates)
+        return (bool(seen & _ARITH) and bool(seen & _BITWISE)) or (
+            bool(seen & _COMPARES) and (bool(seen & _BITWISE) or H.HLIL_MUL in seen))
 
     def candidates(self, skip: Skip) -> Iterator[Candidate]:
         if self.hlil.ssa_form is None:
@@ -67,13 +71,13 @@ class HLILAdapter:
             for expr, reason in rejected:
                 seen = lift(expr.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, effect_leaves=True,
                             definitions=definitions)
-                if seen is not None and is_mba(seen):
+                if seen is not None and is_candidate(seen):
                     skip(expr.address, reason)
             for root in reversed(roots):
                 inlined: dict = {}
                 ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, inlined=inlined,
                           definitions=definitions)
-                if ir is not None and is_mba(ir):
+                if ir is not None and is_candidate(ir):
                     defines, single = self._defines(statement, root)
                     nodes, mixed, dying = self._visible(root, inlined)
                     yield Candidate(root, root.address, ir, defines, single, frozenset(inlined), nodes, mixed,

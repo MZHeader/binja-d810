@@ -43,3 +43,16 @@ EXPORT uint32_t mod2(uint32_t x, uint32_t y) {
     if (t % 2 == 0) return x + y;
     return x ^ 0x5a;
 }
+
+// A predicate over memory: whatever happens to the condition, the loads stay.
+EXPORT uint32_t load_condition(uint32_t *p, uint32_t y) {
+    if ((*p * (*p + 1)) & 1) return y ^ 0x5a;
+    return y + 1;
+}
+
+// The mirrored form: the predicate guards the dead branch.
+EXPORT uint32_t mirrored(uint32_t x, uint32_t y) {
+    uint32_t t = x * (x + 1); B(t);
+    if ((t & 1) != 0) return x ^ 0x5a;
+    return x + y;
+}

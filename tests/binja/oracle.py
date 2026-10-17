@@ -26,7 +26,9 @@ PARAM_BITS = 64
 _BINARY = {H.HLIL_ADD: "add", H.HLIL_SUB: "sub", H.HLIL_MUL: "mul", H.HLIL_AND: "and", H.HLIL_OR: "or",
            H.HLIL_XOR: "xor", H.HLIL_LSL: "shl", H.HLIL_LSR: "lshr", H.HLIL_ASR: "ashr", H.HLIL_ROL: "rol",
            H.HLIL_ROR: "ror"}
-_COMPARE = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne"}  # 0 or 1, at the operands' width
+_COMPARE = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne", H.HLIL_CMP_ULT: "ult", H.HLIL_CMP_ULE: "ule",
+            H.HLIL_CMP_UGT: "ugt", H.HLIL_CMP_UGE: "uge", H.HLIL_CMP_SLT: "slt", H.HLIL_CMP_SLE: "sle",
+            H.HLIL_CMP_SGT: "sgt", H.HLIL_CMP_SGE: "sge"}  # 0 or 1, at the operands' width
 _UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx", H.HLIL_LOW_PART: "low"}
 _SKIP = {H.HLIL_NOP, H.HLIL_VAR_DECLARE}
 
@@ -199,8 +201,11 @@ def evaluate(x: tuple, env: dict[str, int]) -> int:
     if name == "concat":
         return ((vals[0] << _width(args[1])) | vals[1]) & m
     a, b = vals
-    if name in ("eq", "ne"):
-        return int((a == b) == (name == "eq"))
+    if name in _COMPARE.values():
+        if name[0] == "s":
+            a, b = _signed(a, width), _signed(b, width)
+        return int({"eq": a == b, "ne": a != b, "ult": a < b, "ule": a <= b, "ugt": a > b, "uge": a >= b,
+                    "slt": a < b, "sle": a <= b, "sgt": a > b, "sge": a >= b}[name])
     if name in ("rol", "ror"):  # count modulo the width (Binary Ninja's dataflow)
         c = b % width
         if c == 0:
@@ -241,9 +246,11 @@ def to_z3(x: tuple, symbols: dict):
     if name == "concat":
         return z3.Concat(vals[0], vals[1])
     a, b = vals
-    if name in ("eq", "ne"):
-        one, zero = z3.BitVecVal(1, width), z3.BitVecVal(0, width)
-        return z3.If(a == b, one, zero) if name == "eq" else z3.If(a == b, zero, one)
+    if name in _COMPARE.values():
+        cond = {"eq": lambda: a == b, "ne": lambda: a != b, "ult": lambda: z3.ULT(a, b), "ule": lambda: z3.ULE(a, b),
+                "ugt": lambda: z3.UGT(a, b), "uge": lambda: z3.UGE(a, b), "slt": lambda: a < b, "sle": lambda: a <= b,
+                "sgt": lambda: a > b, "sge": lambda: a >= b}[name]()
+        return z3.If(cond, z3.BitVecVal(1, width), z3.BitVecVal(0, width))
     if name in ("rol", "ror"):
         bw = b.size()
         b = z3.ZeroExt(width - bw, b) if bw < width else z3.Extract(width - 1, 0, z3.URem(b, z3.BitVecVal(width, bw))) if bw > width else b

@@ -15,6 +15,7 @@ from binaryninja import (
     HighLevelILFunction, HighLevelILInstruction, HighLevelILOperation as H, ILSourceLocation, SSAVariable,
 )
 
+from ...deadline import Deadline
 from ...ir.expr import Expr, is_mba
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root
@@ -33,9 +34,10 @@ _PURE_FLAG_NAMES = frozenset(op.name for op in _PURE_FLAGS)
 class HLILAdapter:
     level = "hlil"
 
-    def __init__(self, hlil: HighLevelILFunction, max_nodes: int = 200):
+    def __init__(self, hlil: HighLevelILFunction, max_nodes: int = 200, deadline: Deadline = Deadline.never()):
         self.hlil = hlil
         self.max_nodes = max_nodes
+        self.deadline = deadline  # as MLILAdapter: enumeration stops when the pass's time is up
         self.backups: list[tuple[int, int]] = []
         self.aliased_list = list(hlil.aliased_vars)
         self.aliased = frozenset(self.aliased_list)
@@ -43,6 +45,8 @@ class HLILAdapter:
     def has_candidates(self) -> bool:
         seen = set()
         for statement in expression_roots(self.hlil):
+            if self.deadline.expired():
+                return False
             stack = [statement]
             while stack:
                 node = stack.pop()
@@ -56,6 +60,8 @@ class HLILAdapter:
         definitions: dict = {}  # SSA definitions, shared by every lift of this SSA form
         # expression_roots walks statements last first (a stack over the body).
         for statement in list(expression_roots(self.hlil)):
+            if self.deadline.expired():
+                return
             rejected: list = []
             roots = list(candidate_roots(statement, self.aliased, rejected))
             for expr, reason in rejected:

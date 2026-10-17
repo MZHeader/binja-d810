@@ -69,9 +69,11 @@ def render(report: FunctionReport) -> str:
         lines.append(f"iteration cap reached; still firing: {report.still_firing}")
     if report.rolled_back:
         lines.append(f"rolled back: {report.rolled_back_rewrites} rewrites undone, original IL kept")
-    lines.append(f"time: {report.total_seconds:.3f} s (planning {report.plan_seconds:.3f} s of "
+    lines.append(f"time: {report.total_seconds:.3f} s (planning {report.plan_seconds:.3f} s, "
+                 f"{getattr(report, 'plan_cpu_seconds', 0.0):.3f} s CPU, of "
                  f"{report.allowance_seconds:.3f} s allowed, commit {report.commit_seconds:.3f} s, "
-                 f"solver lock wait {report.lock_wait_seconds:.3f} s)"
+                 f"solver lock wait {report.lock_wait_seconds:.3f} s, "
+                 f"waiting for other functions' passes {getattr(report, 'slot_wait_seconds', 0.0):.3f} s)"
                  + ("; budget exhausted" if report.budget_exhausted else "")
                  + (f"; overran by {report.overrun_seconds:.3f} s" if report.overrun_seconds > 0 else ""))
     return "\n".join(lines)

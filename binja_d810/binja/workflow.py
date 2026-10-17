@@ -95,7 +95,8 @@ def _run(ctx, level: str) -> None:
                                     generation=_handle(mlil) if mlil is not None else _handle(il),
                                     keepalive=mlil if mlil is not None else il,
                                     allowance=budget.plugin_allowance(config.function_seconds, _analysis_limit_ms(ctx)))
-    adapter = MLILAdapter(il, config.limits.max_nodes) if level == "mlil" else HLILAdapter(il, config.limits.max_nodes)
+    make = MLILAdapter if level == "mlil" else HLILAdapter
+    adapter = make(il, config.limits.max_nodes, allowance.deadline)
     backends = _backends_override if _backends_override is not None else _backends()
     report = simplify_function(adapter, rules, backends if config.tier2 else (), config, allowance.deadline)
     allowance.charge(report.total_seconds)

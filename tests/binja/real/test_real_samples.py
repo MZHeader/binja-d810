@@ -325,9 +325,13 @@ def test_sample():
                             stage_times.setdefault(f"{level}:{name}", []).append(getattr(report, name))
                 per_function.append({"start": hex(address), "mba_before": before[address].mba_roots,
                                      "mba_after": after.mba_roots,
+                                     "nodes_before": before[address].mba_nodes, "nodes_after": after.mba_nodes,
                                      "rewrites": sum(len(r.rewrites) for r in reports.values()),
                                      "exhausted": any(getattr(r, "budget_exhausted", False) for r in reports.values()),
-                                     "plugin_s": round(sum(timer.seconds.get(address, [])), 4)})
+                                     "plugin_s": round(sum(timer.seconds.get(address, [])), 4),
+                                     "stages": {f"{level}:{name}": round(getattr(r, name), 3) for level, r in reports.items()
+                                                for name in ("plan_seconds", "commit_seconds", "overrun_seconds")
+                                                if hasattr(r, name)}})
         spot_dir = OUT / "spot" / path.name
         for address in spots:
             func = bv.get_function_at(address)
@@ -344,6 +348,10 @@ def test_sample():
         result["timing"] = {"plugin_per_function": _summary(plugin_s),
                             "reanalysis_per_function": _summary(reanalysis),
                             **{name: _summary(values) for name, values in sorted(stage_times.items())}}
+        # Diagnostics: where time and growth go (analysis failures first among the slowest).
+        result["slowest_functions"] = sorted(per_function, key=lambda r: -r.get("plugin_s", 0))[:15]
+        result["largest_growth"] = sorted((r for r in per_function if "nodes_after" in r),
+                                          key=lambda r: r["nodes_before"] - r["nodes_after"])[:15]
         per_function.sort(key=lambda r: -r["mba_before"])
         result["top_functions"] = per_function[:25]
         result["status"] = "complete"

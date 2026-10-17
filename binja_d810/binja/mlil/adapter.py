@@ -8,6 +8,7 @@ from binaryninja import (
     ILSourceLocation, MediumLevelILFunction, MediumLevelILInstruction, MediumLevelILOperation as Op, SSAVariable,
 )
 
+from ...deadline import Deadline
 from ...ir.expr import Expr, is_mba
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root
@@ -25,14 +26,19 @@ _PURE_FLAGS = frozenset({Op.MLIL_CMP_E, Op.MLIL_CMP_NE, Op.MLIL_BOOL_TO_INT})
 class MLILAdapter:
     level = "mlil"
 
-    def __init__(self, mlil: MediumLevelILFunction, max_nodes: int = 200):
+    def __init__(self, mlil: MediumLevelILFunction, max_nodes: int = 200, deadline: Deadline = Deadline.never()):
         self.mlil = mlil
         self.max_nodes = max_nodes
+        # Enumeration lifts every root; in a large function with no MBA that is all the work, and
+        # the engine only sees candidates it is given (snagit.dll: 60 s, Binary Ninja gave up).
+        self.deadline = deadline
         self.backups: list[tuple[int, int]] = []
 
     def has_candidates(self) -> bool:
         seen = set()
         for instr in self.mlil.instructions:
+            if self.deadline.expired():
+                return False
             rejected: list = []
             for root in candidate_roots(instr, rejected):
                 seen.update(_operations(root))
@@ -45,6 +51,8 @@ class MLILAdapter:
             self.mlil.generate_ssa_form()
         definitions: dict = {}  # SSA definitions, shared by every lift of this SSA form
         for instr in reversed(list(self.mlil.instructions)):
+            if self.deadline.expired():
+                return
             rejected: list = []
             roots = list(candidate_roots(instr, rejected))
             for expr, reason in rejected:

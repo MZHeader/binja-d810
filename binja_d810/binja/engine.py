@@ -6,6 +6,7 @@ candidates, lowering, dead-code analysis, the control-flow fingerprint and the t
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -19,6 +20,15 @@ from ..semantic.backend import Tier2Backend
 from ..simplify import Limits, simplify_expression
 from .adapter import ILAdapter
 from .storage import visible_size
+
+
+# Passes planning at once, process-wide. Binary Ninja analyzes functions on parallel threads, and
+# Python runs one at a time: with every function's pass planning together, each pass's wall time
+# stretched far past its CPU time (snagit.dll: 27 s for 1 s of work) and past Binary Ninja's own
+# per-function limit. Two slots let one pass plan while another waits on Z3 or CoBRA; waiting for a
+# slot counts against the pass's deadline.
+PASS_SLOTS = 2
+_SLOTS = threading.BoundedSemaphore(PASS_SLOTS)
 
 
 @dataclass(frozen=True)
@@ -69,8 +79,10 @@ class FunctionReport:
     allowance_seconds: float = 0.0
     budget_exhausted: bool = False
     plan_seconds: float = 0.0
+    plan_cpu_seconds: float = 0.0  # this thread's CPU time while planning; much less than plan_seconds: waiting
     commit_seconds: float = 0.0
     lock_wait_seconds: float = 0.0
+    slot_wait_seconds: float = 0.0  # waiting for one of PASS_SLOTS
     overrun_seconds: float = 0.0
     total_seconds: float = 0.0
 
@@ -123,7 +135,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
     tier1_cache: dict = {}  # both rounds and every pass ask about the same expressions
     last_sources: list = []
     for _ in range(config.max_iterations):
-        planning = time.monotonic()
+        planning, planning_cpu = time.monotonic(), time.thread_time()
         planned = []
         consumed: set = set()
         # Last first (the adapter's order): a later candidate that inlines a single-use definition
@@ -188,6 +200,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
             pending = deferred
         now = time.monotonic()
         report.plan_seconds += now - planning
+        report.plan_cpu_seconds += time.thread_time() - planning_cpu
         report.overrun_seconds = max(report.overrun_seconds, now - deadline.at)
         if deadline.expired():
             report.budget_exhausted = True
@@ -228,6 +241,23 @@ def _run(adapter, rules, backends, config, deadline, report) -> None:
         return
     if not adapter.has_candidates():
         return
+    waiting = time.monotonic()
+    remaining = deadline.remaining()
+    acquired = _SLOTS.acquire() if remaining == float("inf") else (remaining > 0 and _SLOTS.acquire(timeout=remaining))
+    report.slot_wait_seconds = time.monotonic() - waiting
+    if not acquired or deadline.expired():
+        if acquired:
+            _SLOTS.release()
+        report.budget_exhausted = True  # spent waiting for other functions' passes
+        return
+    try:
+        _run_with_slot(adapter, rules, backends, config, deadline, report)
+    finally:
+        _SLOTS.release()
+
+
+def _run_with_slot(adapter, rules, backends, config, deadline, report) -> None:
+    level = adapter.level
     shape = adapter.cfg_shape()
     dead = set(config.disabled_rules)
 

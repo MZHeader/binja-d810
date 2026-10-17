@@ -283,3 +283,61 @@ def test_roots_that_do_not_simplify_are_not_lifted_again_over_their_shared_value
     adapter.roots["r"] = p("(x * y) ^ (x + z)")  # no deep rewrite, not too complex
     simplify_function(adapter, [], [LinearMBABackend()], EngineConfig())
     assert adapter.shallow_asked == []
+
+
+def test_reports_separate_cpu_time_from_waiting():
+    # Under contention (many functions' passes in parallel), wall time stretches while the pass's
+    # own CPU time does not; the report keeps both so overruns can be told apart from slow work.
+    import time
+
+    class Sleepy:
+        name = "sleepy"
+
+        def simplify(self, e, deadline=None):
+            time.sleep(0.2)  # waiting, not computing
+            return None
+
+    adapter = FakeAdapter({"a": p("(x * y) ^ (x + z)")})
+    report = simplify_function(adapter, [], [Sleepy()], EngineConfig(max_iterations=1))
+    assert report.plan_seconds >= 0.2 and report.plan_cpu_seconds < 0.1
+
+
+def test_concurrent_passes_are_limited_and_waiting_counts_against_the_deadline():
+    # Functions analyzed in parallel contend for Python's lock: on snagit.dll one HLIL pass took 27 s
+    # of wall time for about 1 s of work, past Binary Ninja's 20 s limit, and Binary Ninja abandoned
+    # such functions. At most PASS_SLOTS passes plan at once; a pass that does not get a slot before
+    # its deadline does no work and reports its budget exhausted.
+    import threading
+    import time
+
+    from binja_d810.binja import engine
+    from binja_d810.deadline import Deadline
+
+    running, peak, guard = [0], [0], threading.Lock()
+
+    class Busy:
+        name = "busy"
+
+        def simplify(self, e, deadline=None):
+            with guard:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            time.sleep(0.05)
+            with guard:
+                running[0] -= 1
+            return None
+
+    reports = []
+
+    def work():
+        adapter = FakeAdapter({"a": p("(x * y) ^ (x + z)")})
+        reports.append(simplify_function(adapter, [], [Busy()], EngineConfig(max_iterations=1), Deadline.after(0.3)))
+
+    threads = [threading.Thread(target=work) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] <= engine.PASS_SLOTS
+    assert any(r.budget_exhausted and r.plan_seconds == 0 for r in reports)
+    assert all(r.total_seconds < 0.3 + 0.15 for r in reports)

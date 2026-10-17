@@ -131,3 +131,23 @@ def test_solver_lock_contention_is_bounded_by_each_functions_deadline():
         assert any(r.lock_wait_seconds > 0 for r in reports)
     finally:
         bv.file.close()
+
+
+def test_enumeration_stops_at_the_deadline():
+    # snagit.dll: one function's roots took 60 s to lift (thousands of roots, none an MBA), and the
+    # engine only checked the deadline between candidates it was given, so Binary Ninja abandoned
+    # 162 functions. The adapters check the deadline themselves, per instruction.
+    from binja_d810.binja.hlil.adapter import HLILAdapter
+    from binja_d810.binja.mlil.adapter import MLILAdapter
+    from binja_d810.deadline import Deadline
+
+    bv = open_sample("mba_O0.dylib", d810=False)  # -O0: candidates in both MLIL and HLIL
+    try:
+        set_types(bv, {NAME: signature(ENTRIES[NAME])})
+        func = function_named(bv, NAME)
+        for make, il in ((MLILAdapter, func.mlil), (HLILAdapter, func.hlil)):
+            assert list(make(il, 200).candidates(lambda a, r: None)), make.__name__
+            late = make(il, 200, Deadline.after(0))
+            assert not late.has_candidates() and list(late.candidates(lambda a, r: None)) == [], make.__name__
+    finally:
+        bv.file.close()

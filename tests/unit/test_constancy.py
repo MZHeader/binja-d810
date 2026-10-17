@@ -131,3 +131,17 @@ def test_fold_shared_evaluates_a_variable_free_expression():
 
     found = fold_shared(BinOp("xor", Const(1, 1), Const(0, 1), 1), Deadline.never())
     assert found is not None and found[0] == 1 and found[1].verdict is Verdict.PROVEN
+
+
+def test_fold_shared_samples_a_few_dozen_times_before_the_proof(monkeypatch):
+    # v3.3: sampling only guesses the value (and rejects ordinary roots after a sample or two); the proof
+    # decides. snagit.dll's sub_180009da0 spent 13.5 of 20 s evaluating shared values 277 times each.
+    from binja_d810.semantic import constancy
+
+    samples = []
+    real = constancy.evaluate_shared_batch
+    monkeypatch.setattr(constancy, "evaluate_shared_batch",
+                        lambda e, envs: (samples.append(len(envs)), real(e, envs))[1])
+    found = constancy.fold_shared(_bcf_condition(), Deadline.never())
+    assert found is not None and found[1].verdict is Verdict.PROVEN
+    assert 0 < sum(samples) <= 64, samples

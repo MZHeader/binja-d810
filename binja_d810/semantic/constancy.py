@@ -7,13 +7,14 @@ import random
 from typing import Callable, Iterator, Optional
 
 from ..deadline import Deadline
-from ..ir.evaluate import evaluate, evaluate_shared
+from ..ir.evaluate import evaluate, evaluate_shared, evaluate_shared_batch
 from ..ir.expr import Const, Expr, mask, shape_key, variables
 from . import memo
 from .verify import Check, Verdict, _z3_prove, check, sample_envs
 
 _EXHAUSTIVE_BITS = 16
 CONSTANCY_Z3_MS = 2000
+_SHARED_SAMPLES = 32  # after the 21 joint and small-value samples
 
 Prover = Callable[[Expr, Expr], Check]
 
@@ -88,13 +89,14 @@ def _fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int) -> Optional[tu
     if not widths:
         # Exact (a per-path variant whose merged values were constants, spec v3.2 goal 3).
         return evaluate_shared(e, {}), Check(Verdict.PROVEN, "evaluation")
-    value = None
-    for env in itertools.chain(_joint_envs(widths), sample_envs(widths, 256, seed=11)):
-        found = evaluate_shared(e, env)
-        if value is None:
-            value = found
-        elif found != value:
-            return None
+    # A few dozen samples: they guess the value and reject ordinary roots; the proof decides (v3.3:
+    # 277 evaluations of each shared value took most of a large function's budget). Two first, then the
+    # rest in one batch.
+    envs = list(itertools.chain(_joint_envs(widths), sample_envs(widths, _SHARED_SAMPLES, seed=11)))
+    first = evaluate_shared_batch(e, envs[:2])
+    if first[0] != first[1] or any(found != first[0] for found in evaluate_shared_batch(e, envs[2:])):
+        return None
+    value = first[0]
     if deadline.at != float("inf"):
         remaining_ms = deadline.remaining() * 1000
         if remaining_ms < 2:

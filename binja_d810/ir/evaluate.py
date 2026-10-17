@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .expr import CMP_OPS, DIV_OPS, BinOp, Const, Expr, UnOp, Var, children, mask, to_signed
 
@@ -38,6 +38,59 @@ def evaluate_shared(e: Expr, env: Mapping[str, int]) -> int:
         else:
             memo[id(node)] = _binary(node, memo[id(node.left)], memo[id(node.right)])
     return memo[id(e)]
+
+
+def evaluate_shared_batch(e: Expr, envs: Sequence[Mapping[str, int]]) -> list[int]:
+    """evaluate on each env, in one walk that computes each shared value once for the whole batch (v3.3):
+    the walk's cost is paid once per node, not once per node and sample."""
+    n = len(envs)
+    memo: dict[int, list[int]] = {}
+    stack = [(e, False)]
+    while stack:
+        node, ready = stack.pop()
+        if id(node) in memo:
+            continue
+        if isinstance(node, Var):
+            m, name = mask(node.width), node.name
+            memo[id(node)] = [env[name] & m for env in envs]
+        elif isinstance(node, Const):
+            memo[id(node)] = [node.value] * n
+        elif not ready:
+            stack.append((node, True))
+            stack.extend((k, False) for k in children(node) if id(k) not in memo)
+        elif isinstance(node, UnOp):
+            memo[id(node)] = _unary_batch(node, memo[id(node.operand)])
+        else:
+            memo[id(node)] = _binary_batch(node, memo[id(node.left)], memo[id(node.right)])
+    return memo[id(e)]
+
+
+def _unary_batch(e: UnOp, vs: list[int]) -> list[int]:
+    m = mask(e.width)
+    if e.op == "neg":
+        return [-v & m for v in vs]
+    if e.op == "not":
+        return [~v & m for v in vs]
+    if e.op == "sx":
+        return [_unary(e, v) for v in vs]
+    return [v & m for v in vs]  # zx, trunc
+
+
+def _binary_batch(e: BinOp, xs: list[int], ys: list[int]) -> list[int]:
+    m = mask(e.width)
+    if e.op == "add":
+        return [(x + y) & m for x, y in zip(xs, ys)]
+    if e.op == "sub":
+        return [(x - y) & m for x, y in zip(xs, ys)]
+    if e.op == "mul":
+        return [(x * y) & m for x, y in zip(xs, ys)]
+    if e.op == "and":
+        return [x & y for x, y in zip(xs, ys)]
+    if e.op == "or":
+        return [x | y for x, y in zip(xs, ys)]
+    if e.op == "xor":
+        return [x ^ y for x, y in zip(xs, ys)]
+    return [_binary(e, x, y) for x, y in zip(xs, ys)]
 
 
 def _unary(e: UnOp, v: int) -> int:

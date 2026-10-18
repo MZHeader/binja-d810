@@ -14,12 +14,7 @@ Here's an export from an OLLVM-obfuscated DLL before (399 lines of HLIL):
 
 And after (4 lines):
 
-```c
-sub_180009da0(0x19)(sub_180009da0(0x2b)(0, 0, sub_180086d50, 0, 0, 0))
-int64_t r14 = sub_180009da0(0x18)
-r14(0xffffffff, 1, data_1802b3458)
-return 0
-```
+<img src="imgs/after.png" alt="After" width="760">
 
 ## What it handles
 

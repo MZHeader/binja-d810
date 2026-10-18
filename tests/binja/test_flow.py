@@ -313,3 +313,15 @@ def test_wrapper_inlining_with_only_the_caller_enabled(flag):
             assert apply.record_of(bv).get("inline", ident.start) is not None
     finally:
         bv.file.close()
+
+
+def test_the_debug_report_has_the_flow_notes(builds):
+    from binja_d810.binja import workflow
+
+    key, on, _ = builds
+    report = workflow.debug_report_text(function_named(on, "tbl_call_const"))
+    check(key, "tbl_call_const", "== flow" in report and "const" in report, report)
+    written = workflow.debug_report_text(function_named(on, "written_call"))
+    # Optimized x64 can expose an escape before the explicit store; either rejects the table.
+    check(key, "written_call", "== flow" in written and
+          any(f"skipped: {reason} at" in written for reason in ("write", "escape")), written)

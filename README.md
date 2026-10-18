@@ -23,6 +23,8 @@ And after (4 lines):
 * Opaque predicates, including ones hidden behind long chains of masked constants, ones that
   only hold on every path into a merge, and values carried round loops
 * Divisions that can never trap, like `2 / (x * x + 1)`
+* Jumps and calls through encoded tables of code pointers (Hikari-style indirect branches and
+  calls), and identity wrappers around them, when no visible code writes the table
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 
 Every rewrite is checked before it's applied. Conditions are only folded when Z3 proves them,
@@ -89,6 +91,12 @@ itself lives in a separate **extension** group that Binary Ninja creates.
 * **Generic MBA simplifier (Tier 2)**: the linear simplifier and CoBRA. Turn it off to use the
   rules only.
 * **Skipped functions** and **Disabled rules**: addresses and rule names to leave alone.
+* **Flow fixes**: on by default when D-810 is enabled. Resolves code-pointer tables and identity
+  wrappers. Disabling D-810 undoes its changes; shared changes remain while another enabled function
+  needs them. User types, inline flags and branch targets take precedence.
+* **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant while
+  D-810 is enabled. Use these for data you know stays unchanged: they bypass the write check.
+  Clearing a range restores its previous types. Existing user types are preserved.
 * **Enabled**: a kill switch for everything.
 
 ## Notes
@@ -97,6 +105,9 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   before it ran are left alone. They're harmless.
 * Calls through resolved API pointers can show extra arguments, because Binary Ninja guesses them
   from whatever registers happen to be set. Giving the pointer a type fixes it.
+* Automatic table resolution checks decoded targets and visible writes or escaping addresses. It
+  cannot detect changes made by a loader or by code missing from the analysis. The debug report
+  lists flow changes and reasons for rejecting a table.
 
 ## Tests
 

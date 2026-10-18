@@ -128,6 +128,16 @@ def _run(ctx, level: str) -> None:
             ctx.hlil = il
 
 
+def debug_report_text(func) -> str:
+    """The D-810 debug report: each pass's report, then what the flow fixes did or skipped for the function."""
+    reports = log.latest_reports(func)
+    text = "\n\n".join(f"== {level.upper()} pass\n{log.render(r)}" for level, r in reports.items())
+    notes = flow_apply.notes_for(func.view, func.start)
+    if notes:
+        text += "\n\n== flow\n" + "\n".join(notes)
+    return text
+
+
 def run_activity(ctx: AnalysisContext) -> None:
     try:
         if _enabled(ctx):
@@ -148,9 +158,7 @@ def run_hlil_activity(ctx: AnalysisContext) -> None:
         _run(ctx, "hlil")
         func = ctx.function
         if func.check_for_debug_report("d810"):
-            reports = log.latest_reports(func)
-            text = "\n\n".join(f"== {level.upper()} pass\n{log.render(r)}" for level, r in reports.items())
-            show_plain_text_report(f"D-810: {func.name}", text)
+            show_plain_text_report(f"D-810: {func.name}", debug_report_text(func))
     except Exception as exc:  # never break analysis
         log.logger.log_error(f"binja-d810 HLIL activity failed: {exc!r}")
 

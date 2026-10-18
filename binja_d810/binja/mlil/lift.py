@@ -101,7 +101,7 @@ def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruc
          check_versions: bool = True, max_nodes: int = 200, effect_leaves: bool = False,
          inlined: Optional[set] = None, stats: Optional[dict] = None,
          definitions: Optional[dict] = None, keep: frozenset = frozenset(),
-         shared_once: bool = False) -> Optional[Expr]:
+         shared_once: bool = False, load_leaves: bool = False) -> Optional[Expr]:
     """`effect_leaves` is for diagnostics only: effectful sub-expressions of the root become leaves
     without a Binary Ninja ref, so the result can be classified but never lowered. `stats` receives
     the number of IL nodes visited ("visits"), failed inlining attempts included. `definitions`
@@ -109,10 +109,13 @@ def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruc
     SSA values left as leaves when live at the root (ILAdapter.shallow). `shared_once` (v3.1): a value
     read again costs nothing, so max_nodes bounds the distinct nodes and the result may be far larger
     as a tree (for constancy.fold_shared only). stats["budget_hit"]: the size bound left values as
-    leaves (or failed the lift)."""
+    leaves (or failed the lift). `load_leaves` (v4.0, flow fixes): every load, inlined definitions
+    included, becomes a leaf named load@<SSA expression index> whose ref is the SSA load, so a jump's or
+    call's target can be evaluated per table entry. Never lowered."""
     lifter = _Lifter(ssa_expr.function, root_instr, check_versions, max_nodes, effect_leaves, definitions)
     lifter.keep = keep
     lifter.shared_once = shared_once
+    lifter.load_leaves = load_leaves
     e = lifter.expr(ssa_expr, inlined=False)
     if stats is not None:
         stats["visits"] = lifter.visits
@@ -158,6 +161,7 @@ class _Lifter:
         self.backings: dict[tuple, Var] = {}
         self.inlined: dict[tuple[int, int], object] = {}  # (identifier, version) -> SSA variable
         self.shared_once = False
+        self.load_leaves = False
         self.budget_hit = False
         self.stale = False  # an input was overwritten before the root (version safety stopped inlining)
 
@@ -218,6 +222,9 @@ class _Lifter:
             found = self.division(e, width, inlined=inlined)
             if found is not None:
                 return found
+        if self.load_leaves and op in _LOADS:
+            # v4.0 flow fixes: a table read, evaluated per entry and never lowered.
+            return Var(self.name(("load", e.expr_index), f"load@{e.expr_index}"), width, ref=e)
         if inlined:
             return None  # never move loads or other unsupported expressions across instructions
         if mlil_effect(e) is not None:

@@ -16,7 +16,14 @@ NOT_EMITTED: dict[tuple[str, str], str] = {
     ("arm64-O2", "ident_call"): _SEES_IDENT,
 }
 # (build-level, function) -> why D-810 does not resolve it there. Strict: a listed case that resolves fails.
-KNOWN_MISSES: dict[tuple[str, str], str] = {}
+_NEGATIVE_FIXUP = ("ld64's chained fixups cannot hold a negative pointer (address - KEY): Binary Ninja's view "
+                   "holds another value there, which decodes to no code")
+KNOWN_MISSES: dict[tuple[str, str], str] = {
+    ("arm64-O0", "tbl_jump_sub"): _NEGATIVE_FIXUP,
+    ("arm64-O2", "tbl_jump_sub"): _NEGATIVE_FIXUP,
+    ("arm64-O0", "tbl_call_sub"): _NEGATIVE_FIXUP,
+    ("arm64-O2", "tbl_call_sub"): _NEGATIVE_FIXUP,
+}
 
 
 def text(func) -> str:
@@ -41,3 +48,13 @@ def check(key: str, name: str, ok: bool, detail: str) -> None:
         assert not ok, f"listed as a miss but resolved: {(key, name)}"
         return
     assert ok, detail
+
+
+# Positives by what they resolve to: a jump's label constants (x ^ 0xa1 in HLIL), a call's function.
+JUMP_LABELS = {"tbl_jump_const": ["0xa1"], "tbl_jump_sub": ["0xa1"], "tbl_jump_var": ["0xa0", "0xa1", "0xa2", "0xa3"],
+               "tbl_jump_keyglobal": ["0xa1"], "tbl_jump_mbadecode": ["0xa1"], "tbl_jump_keyindex": ["0xa1"],
+               "mba_jump": ["0xa1"]}
+CALL_TARGETS = {"tbl_call_const": "f_b", "tbl_call_shared": "f_b", "tbl_call_sub": "f_a", "tbl_call_user": "f_b",
+                "tbl_call_keyindex": "f_b", "mba_call": "f_b"}
+NEGATIVES = ["written_call", "written_table", "escaped_call", "escaped_table", "bad_entry_table", "config_test",
+             "not_identity_call"]

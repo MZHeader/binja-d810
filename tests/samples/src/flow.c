@@ -13,6 +13,13 @@
 #define EXPORT __attribute__((noinline, used, visibility("default")))
 #define EXPORT_DATA __attribute__((visibility("default")))
 #endif
+// Wrappers are local functions, as obfuscators emit them: an exported one is called through the PLT in an
+// ELF shared object. PE keeps the export, for its symbol.
+#ifdef _WIN32
+#define LOCAL EXPORT
+#else
+#define LOCAL __attribute__((noinline, used, visibility("hidden")))
+#endif
 #define KEY 0x13371337
 #define ENC(p) ((intptr_t)(p) + KEY)
 typedef intptr_t (*fn_t)(intptr_t);
@@ -123,7 +130,7 @@ EXPORT intptr_t tbl_call_keyindex(intptr_t x) {
 
 // ---- An identity wrapper over a one-entry code pointer ----
 
-EXPORT void *ident(void *p) { B(p); return p; }
+LOCAL void *ident(void *p) { B(p); return p; }
 static void *off_fa = (void *)f_a;
 EXPORT intptr_t ident_call(intptr_t x) { KEEP(&off_fa); return ((fn_t)ident(off_fa))(x) + 4; }
 
@@ -172,6 +179,6 @@ EXPORT int config_test(int x) {
 }
 
 EXPORT_DATA uint32_t wrapper_effect;
-EXPORT void *not_ident(void *p) { B(p); wrapper_effect = 1; return p; }
+LOCAL void *not_ident(void *p) { B(p); wrapper_effect = 1; return p; }
 static void *off_fb = (void *)f_b;
 EXPORT intptr_t not_identity_call(intptr_t x) { KEEP(&off_fb); return ((fn_t)not_ident(off_fb))(x) + 7; }

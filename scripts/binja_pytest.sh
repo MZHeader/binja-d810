@@ -21,6 +21,7 @@ if [ "$#" -eq 0 ]; then set -- "$REPO/tests/binja"; fi
 # Paths made absolute: the hidden instance does not start in this directory.
 ARGS=$(/usr/bin/python3 -c 'import json, os, sys; print(json.dumps([os.path.abspath(a) if os.path.exists(a) else a for a in sys.argv[1:]]))' -q -p no:cacheprovider --rootdir "$REPO" "$@")
 ENV=(BINJA_D810_PYTEST_ARGS="$ARGS" BINJA_D810_PYTEST_OUT="$OUT" BINJA_D810_PYTEST_CWD="$REPO")
+ENV+=(BINJA_D810_PYTEST_TIMEOUT="$TIMEOUT")
 if [ -n "${BINJA_D810_PLUGIN:-}" ]; then
   PLUGIN="$(cd "$BINJA_D810_PLUGIN" && pwd)"
   mkdir -p "$OUT/user/plugins"

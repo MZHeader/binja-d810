@@ -118,6 +118,7 @@ scripts/binja_pytest.sh     # integration tests, in a hidden Binary Ninja instan
 ```
 
 The integration tests need `pytest` installed in Binary Ninja's Python too.
+On macOS, the hidden test instance prevents idle system sleep for the test run, up to the runner's timeout.
 
 ## License
 

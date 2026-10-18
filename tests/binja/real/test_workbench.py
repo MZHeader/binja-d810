@@ -19,6 +19,7 @@ import binaryninja
 import pytest
 from binaryninja import Settings
 from measure import hlil_counts
+from helpers import settle
 
 from binja_d810.binja import limits, log, settings, workflow
 
@@ -35,6 +36,14 @@ def _entries() -> list[tuple[str, list[int]]]:
 
 def _text(func) -> list[str]:
     return [] if func is None or func.hlil is None else [str(i) for i in func.hlil.instructions]
+
+
+def _flow_notes(bv, address: int) -> list[str]:
+    try:
+        from binja_d810.binja.flow import apply
+    except ImportError:  # a revision without the flow fixes
+        return []
+    return apply.notes_for(bv, address)
 
 
 def _row(sample: str, address: int, before, after, reports: dict, seconds: float) -> dict:
@@ -74,7 +83,7 @@ def test_workbench():
                 Settings().set_bool(workflow.ACTIVITY_SETTING, True, func)
                 started = time.perf_counter()
                 func.reanalyze()
-                bv.update_analysis_and_wait()
+                settle(bv, seconds=int(os.environ.get("BINJA_D810_SETTLE_SECONDS", "120")))
                 seconds = time.perf_counter() - started
                 func = bv.get_function_at(address)
                 after = (_text(func), hlil_counts(func) if func is not None and func.hlil is not None else None)
@@ -85,6 +94,7 @@ def test_workbench():
                 lines = [f"{sample} {address:#x}: {seconds:.1f} s", "", "=== HLIL, plugin off ===", *before[0], "",
                          "=== HLIL, plugin on ===", *after[0], ""]
                 lines += [f"=== {level} report ===\n{log.render(r)}\n" for level, r in reports.items()]
+                lines += ["=== flow ===", *_flow_notes(bv, address), ""]
                 (out / f"{address:#x}.txt").write_text("\n".join(lines))
         finally:
             bv.file.close()

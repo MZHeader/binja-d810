@@ -122,12 +122,13 @@ def test_an_address_folded_to_a_later_entry_has_lowlevel_evidence(bv):
     assert all(uses.reference_read_only(r.address, base, base + 8) for r in refs)
 
 
-@pytest.mark.parametrize("name", ["written_call", "escaped_call"])
-def test_lowlevel_evidence_rejects_writes_and_escapes(bv, name):
+@pytest.mark.parametrize("name, owner", [("written_call", "written_store"), ("escaped_call", "escaped_call")])
+def test_lowlevel_evidence_rejects_writes_and_escapes(bv, name, owner):
     first = _table(bv, name)
-    refs = list(bv.get_code_refs(first, 16))
+    func = function_named(bv, owner)
+    refs = [r for r in bv.get_code_refs(first, 8) if r.function == func]
     assert refs
-    assert any(not lowlevel.Uses(r.function).read_only(r.address, first, first + 16) for r in refs)
+    assert all(not lowlevel.Uses(func).read_only(r.address, first, first + 8) for r in refs)
 
 
 def test_lowlevel_evidence_rejects_a_returned_offset_pointer(bv):

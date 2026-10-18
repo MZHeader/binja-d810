@@ -21,7 +21,7 @@ from ...flow.record import Change, Record
 from ...flow.tables import decode, span_of
 from ...ir.evaluate import evaluate
 from .. import log
-from . import collect, evidence
+from . import collect, evidence, wrappers
 
 KEY = "binja_d810.flow"  # view metadata: the record, as JSON
 SITES_PER_ROUND = 64
@@ -219,6 +219,25 @@ def branches_for(view, function: int) -> list[tuple[int, list[int]]]:
         return state.record.branches_of(function)
 
 
+def restore_inline(func) -> None:
+    """Reapply a claimed wrapper's auto flag after Binary Ninja resets it on a full function update.
+
+    The callers own the claim, so the wrapper itself need not have D-810 enabled. A non-default flag
+    (including a user's explicit refusal to inline) always wins.
+    """
+    with _STATES_LOCK:
+        state = _STATES.get(func.view.file.session_id)
+    if state is None:
+        if _load(func.view) is None:
+            return
+        state = state_of(func.view)
+    with state.lock:
+        change = state.record.get("inline", func.start)
+        claimed = change is not None and bool(change.claims)
+    if claimed:
+        wrappers.set_inline_if_default(func)
+
+
 class Round:
     """One round's work: the view, its record, what to reanalyze, and caches."""
 
@@ -304,9 +323,10 @@ def _name(view, address: int) -> str:
 
 def decide(work: Round, site) -> None:
     """Decide one site: check its decoded targets, type its tables const when nothing writes them, add call
-    targets that are not functions yet, and join the code the sweep split off a jump."""
+    targets that are not functions yet, join the code the sweep split off a jump, or inline an identity wrapper."""
     if site.kind == "wrapper":
-        return  # decided once identity wrappers are handled
+        wrappers.decide(work, site)
+        return
     func = work.view.get_function_at(site.function)
     if func is None:
         return

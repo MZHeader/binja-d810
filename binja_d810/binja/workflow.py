@@ -155,6 +155,8 @@ def run_hlil_activity(ctx: AnalysisContext) -> None:
 
 def run_branches_activity(ctx: AnalysisContext) -> None:
     try:
+        if ctx.function is not None:
+            flow_apply.restore_inline(ctx.function)
         if _enabled(ctx) and ctx.get_setting_bool(settings.FLOW_FIXES):
             branches.apply_branches(ctx.function)
     except Exception as exc:  # never break analysis
@@ -180,7 +182,7 @@ def register(action=None, hlil_action=None, branches_action=None) -> list[str]:
     branches_config = json.dumps({
         "name": BRANCHES_ACTIVITY_NAME,
         "title": "D-810: computed jump targets",
-        "description": "Sets the jump targets the flow fixes computed (binja-d810); follows the D-810 setting.",
+        "description": "Restores recorded wrapper inline flags and computed jump targets (binja-d810).",
     })
     registered = []
     for base in BASE_WORKFLOWS:

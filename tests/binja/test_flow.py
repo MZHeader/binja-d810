@@ -7,7 +7,7 @@ from flowcases import (CALL_TARGETS, CALLS, JUMP_LABELS, JUMPS, KEY, KNOWN_MISSE
                        check, decoded, has, text)
 from helpers import data_pointers, function_named, open_sample, settle
 
-from binja_d810.binja.flow import apply, collect, evidence
+from binja_d810.binja.flow import apply, collect, evidence, wrappers
 from binja_d810.deadline import Deadline
 from binja_d810.flow.codecheck import jump_problem
 from binja_d810.flow.tables import decode
@@ -236,3 +236,80 @@ def test_user_branches_are_left_alone():
     finally:
         bv.file.close()
         off.file.close()
+
+
+def test_an_identity_wrapper_is_inlined_and_its_call_resolves(builds):
+    key, on, _ = builds
+    hlil = text(function_named(on, "ident_call"))
+    check(key, "ident_call", "f_a(" in hlil and "ident(" not in hlil, _explain(on, "ident_call"))
+
+
+def test_what_counts_as_an_identity_wrapper(off):
+    key, bv = off
+    ident = function_named(bv, "ident")
+    if key == "arm64-O2":
+        # Binary Ninja sees x0 pass through the bare RET and infers void ident(void); no value to verify.
+        from binaryninja import MediumLevelILOperation as Op
+
+        instrs = list(ident.mlil.ssa_form.instructions)
+        assert not ident.parameter_vars and len(instrs) == 1
+        assert instrs[0].operation == Op.MLIL_RET and not instrs[0].src
+        assert not wrappers.is_identity(ident)
+    else:
+        assert wrappers.is_identity(ident), "\n".join(map(str, ident.mlil.ssa_form.instructions))
+    assert not wrappers.is_identity(function_named(bv, "not_ident"))  # it stores to a global
+    assert not wrappers.is_identity(function_named(bv, "f_a"))  # it adds to its argument
+
+
+def test_an_inlined_wrapper_survives_reanalysis(builds):
+    key, on, _ = builds
+    if (key, "ident_call") in NOT_EMITTED:
+        return
+    ident, caller = function_named(on, "ident"), function_named(on, "ident_call")
+    change = apply.record_of(on).get("inline", ident.start)
+    assert change is not None and caller.start in change.claims
+    assert caller.start in change.detail["callers"]
+    before = apply.record_of(on).to_json(), text(caller)
+    ident.reanalyze()
+    caller.reanalyze()
+    settle(on)
+    assert int(ident.inline_during_analysis.value) == 1
+    assert (apply.record_of(on).to_json(), text(caller)) == before
+    assert "f_a(" in text(caller) and "ident(" not in text(caller)
+
+
+@pytest.mark.parametrize("flag", [None, False, True], ids=["default", "user-no-inline", "user-inline"])
+def test_wrapper_inlining_with_only_the_caller_enabled(flag):
+    from binaryninja import Settings
+
+    from binja_d810.binja import workflow
+
+    bv = open_sample(sample("flow", "x86_64-pe", "O2"), d810=False)
+    try:
+        ident, caller = function_named(bv, "ident"), function_named(bv, "ident_call")
+        if flag is not None:
+            ident.set_user_inline_during_analysis(flag)
+        Settings().set_bool(workflow.ACTIVITY_SETTING, True, caller)
+        caller.reanalyze()
+        settle(bv)
+        change = apply.record_of(bv).get("inline", ident.start)
+        assert (change is not None) == (flag is None)
+        ident.reanalyze()
+        caller.reanalyze()
+        settle(bv)
+        assert int(ident.inline_during_analysis.value) == (0 if flag is False else 1)
+        if flag is False:
+            assert "ident(" in text(caller) and "f_a(" not in text(caller)
+        else:
+            assert "ident(" not in text(caller) and "f_a(" in text(caller)
+        if flag is None:
+            # A user decision made after D-810 claimed the flag also wins on future reanalysis.
+            ident.set_user_inline_during_analysis(False)
+            ident.reanalyze()
+            caller.reanalyze()
+            settle(bv)
+            assert int(ident.inline_during_analysis.value) == 0
+            assert "ident(" in text(caller)
+            assert apply.record_of(bv).get("inline", ident.start) is not None
+    finally:
+        bv.file.close()

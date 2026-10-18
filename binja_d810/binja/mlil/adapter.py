@@ -281,22 +281,27 @@ class MLILAdapter:
         self.mlil.finalize()
         self.mlil.generate_ssa_form()
 
-    def dead_assignments(self) -> set[Hashable]:
+    def dead_assignments(self, pure_loads: frozenset = frozenset()) -> set[Hashable]:
         """Instruction indices of pure SET_VARs whose value is never used, even indirectly.
 
         At -O0 a rewritten result leaves chains of copies through stack slots behind
         (x8_1 = x8 ^ x9; var_10 = x8_1; x8_2 = var_10; ...), which HLIL would still show. A load from a
         fixed address in the image's data is pure (v3.5: the reads of OLLVM's predicate globals, once the
-        predicates fold). Whether a division can trap is decided only for definitions about to be removed.
+        predicates fold). So are the loads in `pure_loads` (non-SSA expression indices, v4.0): the table reads
+        of a target the flow fixes made constant. Whether a division can trap is decided only for definitions
+        about to be removed.
         """
+        load = self._fixed_load
+        if pure_loads:
+            load = lambda node: node.non_ssa_form.expr_index in pure_loads or self._fixed_load(node)  # noqa: E731
         pure, roots, index_of, checks = {}, [], {}, {}
         for instr in self.mlil.ssa_form.instructions:
             divisions: list = []
-            if instr.operation == Op.MLIL_SET_VAR_SSA and _pure(instr.src, self._fixed_load, divisions):
+            if instr.operation == Op.MLIL_SET_VAR_SSA and _pure(instr.src, load, divisions):
                 key = _key(instr.dest)
                 pure[key] = [_key(v) for v in _ssa_vars(instr.src)]
                 index_of[key] = instr.non_ssa_form.instr_index
-            elif instr.operation == Op.MLIL_SET_VAR_SSA_FIELD and _pure(instr.src, self._fixed_load, divisions):
+            elif instr.operation == Op.MLIL_SET_VAR_SSA_FIELD and _pure(instr.src, load, divisions):
                 # A partial write (var_8:5.b = x ^ y at -O0) reads the previous version as well.
                 key = _key(instr.dest)
                 pure[key] = [_key(instr.prev)] + [_key(v) for v in _ssa_vars(instr.src)]

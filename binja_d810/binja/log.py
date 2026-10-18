@@ -32,6 +32,8 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
         why = f" ({r.reason})" if r.reason else ""
         logger.log_info(f"{func.start:#x} @ {r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}: "
                         f"{r.before}  ->  {r.after}")
+    for line in report.flow:
+        logger.log_info(f"{func.start:#x} flow: {line}")
     for r in report.skipped:
         logger.log_debug(f"{func.start:#x} @ {r.address:#x} [{r.level}] skipped: {r.reason}")
     for r in report.errors:
@@ -62,6 +64,7 @@ def render(report: FunctionReport) -> str:
              f"  refuted: {report.refuted}  skipped: {len(report.skipped)}  errors: {len(report.errors)}"]
     if getattr(report, "constant_uses", 0):
         lines.append(f"constants into their uses: {report.constant_uses} reads")
+    lines += [f"flow: {line}" for line in getattr(report, "flow", [])]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

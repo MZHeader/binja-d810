@@ -17,6 +17,8 @@ NOT_EMITTED: dict[tuple[str, str], str] = {
     # not a negative there: the call reads _off_fb itself, a never-written pointer the flow fixes rightly resolve
     ("arm64-O0", "not_identity_call"): "Binary Ninja sees x0 pass through not_ident unchanged",
     ("arm64-O2", "not_identity_call"): "Binary Ninja sees x0 pass through not_ident unchanged",
+    ("i686-pe-O2", "mba_jump:report"): "Binary Ninja reads the const table and makes the jump's target a constant "
+                                       "itself: nothing is left to rewrite",
 }
 # (build-level, function) -> why D-810 does not resolve it there. Strict: a listed case that resolves fails.
 _NEGATIVE_FIXUP = ("ld64's chained fixups cannot hold a negative pointer (address - KEY): Binary Ninja's view "
@@ -26,6 +28,8 @@ KNOWN_MISSES: dict[tuple[str, str], str] = {
     ("arm64-O2", "tbl_jump_sub"): _NEGATIVE_FIXUP,
     ("arm64-O0", "tbl_call_sub"): _NEGATIVE_FIXUP,
     ("arm64-O2", "tbl_call_sub"): _NEGATIVE_FIXUP,
+    ("i686-pe-O2", "mba_call:direct"): "Binary Ninja makes the tail jump's target f_b's address itself but keeps "
+                                       "it a jump, not a tail call; its parameters are not the flow fixes' to invent",
 }
 
 

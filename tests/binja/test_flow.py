@@ -3,8 +3,8 @@
 
 import pytest
 from arch import IDS, MATRIX, sample
-from flowcases import (CALL_TARGETS, CALLS, JUMP_LABELS, JUMPS, KNOWN_MISSES, NEGATIVES, NOT_EMITTED, RAW, check,
-                       decoded, has, text)
+from flowcases import (CALL_TARGETS, CALLS, JUMP_LABELS, JUMPS, KEY, KNOWN_MISSES, NEGATIVES, NOT_EMITTED, RAW,
+                       check, decoded, has, text)
 from helpers import data_pointers, function_named, open_sample, settle
 
 from binja_d810.binja.flow import apply, collect, evidence
@@ -179,3 +179,60 @@ def test_rounds_continue_past_the_cap(monkeypatch):
             check(key, name, _direct_call(text(function_named(bv, name)), callee), _explain(bv, name))
     finally:
         bv.file.close()
+
+
+def _bare_reads(func) -> list[str]:
+    """HLIL statements that only read memory: what a resolved jump's table read leaves behind."""
+    from binaryninja import HighLevelILOperation as H
+
+    return [str(s) for s in func.hlil.instructions
+            if s.operation in (H.HLIL_DEREF, H.HLIL_ARRAY_INDEX, H.HLIL_DEREF_FIELD)]
+
+
+def test_a_call_through_an_mba_index_is_direct(builds):
+    key, on, _ = builds
+    check(key, "mba_call:direct", _direct_call(text(function_named(on, "mba_call")), "f_b"), _explain(on, "mba_call"))
+
+
+def test_a_jump_through_an_mba_index_is_resolved_and_its_read_removed(builds):
+    key, on, _ = builds
+    func = function_named(on, "mba_jump")
+    hlil = text(func)
+    ok = _resolved_jump(hlil, ["0xa1"]) and not has(hlil, "0xa0") and not _bare_reads(func)
+    check(key, "mba_jump", ok, _explain(on, "mba_jump"))
+
+
+def test_the_report_lists_the_flow_rewrites(builds):
+    from binja_d810.binja import log
+
+    key, on, _ = builds
+    if (key, "mba_jump") in NOT_EMITTED:
+        return
+    report = log.latest_report(function_named(on, "mba_jump"), "mlil")
+    lines = [] if report is None else report.flow
+    check(key, "mba_jump:report", any("target ->" in line for line in lines), str(lines))
+
+
+def test_user_branches_are_left_alone():
+    """A user's indirect branches at a jump the flow fixes resolved win over the recorded targets."""
+    from binaryninja import LowLevelILOperation as L
+
+    build = ("x86_64-pe", "O2")
+    key = "-".join(build)
+    if (key, "mba_jump") in NOT_EMITTED or (key, "mba_jump") in KNOWN_MISSES:
+        return
+    off = open_sample(sample("flow", *build), d810=False)
+    bv = open_sample(sample("flow", *build), d810=True)
+    try:
+        table = data_pointers(off, function_named(off, "mba_jump"))[0]
+        label0 = (off.read_int(table, 8, False) - KEY) & (2**64 - 1)
+        settle(bv)
+        func = function_named(bv, "mba_jump")
+        jump = next(i.address for i in func.llil.instructions if i.operation in (L.LLIL_JUMP, L.LLIL_JUMP_TO))
+        func.set_user_indirect_branches(jump, [(func.arch, label0)])
+        settle(bv)
+        hlil = text(function_named(bv, "mba_jump"))
+        assert has(hlil, "0xa0") and not has(hlil, "0xa1"), hlil
+    finally:
+        bv.file.close()
+        off.file.close()

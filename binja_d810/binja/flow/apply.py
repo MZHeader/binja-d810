@@ -13,10 +13,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import Optional
 
+from binaryninja import ILSourceLocation, MediumLevelILOperation as Op
+
 from ...deadline import Deadline
-from ...flow.codecheck import call_problem, jump_problem, split_starts
+from ...flow.codecheck import call_problem, is_tail_call, jump_problem, split_starts
 from ...flow.record import Change, Record
 from ...flow.tables import decode, span_of
+from ...ir.evaluate import evaluate
 from .. import log
 from . import collect, evidence
 
@@ -147,14 +150,73 @@ def trusted(view, site) -> bool:
 
 
 def after_pass(view, func, adapter, report) -> bool:
-    """The end of the MLIL activity for a D-810-enabled function: collect its sites and queue them. True when
-    the MLIL changed."""
+    """The end of the MLIL activity for a D-810-enabled function: collect its sites, make a trusted site's one
+    target a constant where the MLIL may say so (spec 3.4), and queue the rest. True when the MLIL changed."""
     read = evidence.reader(view)
-    for site, _ in collect.scan(adapter.mlil, Deadline.after(collect.SCAN_SECONDS), read):
+    code = evidence.BinaryCode(view, func.arch)
+    rewrites = []  # (non-SSA instruction, its target, its loads' expression indices)
+    for site, instr in collect.scan(adapter.mlil, Deadline.after(collect.SCAN_SECONDS), read):
         if site.target is not None:
             site = replace(site, trusted=trusted(view, site))
+            if site.trusted:
+                target = _direct(site, instr, read, code)
+                if target is not None:
+                    rewrites.append((instr.non_ssa_form, target, site.target.load_exprs))
+                    continue
+                if instr.operation == Op.MLIL_JUMP_TO:
+                    continue  # resolved, to another target than the table's (the user's branches)
+            if not site.target.loads:
+                continue  # a constant target: no table to decide on
         enqueue(view, site)
-    return False
+    if not rewrites:
+        return False
+    _rewrite(adapter, rewrites)
+    for instr, target, _ in rewrites:
+        report.flow.append(f"{instr.address:#x}: target -> {_name(view, target)}")
+    return True
+
+
+def _direct(site, instr, read, code) -> Optional[int]:
+    """The one target a trusted site decodes to, when the MLIL may say so: a call to a function's start, a tail
+    jump to one, or a resolved jump's own target (its table read then dies). A target Binary Ninja already folded
+    (it read the const table itself) is its constant."""
+    if site.target.loads:
+        decoded, _ = decode(site.target.expr, site.target.loads, read)
+        if decoded is None or len(set(decoded.targets)) != 1:
+            return None
+        target = decoded.targets[0]
+    else:
+        target = evaluate(site.target.expr, {})
+    if site.kind == "call":
+        return target if code.function_at(target) else None
+    if instr.operation == Op.MLIL_JUMP_TO:
+        return target if set(instr.targets) == {target} else None
+    return target if is_tail_call([target], site.function, code) else None
+
+
+def _rewrite(adapter, rewrites) -> None:
+    """Each target becomes its constant. What only fed the old targets dies, their table loads counted pure; as
+    in v3.5, assignments dead before stay."""
+    pure = frozenset().union(*(exprs for _, _, exprs in rewrites))
+    dead_before = adapter.dead_assignments(pure)
+    mlil = adapter.mlil
+    for instr, target, _ in rewrites:
+        dest = instr.dest
+        adapter.backups.append((dest.expr_index, dest.copy_to(mlil)))
+        constant = mlil.const_pointer(dest.size, target, ILSourceLocation.from_instruction(dest))
+        mlil.replace_expr(dest.expr_index, constant)
+    adapter.finish()
+    newly_dead = adapter.dead_assignments(pure) - dead_before
+    if newly_dead:
+        adapter.remove(newly_dead)
+        adapter.finish()
+
+
+def branches_for(view, function: int) -> list[tuple[int, list[int]]]:
+    """(jump address, targets) for each jump of `function` with recorded targets."""
+    state = state_of(view)
+    with state.lock:
+        return state.record.branches_of(function)
 
 
 class Round:
@@ -268,6 +330,8 @@ def decide(work: Round, site) -> None:
                 return
         for load, span in zip(site.target.loads, decoded.spans):
             _type_table(work, site, load, span, decoded.targets)
+    if site.kind == "jump" and site.trusted and not is_tail_call(decoded.targets, site.function, code):
+        _record_branches(work, site, decoded.targets)
     if site.kind == "call":
         _add_functions(work, site, func, decoded.targets, code)
     else:
@@ -352,3 +416,14 @@ def _join_split_code(work: Round, site, targets, code) -> None:
         work.add(Change("split", target, {"function": site.function}, [], {site.function}))
         work.touched.add(site.function)
         work.note(site.function, f"removed {name}: code the sweep split off this jump")
+
+
+def _record_branches(work: Round, site, targets) -> None:
+    """A jump Binary Ninja cannot resolve itself gets its targets from the branches activity (spec 3.4)."""
+    if work.record.get("branches", site.address) is not None:
+        work.add(Change("branches", site.address, claims={site.function}))
+        return
+    targets = sorted(set(targets))
+    work.add(Change("branches", site.address, {"function": site.function, "targets": targets}, [], {site.function}))
+    work.touched.add(site.function)
+    work.note(site.function, f"{site.address:#x}: jump targets " + ", ".join(f"{t:#x}" for t in targets))

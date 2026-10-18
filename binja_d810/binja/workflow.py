@@ -18,7 +18,7 @@ from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
 from . import budget, log, settings
 from .engine import simplify_function
-from .flow import apply as flow_apply
+from .flow import apply as flow_apply, branches
 from .hlil.adapter import HLILAdapter
 from .mlil.adapter import MLILAdapter
 
@@ -27,6 +27,8 @@ ACTIVITY_NAME = "extension.binja_d810.mba"
 # Confirmed by tests/binja/test_environment.py::test_auto_setting_identifier.
 ACTIVITY_SETTING = ACTIVITY_NAME
 HLIL_ACTIVITY_NAME = "extension.binja_d810.mba_hlil"
+BRANCHES_ACTIVITY_NAME = "extension.binja_d810.branches"
+BRANCH_RESET = "core.function.resetIndirectBranchesOnFullUpdate"
 BASE_WORKFLOWS = ("core.function.metaAnalysis", "core.function.objectiveC")
 
 _ACTIVITIES: list[Activity] = []  # keep callbacks alive
@@ -151,9 +153,18 @@ def run_hlil_activity(ctx: AnalysisContext) -> None:
         log.logger.log_error(f"binja-d810 HLIL activity failed: {exc!r}")
 
 
-def register(action=None, hlil_action=None) -> list[str]:
+def run_branches_activity(ctx: AnalysisContext) -> None:
+    try:
+        if _enabled(ctx) and ctx.get_setting_bool(settings.FLOW_FIXES):
+            branches.apply_branches(ctx.function)
+    except Exception as exc:  # never break analysis
+        log.logger.log_error(f"binja-d810 branches activity failed: {exc!r}")
+
+
+def register(action=None, hlil_action=None, branches_action=None) -> list[str]:
     action = action or run_activity
     hlil_action = hlil_action or run_hlil_activity
+    branches_action = branches_action or run_branches_activity
     config = json.dumps({
         "name": ACTIVITY_NAME,
         "title": "D-810: simplify MBA expressions",
@@ -166,19 +177,29 @@ def register(action=None, hlil_action=None) -> list[str]:
         "title": "D-810: simplify MBA expressions (HLIL pass)",
         "description": "Rewrites in HLIL what the MLIL pass could not; enabled by the D-810 setting.",
     })
+    branches_config = json.dumps({
+        "name": BRANCHES_ACTIVITY_NAME,
+        "title": "D-810: computed jump targets",
+        "description": "Sets the jump targets the flow fixes computed (binja-d810); follows the D-810 setting.",
+    })
     registered = []
     for base in BASE_WORKFLOWS:
         if base not in Workflow:
             continue
         activity = Activity(configuration=config, action=action)
         hlil_activity = Activity(configuration=hlil_config, action=hlil_action)
-        _ACTIVITIES.extend([activity, hlil_activity])
+        branches_activity = Activity(configuration=branches_config, action=branches_action)
+        _ACTIVITIES.extend([activity, hlil_activity, branches_activity])
         wf = Workflow(base).clone(base)
         wf.register_activity(activity)
         wf.register_activity(hlil_activity)
         wf.insert_after("core.function.generateMediumLevelIL", [ACTIVITY_NAME])
         wf.insert_after("core.function.generateHighLevelIL", [HLIL_ACTIVITY_NAME])
+        wf.register_activity(branches_activity)
+        if wf.contains(BRANCH_RESET):
+            wf.insert_after(BRANCH_RESET, [BRANCHES_ACTIVITY_NAME])
         wf.register()
         registered.append(base)
-    log_info(f"binja-d810: activities {ACTIVITY_NAME}, {HLIL_ACTIVITY_NAME} registered on {registered}")
+    log_info(f"binja-d810: activities {ACTIVITY_NAME}, {HLIL_ACTIVITY_NAME}, {BRANCHES_ACTIVITY_NAME} registered on "
+             f"{registered}")
     return registered

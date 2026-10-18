@@ -30,7 +30,7 @@ SCAN_SECONDS = 2.0  # for proofs that an address is constant, per function
 @dataclass(frozen=True)
 class Target:
     expr: Expr  # the jump's or call's target; its leaves are the loads, named load@N
-    loads: tuple[Load, ...]  # the target's loads, each followed by the key globals its index reads
+    loads: tuple[Load, ...]  # the target's loads, each followed by the key globals its index reads; none: constant
     load_exprs: frozenset[int]  # their non-SSA expression indices: pure once the target is a constant
 
 
@@ -138,7 +138,8 @@ def target_of(instr, deadline: Deadline, read: Read) -> tuple[Optional[Target], 
         return None, "the target does not lift"
     leaves = variables(expr)
     if not leaves:
-        return None, "the target is constant"
+        # Binary Ninja read a const table itself: a constant the MLIL may say directly (no table to decode).
+        return Target(expr, (), frozenset()), ""
     if not all(_is_load(v) for v in leaves):
         return None, "the target reads more than tables"
     loads, exprs = [], set()

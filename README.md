@@ -12,9 +12,14 @@ Here's an export from an OLLVM-obfuscated DLL before (399 lines of HLIL):
 
 <img src="imgs/before.png" alt="Before" width="760">
 
-And after (15 lines):
+And after (4 lines):
 
-<img src="imgs/after.png" alt="After" width="560">
+```c
+sub_180009da0(0x19)(sub_180009da0(0x2b)(0, 0, sub_180086d50, 0, 0, 0))
+int64_t r14 = sub_180009da0(0x18)
+r14(0xffffffff, 1, data_1802b3458)
+return 0
+```
 
 ## What it handles
 
@@ -93,8 +98,8 @@ itself lives in a separate **extension** group that Binary Ninja creates.
 
 ## Notes
 
-* After folding you'll often see bare `data_...` lines where the obfuscation read its globals.
-  Binary Ninja keeps memory reads even when nothing uses the result. They're harmless.
+* D-810 removes the global reads its folds leave unused. Bare `data_...` lines that were there
+  before it ran are left alone. They're harmless.
 * Calls through resolved API pointers can show extra arguments, because Binary Ninja guesses them
   from whatever registers happen to be set. Giving the pointer a type fixes it.
 

@@ -11,7 +11,8 @@ from helpers import data_pointers, function_named, open_sample, settle
 from binja_d810.binja import settings, workflow
 from binja_d810.binja.flow import apply
 
-FIXTURE = sorted(set(JUMPS) | set(CALLS) | set(NEGATIVES) | {"ident_call", "ident", "f_a", "f_b"})
+FIXTURE = sorted(set(JUMPS) | set(CALLS) | set(NEGATIVES)
+                 | {"ident_call", "ident", "f_a", "f_b", "key_read_unused", "escaped_offset"})
 BUILD = ("arm64", "O2")
 
 

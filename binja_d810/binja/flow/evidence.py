@@ -10,6 +10,7 @@ from binaryninja import MediumLevelILOperation as Op, SectionSemantics, SSAVaria
 
 from ...flow import uses as use_rules
 from ...flow.tables import MAX_ENTRIES, Read, Span
+from . import lowlevel
 
 _KINDS = {
     Op.MLIL_LOAD_SSA: "load", Op.MLIL_LOAD_STRUCT_SSA: "load",
@@ -54,6 +55,16 @@ class Uses:
         self.defined: dict[int, list] = {}  # node -> the SSA variables it defines (set_var, phi)
         self.reads: dict[tuple[int, int], list[int]] = {}  # (identifier, version) -> the nodes reading it
         self.indexed: set[int] = set()
+        self._lowlevel = None
+
+    def reference_read_only(self, address: int, start: int, end: int) -> bool:
+        """Only a proven LLIL read can replace missing MLIL evidence; unknown uses still reject."""
+        try:
+            if self._lowlevel is None:
+                self._lowlevel = lowlevel.Uses(self.ssa.source_function)
+            return self._lowlevel.read_only(address, start, end)
+        except Exception:  # no usable LLIL evidence
+            return False
 
     def index(self, statement) -> None:
         if statement.expr_index in self.indexed:
@@ -136,6 +147,8 @@ def never_written(view, start: int, end: int, uses_of: Callable) -> Optional[str
             return f"no MLIL for the function at {func.start:#x}"
         starts = uses.constants_in(start, end, at=ref.address)
         if not starts:
+            if uses.reference_read_only(ref.address, start, end):
+                continue
             return f"reference at {ref.address:#x} not seen in MLIL"
         verdict, where = use_rules.classify(starts, uses)
         if verdict != use_rules.READ:

@@ -4,7 +4,7 @@ import pytest
 from flowcases import KEY
 from helpers import data_pointers, function_named, open_sample
 
-from binja_d810.binja.flow import evidence
+from binja_d810.binja.flow import evidence, lowlevel
 from binja_d810.flow.uses import READ, classify
 
 
@@ -97,3 +97,46 @@ def test_an_entry_read_is_checked_from_a_pointer_to_its_table(bv):
     table, entry = data_pointers(bv, function_named(bv, "escaped_call"))[:2]
     assert evidence.object_start(bv, entry, uses_of=uses_of) == table
     assert evidence.object_start(bv, entry) == entry
+
+
+def test_an_unused_load_has_read_only_lowlevel_evidence(bv):
+    func = function_named(bv, "key_read_unused")
+    key = next(a for a in data_pointers(bv, function_named(bv, "tbl_jump_keyglobal"))
+               if bv.read_int(a, 8, False) == KEY)
+    refs = [r for r in bv.get_code_refs(key, 8) if r.function == func]
+    assert refs, "the compiler must retain the unused load"
+    uses = evidence.Uses(func.mlil.ssa_form)
+    assert all(uses.reference_read_only(r.address, key, key + 8) for r in refs)
+
+
+def test_an_address_folded_to_a_later_entry_has_lowlevel_evidence(bv):
+    func = function_named(bv, "tbl_call_const")
+    target = function_named(bv, "f_b").start
+    entry = next(a for a in data_pointers(bv, func) if bv.read_int(a, 8, False) - KEY == target)
+    base = entry - 8
+    refs = [r for r in bv.get_code_refs(base, 8) if r.function == func]
+    assert refs, (hex(entry), data_pointers(bv, func), list(map(str, func.mlil.instructions)),
+                  [(hex(i.address), str(i)) for i in func.llil.instructions])
+    uses = evidence.Uses(func.mlil.ssa_form)
+    assert not uses.constants_in(base, base + 8)
+    assert all(uses.reference_read_only(r.address, base, base + 8) for r in refs)
+
+
+@pytest.mark.parametrize("name", ["written_call", "escaped_call"])
+def test_lowlevel_evidence_rejects_writes_and_escapes(bv, name):
+    first = _table(bv, name)
+    refs = list(bv.get_code_refs(first, 16))
+    assert refs
+    assert any(not lowlevel.Uses(r.function).read_only(r.address, first, first + 16) for r in refs)
+
+
+def test_lowlevel_evidence_rejects_a_returned_offset_pointer(bv):
+    from binaryninja import LowLevelILOperation as L, MediumLevelILOperation as Op
+
+    func = function_named(bv, "escaped_offset")
+    entry = next(i.src[0].value.value for i in func.mlil.instructions if i.operation == Op.MLIL_RET)
+    base = entry - 8
+    constructors = [i for i in func.llil.instructions
+                    if i.operation == L.LLIL_SET_REG and i.src.value.value == base]
+    assert constructors
+    assert all(not lowlevel.Uses(func).read_only(i.address, base, base + 8) for i in constructors)

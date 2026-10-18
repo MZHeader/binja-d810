@@ -20,6 +20,7 @@ from ...ir.expr import Expr, is_candidate
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_definitions, dying_with_root
 from ..effects import hlil_effect
+from ..memory import FixedLoads
 from .lift import DIVISION_OPS, SUPPORTED_OPS, candidate_roots, children, expression_roots, is_safe_division, lift
 from .lower import lower
 
@@ -31,6 +32,8 @@ _COMPARES = frozenset({H.HLIL_CMP_E, H.HLIL_CMP_NE, H.HLIL_CMP_ULT, H.HLIL_CMP_U
 # Flags a rewrite may leave dead (r15_1 = rax_1 != 0 once its 0/1 value is inlined): pure, never trap.
 _PURE_FLAGS = frozenset({H.HLIL_CMP_E, H.HLIL_CMP_NE, H.HLIL_BOOL_TO_INT})
 _PURE_FLAG_NAMES = frozenset(op.name for op in _PURE_FLAGS)
+_FIXED_LOADS = frozenset({H.HLIL_DEREF_SSA, H.HLIL_DEREF_FIELD_SSA})
+_FIXED_LOAD_NAMES = frozenset(op.name for op in _FIXED_LOADS)
 
 
 class HLILAdapter:
@@ -43,6 +46,7 @@ class HLILAdapter:
         self.backups: list[tuple[int, int]] = []
         self.aliased_list = list(hlil.aliased_vars)
         self.aliased = frozenset(self.aliased_list)
+        self.fixed_loads = FixedLoads(hlil.source_function.view)
 
     def has_candidates(self) -> bool:
         seen = set()
@@ -144,8 +148,8 @@ class HLILAdapter:
         pure, roots, statement_of = {}, [], {}
         for statement in ssa.instructions:
             dest = _defined(statement)
-            if dest is not None and dest.var not in self.aliased and _pure(statement.src) \
-                    and hlil_effect(statement.src, self.aliased, _PURE_FLAG_NAMES,
+            if dest is not None and dest.var not in self.aliased and _pure(statement.src, self._fixed_load) \
+                    and hlil_effect(statement.src, self.aliased, _PURE_FLAG_NAMES | _FIXED_LOAD_NAMES,
                                     pure=lambda node: is_safe_division(node, self.aliased)) is None:
                 key = _key(dest)
                 pure[key] = [_key(v) for v in _ssa_vars(statement.src)]
@@ -156,6 +160,14 @@ class HLILAdapter:
             else:
                 roots.extend(_key(v) for v in _ssa_vars(statement))
         return {statement_of[key] for key in dead_definitions(pure, roots)}
+
+    def _fixed_load(self, node: HighLevelILInstruction) -> bool:
+        """A read of a constant address in the image's data (v3.5): int32_t x = bcf_x once x is unused."""
+        address = node.src
+        if address.operation not in (H.HLIL_CONST_PTR, H.HLIL_CONST):
+            return False
+        offset = node.offset if node.operation == H.HLIL_DEREF_FIELD_SSA else 0
+        return self.fixed_loads(address.constant + offset, node.size)
 
     def remove(self, dead: set[Hashable]) -> None:
         blocks: dict[int, tuple[HighLevelILInstruction, set]] = {}
@@ -255,14 +267,17 @@ def _partial(statement: HighLevelILInstruction):
     return None
 
 
-def _pure(e: HighLevelILInstruction) -> bool:
+def _pure(e: HighLevelILInstruction, load=None) -> bool:
+    """`load(node)`: whether a dereference is pure (a fixed address that cannot fault, v3.5)."""
     if e.operation in _PURE_LEAVES:
         return True
+    if e.operation in _FIXED_LOADS:
+        return load is not None and load(e)
     if e.operation in DIVISION_OPS:
         return is_safe_division(e)  # cannot trap: removable once dead; aliasing is checked apart
     if e.operation not in SUPPORTED_OPS and e.operation not in _PURE_FLAGS:
         return False
-    return all(_pure(child) for child in children(e))
+    return all(_pure(child, load) for child in children(e))
 
 
 def _ssa_vars(e):

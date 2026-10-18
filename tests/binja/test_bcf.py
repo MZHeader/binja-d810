@@ -168,3 +168,12 @@ def test_a_read_through_a_computed_address_stays(builds):
     text = _text(function_named(on, "computed_read"))
     assert "0x5a" not in text, text  # folded
     assert "bcf_table" in text, text
+
+
+def test_the_hlil_pass_removes_a_global_read_its_folds_leave_unused(hlil_only):
+    key, on, _ = hlil_only
+    func = function_named(on, "bcf_merge")
+    text = _text(func)
+    if key.startswith(_GOT):
+        return  # read through the GOT (see test_a_global_read_a_fold_leaves_unused_is_removed)
+    assert "bcf_x" not in text, text

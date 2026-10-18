@@ -329,3 +329,24 @@ def test_disabling_a_function_cancels_its_queued_work(monkeypatch):
     finally:
         resume.set()
         bv.file.close()
+
+
+def test_enabling_plain_code_does_not_queue_flow_work(monkeypatch):
+    queued = []
+    arm = apply._arm
+
+    def capture(view, state):
+        queued.append(view.file.session_id)
+        arm(view, state)
+
+    monkeypatch.setattr(apply, "_arm", capture)
+    bv = open_sample(sample("flow", *BUILD), d810=False)
+    try:
+        func = function_named(bv, "f_a")
+        Settings().set_bool(workflow.ACTIVITY_SETTING, True, func)
+        func.reanalyze()
+        settle(bv)
+        assert not queued, "plain code and an empty range setting must not schedule a background analysis update"
+        assert _no_record(bv)
+    finally:
+        bv.file.close()

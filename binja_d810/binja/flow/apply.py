@@ -117,8 +117,8 @@ def _completed(view, state: State) -> None:
 def _run_completed(view, state: State) -> None:
     try:
         while True:
-            run_round(view)
-            view.update_analysis_and_wait()
+            if run_round(view):
+                view.update_analysis_and_wait()
             with state.lock:
                 if state.again:
                     state.again = False
@@ -196,10 +196,12 @@ def check_ranges(view, texts: list[str]) -> None:
     with state.lock:
         if state.ranges == ranges:
             return
+        initial_empty = state.ranges is None and not ranges and not len(state.record)
         state.ranges = ranges
     for text in errors:
         log.logger.log_warn(f"binja-d810: read-only range {text!r} is not 0xSTART-0xEND; ignored")
-    _arm(view, state)
+    if not initial_empty:
+        _arm(view, state)
 
 
 def observe_enabled(func, enabled: bool, texts: list[str]) -> None:
@@ -381,7 +383,8 @@ class Round:
         log.logger.log_info(f"flow: {function:#x}: {line}")
 
 
-def run_round(view) -> None:
+def run_round(view) -> bool:
+    """Apply queued work. Return whether analysis was requested; an empty/rejected round is not a new update."""
     state = state_of(view)
     with state.lock:
         sites = list(state.pending.values())[:SITES_PER_ROUND]
@@ -435,7 +438,8 @@ def run_round(view) -> None:
         changed, state.saved = text != state.saved, text
     if changed:
         _store(view, text)
-    if left is not None or defer_signatures or needs_undo:
+    another_round = left is not None or defer_signatures or needs_undo
+    if another_round:
         _arm(view, state)
         if not work.touched and left is not None:
             work.touched.add(left.function)  # analysis must run for the next round to start
@@ -443,7 +447,10 @@ def run_round(view) -> None:
         func = view.get_function_at(start)
         if func is not None:
             func.reanalyze()
-    view.update_analysis()
+    if work.touched or another_round:
+        view.update_analysis()
+        return True
+    return False
 
 
 def _name(view, address: int) -> str:

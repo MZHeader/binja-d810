@@ -15,7 +15,7 @@ SETTING = -1  # the claim of the read-only ranges setting (goal 4), in place of 
 
 @dataclass
 class Change:
-    kind: str  # "table", "range", "function", "split", "inline" or "branches"
+    kind: str  # "table", "range", "function", "split", "inline", "signature" or "branches"
     key: int  # where: a table's or range's start, a function's start, a jump's address
     detail: dict = field(default_factory=dict)  # JSON-able, by kind: "end", "defined", "targets", "function", ...
     previous: list = field(default_factory=list)  # what it replaced: [[address, type text], ...]

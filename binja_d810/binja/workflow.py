@@ -86,6 +86,7 @@ def _flow(ctx, adapter, func, report) -> bool:
     """The flow fixes (v4.0), after the MLIL pass. True when they changed the MLIL."""
     try:
         if not ctx.get_setting_bool(settings.FLOW_FIXES):
+            flow_apply.release(func.view, func.start)
             return False
         return flow_apply.after_pass(func.view, func, adapter, report)
     except Exception as exc:  # never break analysis
@@ -133,6 +134,7 @@ def run_activity(ctx: AnalysisContext) -> None:
             _run(ctx, "mlil")
         elif ctx.function is not None:
             log.forget(ctx.function, "mlil")
+            flow_apply.release(ctx.function.view, ctx.function.start)
     except Exception as exc:  # never break analysis
         log.logger.log_error(f"binja-d810 MLIL activity failed: {exc!r}")
 
@@ -159,6 +161,9 @@ def run_branches_activity(ctx: AnalysisContext) -> None:
             flow_apply.restore_inline(ctx.function)
         if _enabled(ctx) and ctx.get_setting_bool(settings.FLOW_FIXES):
             branches.apply_branches(ctx.function)
+        elif ctx.function is not None:
+            # The MBA activity's eligibility skips its callback entirely when its toggle is off.
+            flow_apply.release(ctx.function.view, ctx.function.start)
     except Exception as exc:  # never break analysis
         log.logger.log_error(f"binja-d810 branches activity failed: {exc!r}")
 

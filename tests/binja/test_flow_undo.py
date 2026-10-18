@@ -1,0 +1,176 @@
+"""v4.0: undoing the flow fixes (binja_d810.binja.flow.undo): the record reaches a fixpoint, and turning D-810
+off restores the D-810-off HLIL, through shared claims, a saved database and the user's own edits."""
+
+import binaryninja
+import pytest
+from arch import IDS, MATRIX, sample
+from binaryninja import Settings
+from flowcases import CALLS, JUMPS, NEGATIVES, decoded, text
+from helpers import data_pointers, function_named, open_sample, settle
+
+from binja_d810.binja import settings, workflow
+from binja_d810.binja.flow import apply
+
+FIXTURE = sorted(set(JUMPS) | set(CALLS) | set(NEGATIVES) | {"ident_call", "ident", "f_a", "f_b"})
+BUILD = ("arm64", "O2")
+
+
+def _texts(bv) -> dict[str, str]:
+    return {name: text(function_named(bv, name)) for name in FIXTURE}
+
+
+def _no_record(bv) -> bool:
+    try:
+        bv.query_metadata(apply.KEY)
+    except KeyError:
+        return len(apply.record_of(bv)) == 0
+    return False
+
+
+def _disable(bv, func) -> None:
+    Settings().set_bool(workflow.ACTIVITY_SETTING, False, func)
+    func.reanalyze()
+    settle(bv)
+
+
+def _disable_all(bv) -> None:
+    Settings().set_bool(workflow.ACTIVITY_SETTING, False, bv)
+    for func in list(bv.functions):
+        func.reanalyze()
+    settle(bv)
+
+
+def _fresh():
+    bv = open_sample(sample("flow", *BUILD), d810=True)
+    settle(bv)
+    return bv
+
+
+def _table_of(bv, name: str):
+    """The table change the function claims."""
+    start = function_named(bv, name).start
+    return next(c for c in apply.record_of(bv).changes() if c.kind == "table" and start in c.claims)
+
+
+@pytest.mark.parametrize("build", MATRIX, ids=IDS)
+def test_a_fixpoint_then_turning_d810_off_restores_everything(build):
+    off = open_sample(sample("flow", *build), d810=False)
+    bv = open_sample(sample("flow", *build), d810=True)
+    try:
+        settle(bv)
+        record, texts = apply.record_of(bv).to_json(), _texts(bv)
+        for name in FIXTURE:
+            function_named(bv, name).reanalyze()
+        settle(bv)
+        assert apply.record_of(bv).to_json() == record, "a second pass changed the record"
+        assert _texts(bv) == texts, "a second pass changed the HLIL"
+        _disable_all(bv)
+        assert _texts(bv) == _texts(off)
+        assert _no_record(bv), apply.record_of(bv).to_json()
+        Settings().set_bool(workflow.ACTIVITY_SETTING, True, bv)
+        for func in list(bv.functions):
+            func.reanalyze()
+        settle(bv)
+        assert _texts(bv) == texts, "re-enabling D-810 did not recover the same result"
+    finally:
+        bv.file.close()
+        off.file.close()
+
+
+def test_a_table_two_functions_claim_stays_until_both_release():
+    bv = _fresh()
+    try:
+        change = _table_of(bv, "tbl_call_const")
+        shared = function_named(bv, "tbl_call_shared")
+        assert shared.start in change.claims
+        _disable(bv, function_named(bv, "tbl_call_const"))
+        assert apply.record_of(bv).get("table", change.key) is not None
+        assert "f_b(" in text(function_named(bv, "tbl_call_shared"))
+        _disable(bv, function_named(bv, "tbl_call_shared"))
+        assert apply.record_of(bv).get("table", change.key) is None
+        assert decoded(text(function_named(bv, "tbl_call_shared")))
+    finally:
+        bv.file.close()
+
+
+def test_a_type_the_user_set_before_is_kept():
+    bv = open_sample(sample("flow", *BUILD), d810=False)
+    try:
+        func = function_named(bv, "tbl_call_user")
+        table = data_pointers(bv, func)[0]
+        user = bv.parse_type_string("int64_t user_table[2]")[0]
+        bv.define_user_data_var(table, user)
+        Settings().set_bool(workflow.ACTIVITY_SETTING, True, func)
+        func.reanalyze()
+        settle(bv)
+        assert decoded(text(function_named(bv, "tbl_call_user")))
+        assert str(bv.get_data_var_at(table).type) == str(user)
+        assert any("has a user type" in n for n in apply.notes_for(bv, func.start)), apply.notes_for(bv, func.start)
+    finally:
+        bv.file.close()
+
+
+def test_a_type_the_user_set_after_d810_is_kept():
+    bv = _fresh()
+    try:
+        change = _table_of(bv, "tbl_call_const")
+        user = bv.parse_type_string("int64_t user_table[2]")[0]
+        bv.define_user_data_var(change.key, user)
+        _disable(bv, function_named(bv, "tbl_call_const"))
+        _disable(bv, function_named(bv, "tbl_call_shared"))
+        assert apply.record_of(bv).get("table", change.key) is None
+        assert str(bv.get_data_var_at(change.key).type) == str(user)
+    finally:
+        bv.file.close()
+
+
+def test_the_record_survives_a_saved_database(tmp_path):
+    path = tmp_path / "flow.bndb"
+    bv = _fresh()
+    try:
+        record = apply.record_of(bv).to_json()
+        assert len(apply.record_of(bv)) and bv.create_database(str(path))
+    finally:
+        bv.file.close()
+    bv = binaryninja.load(str(path))
+    try:
+        settle(bv)
+        assert apply.record_of(bv).to_json() == record
+        _disable_all(bv)
+        assert _no_record(bv), apply.record_of(bv).to_json()
+        assert decoded(text(function_named(bv, "tbl_call_const")))
+    finally:
+        bv.file.close()
+
+
+def test_turning_the_flow_fixes_off_leaves_the_mba_pass_alone():
+    mba_only = open_sample(sample("flow", *BUILD), d810=True, options={settings.FLOW_FIXES: False})
+    bv = _fresh()
+    try:
+        settle(mba_only)
+        assert _no_record(mba_only)
+        Settings().set_bool(settings.FLOW_FIXES, False, bv)
+        for func in list(bv.functions):
+            func.reanalyze()
+        settle(bv)
+        assert _texts(bv) == _texts(mba_only)
+        assert _no_record(bv), apply.record_of(bv).to_json()
+    finally:
+        bv.file.close()
+        mba_only.file.close()
+
+
+def test_undo_preserves_a_user_signature_and_inline_flag():
+    bv = open_sample(sample("flow", "x86_64-pe", "O2"), d810=True)
+    try:
+        settle(bv)
+        func = function_named(bv, "tbl_jump_const")
+        func.set_user_type("int64_t target(int32_t user_value)")
+        ident = function_named(bv, "ident")
+        ident.set_user_inline_during_analysis(True)
+        _disable_all(bv)
+        assert func.has_user_type and "user_value" in str(func.type)
+        assert int(ident.inline_during_analysis.value) == 1
+        assert _no_record(bv)
+    finally:
+        bv.file.close()

@@ -21,7 +21,7 @@ from ...flow.record import Change, Record
 from ...flow.tables import decode, span_of
 from ...ir.evaluate import evaluate
 from .. import log
-from . import collect, evidence, wrappers
+from . import collect, evidence, undo, wrappers
 
 KEY = "binja_d810.flow"  # view metadata: the record, as JSON
 SITES_PER_ROUND = 64
@@ -138,6 +138,26 @@ def notes_for(view, function: int) -> list[str]:
         return []
     with state.lock:
         return list(state.notes.get(function, []))
+
+
+def release(view, function: int) -> None:
+    """D-810 or the flow fixes are off for `function`: forget its sites and notes and release its claims. The
+    next round undoes what nobody claims any more. Called for every function analyzed with D-810 off, so a
+    function the flow fixes never saw costs one lookup."""
+    state = state_of(view)
+    with state.lock:
+        known = function in state.decided or function in state.claimants or function in state.notes
+        if not known and not any(site.function == function for site in state.pending.values()):
+            return
+        state.decided.pop(function, None)
+        state.notes.pop(function, None)
+        for key in [key for key, site in state.pending.items() if site.function == function]:
+            del state.pending[key]
+        if function not in state.claimants:
+            return
+        state.record.release(function)
+        state.recount()
+    _arm(view, state)
 
 
 def trusted(view, site) -> bool:
@@ -265,7 +285,24 @@ class Round:
 
     def add(self, change: Change) -> Change:
         """Keep a change; one kept already for the same kind and key gains its claims."""
+        existing = self.record.get(change.kind, change.key)
+        detail = existing.detail if existing is not None else change.detail
+        affected = set(detail.get("readers", [])) | set(detail.get("callers", []))
+        if change.kind in ("branches", "split"):
+            affected.add(detail["function"])
+        if change.kind == "inline":
+            affected.add(change.key)
+        # Resolving code changes inferred signatures, which full reanalysis does not clear. Keep the
+        # original once, with the same claims as the changes that affect it. User signatures still win.
+        signatures = []
+        for start in sorted(affected):
+            func = self.view.get_function_at(start)
+            if func is not None:
+                signatures.append(Change("signature", start, {"type": evidence.type_text(func.type)},
+                                         claims=set(change.claims)))
         with self.state.lock:
+            for signature in signatures:
+                self.record.add(signature)
             return self.record.add(change)
 
     def drop(self, change: Change) -> None:
@@ -286,6 +323,17 @@ def run_round(view) -> None:
         state.armed, state.running = False, True
         sites = list(state.pending.values())[:SITES_PER_ROUND]
     work = Round(view, state)
+    with state.lock:
+        stale = state.record.unclaimed()
+    defer_signatures = (any(change.kind == "signature" for change in stale)
+                        and any(change.kind != "signature" for change in stale))
+    restored = set()
+    for change in stale:
+        if change.kind == "signature" and defer_signatures:
+            continue  # first regenerate the original body; its old IL would re-infer the changed signature
+        restored |= undo.revert(view, change)
+        work.drop(change)
+    work.touched |= restored
     deadline = Deadline.after(ROUND_SECONDS)
     done = []
     for site in sites:
@@ -303,9 +351,9 @@ def run_round(view) -> None:
         changed, state.saved = text != state.saved, text
     if changed:
         _store(view, text)
-    if left is not None:
+    if left is not None or defer_signatures:
         _arm(view, state)
-        if not work.touched:
+        if not work.touched and left is not None:
             work.touched.add(left.function)  # analysis must run for the next round to start
     for start in sorted(work.touched):
         func = view.get_function_at(start)
@@ -397,12 +445,15 @@ def _type_table(work: Round, site, load, span, targets) -> None:
         return
     first = evidence.object_start(view, span.start, load.base, work.uses_of)
     previous = [[v.address, evidence.type_text(v.type)] for v in evidence.data_vars(view, span.start, span.end)]
+    readers = evidence.referencing(view, first, span.end) | {site.function}
+    symbols = [[s.address, s.raw_name] for s in view.get_symbols(span.start, span.end - span.start)]
     evidence.define_type(view, span.start, t)
     targets = sorted(set(targets))
     work.add(Change("table", span.start, {"end": span.end, "from": first,
-                                          "defined": [[span.start, evidence.type_text(t)]], "targets": targets},
+                                          "defined": [[span.start, evidence.type_text(t)]], "targets": targets,
+                                          "readers": sorted(readers), "symbols": symbols},
                     previous, {site.function}))
-    work.touched |= evidence.referencing(view, first, span.end) | {site.function}
+    work.touched |= readers
     work.note(site.function, f"typed {span.start:#x}[{span.count}] const, read by a {site.kind} to "
                              + ", ".join(_name(view, target) for target in targets))
 

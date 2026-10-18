@@ -18,6 +18,8 @@ MAX_ITERATIONS = f"{PREFIX}.maxIterations"
 DISABLED_RULES = f"{PREFIX}.disabledRules"
 SKIP_FUNCTIONS = f"{PREFIX}.skipFunctions"
 FUNCTION_SECONDS = f"{PREFIX}.functionSeconds"
+FLOW_FIXES = f"{PREFIX}.flowFixes"
+READ_ONLY_RANGES = f"{PREFIX}.readOnlyRanges"
 
 _SPECS = {
     ENABLED: {"title": "Enabled", "type": "boolean", "default": True,
@@ -41,6 +43,13 @@ _SPECS = {
                                       "and nothing new is attempted. At most half of the "
                                       "analysis.limits.maxFunctionAnalysisTime a binary was opened with, which "
                                       "D-810 raises to twice this budget for a binary opened with D-810 enabled."},
+    FLOW_FIXES: {"title": "Flow fixes", "type": "boolean", "default": True,
+                 "description": "For functions D-810 is enabled on: resolve jumps and calls through tables of code "
+                                "pointers that nothing writes, inline identity wrappers, and treat the read-only "
+                                "ranges as constant. All auto analysis, undone when D-810 is turned off."},
+    READ_ONLY_RANGES: {"title": "Read-only ranges", "type": "array", "elementType": "string", "default": [],
+                       "description": "Address ranges whose data D-810 treats as constant, as 0xSTART-0xEND "
+                                      "(end included). No checks: use it for data you know is never written."},
 }
 
 

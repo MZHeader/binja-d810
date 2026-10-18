@@ -128,3 +128,9 @@ def test_iteration_cap_is_reported():
         assert not is_mba(strip_versions(lift_return(func)))  # the one allowed pass still applied
     finally:
         bv.file.close()
+
+
+def test_the_flow_settings_are_registered_with_their_defaults():
+    s = Settings()
+    assert s.contains(settings.FLOW_FIXES) and s.get_bool(settings.FLOW_FIXES)
+    assert s.contains(settings.READ_ONLY_RANGES) and s.get_string_list(settings.READ_ONLY_RANGES) == []

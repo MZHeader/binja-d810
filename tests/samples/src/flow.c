@@ -19,7 +19,8 @@ typedef intptr_t (*fn_t)(intptr_t);
 
 EXPORT intptr_t f_a(intptr_t x) { B(x); return x + 0x100; }
 EXPORT intptr_t f_b(intptr_t x) { B(x); return x * 7; }
-EXPORT void sink_ptr(void *p) { B(p); }
+EXPORT_DATA void *sink_store;
+EXPORT void sink_ptr(void *p) { B(p); sink_store = p; }  // uses p, so it is a parameter
 
 // ---- Jumps through code-pointer tables (labels as values) ----
 

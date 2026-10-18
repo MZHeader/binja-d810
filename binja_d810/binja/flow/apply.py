@@ -45,6 +45,7 @@ class State:
     events: list = field(default_factory=list)  # completion events, kept alive
     armed: bool = False
     running: bool = False
+    again: bool = False  # an armed completion arrived while the background worker was still running
 
     def recount(self) -> None:
         """Who claims what, after the record changed (the caller holds the lock)."""
@@ -96,19 +97,39 @@ def _arm(view, state: State) -> None:
         if state.armed:
             return
         state.armed = True
-    event = view.add_analysis_completion_event(lambda: _completed(view))
+    event = view.add_analysis_completion_event(lambda: _completed(view, state))
     with state.lock:
         state.events = state.events[-15:] + [event]
 
 
-def _completed(view) -> None:
+def _completed(view, state: State) -> None:
+    """Release Binary Ninja's completion worker before beginning undo transactions or changing the view.
+    BeginUndoActions synchronizes with the UI and can deadlock inside a core completion callback."""
+    with state.lock:
+        state.armed = False
+        if state.running:
+            state.again = True
+            return
+        state.running = True
+    threading.Thread(target=_run_completed, args=(view, state), daemon=True, name="d810-flow").start()
+
+
+def _run_completed(view, state: State) -> None:
     try:
-        run_round(view)
+        while True:
+            run_round(view)
+            view.update_analysis_and_wait()
+            with state.lock:
+                if state.again:
+                    state.again = False
+                    continue
+                state.running = False
+                return
     except Exception as exc:  # never break analysis
         log.logger.log_error(f"binja-d810 flow round failed: {exc!r}")
-        state = state_of(view)
         with state.lock:
             state.running = False
+            state.again = False
 
 
 def enqueue(view, site) -> None:
@@ -363,7 +384,6 @@ class Round:
 def run_round(view) -> None:
     state = state_of(view)
     with state.lock:
-        state.armed, state.running = False, True
         sites = list(state.pending.values())[:SITES_PER_ROUND]
     work = Round(view, state)
     with state.lock:
@@ -396,19 +416,26 @@ def run_round(view) -> None:
     for site in sites:
         if deadline.expired():
             break
+        with state.lock:
+            if state.pending.get(site.key) is not site:
+                continue
         decide(work, site)
         done.append(site)
     with state.lock:
         for site in done:
-            state.pending.pop(site.key, None)
-            state.decided[site.function].add(site.key)
+            if state.pending.get(site.key) is site:
+                state.pending.pop(site.key)
+                state.decided[site.function].add(site.key)
+            elif site.function not in state.enabled:
+                state.record.release(site.function)
         left = next(iter(state.pending.values()), None)
+        needs_undo = bool(state.record.unclaimed())
         state.recount()
         text = state.record.to_json() if len(state.record) else None
         changed, state.saved = text != state.saved, text
     if changed:
         _store(view, text)
-    if left is not None or defer_signatures:
+    if left is not None or defer_signatures or needs_undo:
         _arm(view, state)
         if not work.touched and left is not None:
             work.touched.add(left.function)  # analysis must run for the next round to start
@@ -416,8 +443,6 @@ def run_round(view) -> None:
         func = view.get_function_at(start)
         if func is not None:
             func.reanalyze()
-    with state.lock:
-        state.running = False
     view.update_analysis()
 
 
@@ -429,9 +454,14 @@ def _name(view, address: int) -> str:
 def decide(work: Round, site) -> None:
     """Decide one site: check its decoded targets, type its tables const when nothing writes them, add call
     targets that are not functions yet, join the code the sweep split off a jump, or inline an identity wrapper."""
+    with work.state.lock:
+        if site.function not in work.state.enabled:
+            return
     if site.kind == "wrapper":
         wrappers.decide(work, site)
         return
+    if site.trusted and not trusted(work.view, site):
+        site = replace(site, trusted=False)  # a range can have been cleared since collection
     func = work.view.get_function_at(site.function)
     if func is None:
         return

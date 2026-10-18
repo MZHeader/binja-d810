@@ -267,3 +267,65 @@ def test_a_read_only_range_preserves_user_types():
         assert _no_record(bv)
     finally:
         bv.file.close()
+
+
+def test_flow_types_are_changed_outside_the_core_completion_callback(monkeypatch):
+    import threading
+
+    from binja_d810.binja.flow import evidence
+
+    callback = threading.local()
+    in_callback = []
+    completed = apply._completed
+    define = evidence.define_type
+
+    def completion(view, state):
+        callback.active = True
+        try:
+            completed(view, state)
+        finally:
+            callback.active = False
+
+    def capture(view, address, t):
+        in_callback.append(getattr(callback, "active", False))
+        define(view, address, t)
+
+    monkeypatch.setattr(apply, "_completed", completion)
+    monkeypatch.setattr(evidence, "define_type", capture)
+    bv = _fresh()
+    try:
+        assert in_callback and not any(in_callback)
+        assert "f_b(" in text(function_named(bv, "tbl_call_const"))
+        _disable_all(bv)
+        assert _no_record(bv)
+    finally:
+        bv.file.close()
+
+
+def test_disabling_a_function_cancels_its_queued_work(monkeypatch):
+    import threading
+
+    waiting, resume = threading.Event(), threading.Event()
+    decide = apply.decide
+
+    def pause(work, site):
+        if not waiting.is_set():
+            waiting.set()
+            assert resume.wait(10), "the test did not release the queued round"
+        decide(work, site)
+
+    monkeypatch.setattr(apply, "decide", pause)
+    bv = open_sample(sample("flow", *BUILD), d810=True)
+    try:
+        assert waiting.wait(10), "no flow round was queued"
+        Settings().set_bool(workflow.ACTIVITY_SETTING, False, bv)
+        for func in list(bv.functions):
+            func.reanalyze()
+        bv.update_analysis_and_wait()
+        resume.set()
+        settle(bv)
+        assert _no_record(bv), apply.record_of(bv).to_json()
+        assert decoded(text(function_named(bv, "tbl_call_const")))
+    finally:
+        resume.set()
+        bv.file.close()

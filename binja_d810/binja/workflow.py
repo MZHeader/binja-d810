@@ -85,7 +85,9 @@ def _handle(il) -> int:
 def _flow(ctx, adapter, func, report) -> bool:
     """The flow fixes (v4.0), after the MLIL pass. True when they changed the MLIL."""
     try:
-        if not ctx.get_setting_bool(settings.FLOW_FIXES):
+        enabled = ctx.get_setting_bool(settings.FLOW_FIXES)
+        flow_apply.observe_enabled(func, enabled, ctx.get_setting_string_list(settings.READ_ONLY_RANGES))
+        if not enabled:
             flow_apply.release(func.view, func.start)
             return False
         return flow_apply.after_pass(func.view, func, adapter, report)
@@ -154,6 +156,8 @@ def run_hlil_activity(ctx: AnalysisContext) -> None:
         if not _enabled(ctx):
             if ctx.function is not None:
                 log.forget(ctx.function, "hlil")
+                flow_apply.observe_enabled(ctx.function, False, [])
+                flow_apply.release(ctx.function.view, ctx.function.start)
             return
         _run(ctx, "hlil")
         func = ctx.function

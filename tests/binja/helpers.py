@@ -63,3 +63,24 @@ def strip_versions(e, params=("x", "y", "z", "p")):
 def signature(entry: dict) -> str:
     t = {32: "uint32_t", 64: "uint64_t"}[entry["width"]]
     return f"{t} {entry['name']}({t} x, {t} y, {t} z)"
+
+
+def data_pointers(bv, func) -> list[int]:
+    """Constants in the function's MLIL that point into writable data, ascending: its tables and globals
+    (static ones have no symbol in a PE)."""
+    from binaryninja import MediumLevelILOperation as M
+
+    found = set()
+    stack = list(func.mlil.instructions)
+    while stack:
+        node = stack.pop()
+        if node.operation in (M.MLIL_CONST_PTR, M.MLIL_CONST):
+            segment = bv.get_segment_at(node.constant)
+            if segment is not None and segment.writable and not segment.executable:
+                found.add(node.constant)
+        for operand in node.operands:
+            if hasattr(operand, "operation"):
+                stack.append(operand)
+            elif isinstance(operand, list):
+                stack.extend(o for o in operand if hasattr(o, "operation"))
+    return sorted(found)

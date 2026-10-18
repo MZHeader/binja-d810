@@ -157,6 +157,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
     stuck: dict = {}
     tier1_cache: dict = {}  # both rounds and every pass ask about the same expressions
     constants: dict = {}  # constancy outcomes of constant-only lifts, by expression (v3.1)
+    inconclusive: dict = {}  # proofs that ran out of time, by shape: not tried again in this run (v3.5)
     last_sources: list = []
     for _ in range(config.max_iterations):
         planning, planning_cpu = time.monotonic(), time.thread_time()
@@ -180,7 +181,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                 break
             rewrite = None
             if candidate.ir not in stuck and (candidate.unchecked is not None or candidate.shared_dag is not None):
-                rewrite, _ = _constant_only(candidate, constants, deadline)
+                rewrite, _ = _constant_only(candidate, constants, deadline, inconclusive)
             if rewrite is None:
                 rest.append(candidate)
                 continue
@@ -251,7 +252,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                 if rewrite is None and not grows and final and not deadline.expired():
                     # The constant-only lifts again (remembered from the first stage: no new work unless
                     # it was cut short).
-                    rewrite, unproven = _constant_only(candidate, constants, deadline)
+                    rewrite, unproven = _constant_only(candidate, constants, deadline, inconclusive)
                     if unproven:
                         outcome.skipped = "constant on every sample, not proven"
                     if rewrite is None and (candidate.paths is not None or hasattr(adapter, "path_variants")):
@@ -276,7 +277,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
             if deadline.expired():
                 report.budget_exhausted = True
                 break
-            rewrite = _fold_paths(adapter, candidate, constants, deadline)
+            rewrite = _fold_paths(adapter, candidate, constants, deadline, inconclusive)
             if rewrite is not None:
                 planned.append((candidate, rewrite))
         now = time.monotonic()
@@ -318,7 +319,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
     report.still_firing = last_sources
 
 
-def _constant_only(candidate, constants: dict, deadline: Deadline):
+def _constant_only(candidate, constants: dict, deadline: Deadline, inconclusive: dict):
     """Lifts only a proven constant may come from (v3.1), by constancy alone: the root over inputs whose
     registers were reused before it (x86-64 -O2's x in rdi; arm64 -O2's per-path values), and the root
     too large as a tree but small as shared values (snagit.dll's export). A constant reads no variable.
@@ -335,7 +336,7 @@ def _constant_only(candidate, constants: dict, deadline: Deadline):
         if lifted in constants:
             folded = constants[lifted]
         else:
-            folded = fold_shared(lifted, deadline)
+            folded = fold_shared(lifted, deadline, inconclusive=inconclusive)
             if not deadline.expired():
                 constants[lifted] = folded
         if folded is not None and folded[1].verdict is Verdict.PROVEN:
@@ -345,13 +346,13 @@ def _constant_only(candidate, constants: dict, deadline: Deadline):
     return None, unproven
 
 
-def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline):
+def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline, inconclusive: dict):
     """Per-path constancy: the condition once per incoming path of the merged values
     it reads. The adapter gives alternatives, cheapest first (v3.3: invariant merges alone, then every
     merge split); one folds only if every variant in it is the same proven constant."""
     alternatives = candidate.paths if candidate.paths is not None else adapter.path_variants(candidate)
     for variants in alternatives or ():
-        value = _same_constant(variants, constants, deadline)
+        value = _same_constant(variants, constants, deadline, inconclusive)
         if value is not None:
             original = candidate.unchecked if candidate.unchecked is not None else candidate.ir
             return Rewrite(original=original, replacement=Const(value, original.width), source="constancy (per path)",
@@ -359,7 +360,7 @@ def _fold_paths(adapter, candidate, constants: dict, deadline: Deadline):
     return None
 
 
-def _same_constant(variants, constants: dict, deadline: Deadline):
+def _same_constant(variants, constants: dict, deadline: Deadline, inconclusive: dict):
     """The constant every variant is proven to be, or None."""
     value = None
     for variant in variants:
@@ -368,7 +369,7 @@ def _same_constant(variants, constants: dict, deadline: Deadline):
         if variant in constants:
             folded = constants[variant]
         else:
-            folded = fold_shared(variant, deadline)
+            folded = fold_shared(variant, deadline, inconclusive=inconclusive)
             if not deadline.expired():
                 constants[variant] = folded
         if folded is None or folded[1].verdict is not Verdict.PROVEN or value not in (None, folded[0]):

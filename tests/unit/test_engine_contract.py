@@ -694,3 +694,23 @@ def test_a_stuck_candidate_still_gets_its_constant_only_attempts():
     adapter.candidates, adapter.replace = candidates, replace
     simplify_function(adapter, [], default_backends(), EngineConfig())
     assert adapter.roots["c"] == Const(0, 1)
+
+
+def test_an_inconclusive_constant_is_proven_once_per_run_by_shape(monkeypatch):
+    from binja_d810.semantic import constancy, memo
+
+    memo.clear()
+    calls = []
+    monkeypatch.setattr(constancy, "_z3_prove", lambda *a: (calls.append(1), (None, "z3 timeout"))[1])
+    a, b = p("eq((x * (x + 1)) & 1, 0)", 1), p("eq((y * (y + 1)) & 1, 0)", 1)
+
+    class Constants(FakeAdapter):
+        def has_candidates(self):
+            return True
+
+        def candidates(self, skip):
+            for name, e in self.roots.items():
+                yield Candidate(name, 0x1000, e, unchecked=e, constant_only=True)
+
+    report = simplify_function(Constants({"a": a, "b": b}), [], [LinearMBABackend()], EngineConfig())
+    assert not report.rewrites and len(calls) == 1

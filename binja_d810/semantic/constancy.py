@@ -68,19 +68,27 @@ def constant_value(e: Expr, deadline: Deadline, prove: Optional[Prover] = None) 
     return value, found
 
 
-def fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int = CONSTANCY_Z3_MS) -> Optional[tuple[int, Check]]:
+def fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int = CONSTANCY_Z3_MS,
+                inconclusive: Optional[dict] = None) -> Optional[tuple[int, Check]]:
     """constant_value for an expression too large to expand as a tree (values shared: snagit.dll's
     export, spec v3.1 goal 1). Samples evaluate each shared value once and the Z3 query is built
     with sharing. (value, check) when constant on every sample (or variable-free); the check says
     whether it is proven. None as soon as two samples differ, or when a proof refutes it. Proven and refuted outcomes are
-    remembered by shape."""
+    remembered by shape. `inconclusive` holds one run's inconclusive outcomes by shape (v3.5): a proof
+    that ran out of its own time is not tried again in that run, though another moment may decide it; one
+    shortened by the deadline is not kept."""
     key = ("fold", shape_key(e))
     found = memo.get(key)
     if found is not memo.MISSING:
         return found
+    if inconclusive is not None and key in inconclusive:
+        return inconclusive[key]
+    full = deadline.at == float("inf") or deadline.remaining() * 1000 >= z3_timeout_ms
     result = _fold_shared(e, deadline, z3_timeout_ms)
     if result is None or result[1].verdict is Verdict.PROVEN:
         memo.put(key, result)
+    elif inconclusive is not None and full:
+        inconclusive[key] = result
     return result
 
 

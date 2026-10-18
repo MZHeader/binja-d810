@@ -145,3 +145,32 @@ def test_fold_shared_samples_a_few_dozen_times_before_the_proof(monkeypatch):
     found = constancy.fold_shared(_bcf_condition(), Deadline.never())
     assert found is not None and found[1].verdict is Verdict.PROVEN
     assert 0 < sum(samples) <= 64, samples
+
+
+def test_an_inconclusive_fold_is_remembered_for_the_run_by_shape(monkeypatch):
+    # v3.5: x-tunnel.bin's slowest root (2 s, "constant on every sample, not proven") was proven again in
+    # every pass: its lift's names change from pass to pass, its shape does not.
+    from binja_d810.semantic import constancy, memo
+
+    memo.clear()
+    calls = []
+    monkeypatch.setattr(constancy, "_z3_prove", lambda *a: (calls.append(1), (None, "z3 timeout"))[1])
+    run: dict = {}
+    first = constancy.fold_shared(c("eq((x * (x + 1)) & 1, 0)"), Deadline.never(), inconclusive=run)
+    second = constancy.fold_shared(c("eq((y * (y + 1)) & 1, 0)"), Deadline.never(), inconclusive=run)
+    assert first is not None and first[1].verdict is Verdict.TESTED and second == first
+    assert len(calls) == 1
+    constancy.fold_shared(c("eq((y * (y + 1)) & 1, 0)"), Deadline.never())  # another run: tried again
+    assert len(calls) == 2
+
+
+def test_a_proof_cut_short_by_the_deadline_is_not_remembered(monkeypatch):
+    from binja_d810.semantic import constancy, memo
+
+    memo.clear()
+    calls = []
+    monkeypatch.setattr(constancy, "_z3_prove", lambda *a: (calls.append(a[3]), (None, "z3 timeout"))[1])
+    run: dict = {}
+    for _ in range(2):
+        constancy.fold_shared(c("eq((x * (x + 1)) & 1, 0)"), Deadline.after(0.5), inconclusive=run)
+    assert len(calls) == 2 and not run

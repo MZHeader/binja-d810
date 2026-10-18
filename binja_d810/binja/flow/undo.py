@@ -21,7 +21,7 @@ def revert(view, change) -> set[int]:
         return _retype(view, change)
     if change.kind == "function":
         func = view.get_function_at(change.key)
-        if func is None or not func.auto:
+        if func is None or not func.auto or func.has_user_type:
             return set()
         callers = {caller.start for caller in func.callers}
         view.remove_function(func)

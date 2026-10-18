@@ -350,3 +350,33 @@ def test_enabling_plain_code_does_not_queue_flow_work(monkeypatch):
         assert _no_record(bv)
     finally:
         bv.file.close()
+
+
+@pytest.mark.parametrize("user_type", [False, True])
+def test_added_call_targets_are_auto_and_undo_respects_user_types(user_type):
+    from binja_d810.binja.flow import collect, undo
+
+    bv = open_sample(sample("flow", *BUILD), d810=False)
+    try:
+        # An existing RET is valid code without its own function start. Exercise the add/undo API
+        # contract independently of target validation, which is covered by the code-check tests.
+        target = function_named(bv, "f_a").start + 4
+        assert bv.get_function_at(target) is None
+        caller = function_named(bv, "tbl_call_const")
+        site = collect.Site(caller.start, caller.start, "call")
+        work = apply.Round(bv, apply.state_of(bv))
+        apply._add_functions(work, site, caller, [target], work.code(caller))
+        added = bv.get_function_at(target)
+        assert added is not None and added.auto
+        if user_type:
+            added.set_user_type("int64_t retained(void)")
+        change = work.record.get("function", target)
+        assert change is not None
+        undo.revert(bv, change)
+        kept = bv.get_function_at(target)
+        if user_type:
+            assert kept is not None and kept.has_user_type
+        else:
+            assert kept is None
+    finally:
+        bv.file.close()

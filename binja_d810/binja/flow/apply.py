@@ -560,7 +560,7 @@ def _add_functions(work: Round, site, func, targets, code) -> None:
             continue
         if code.function_at(target):
             continue
-        work.view.add_function(target, func.platform)
+        work.view.add_function(target, func.platform, auto_discovered=True)
         work.add(Change("function", target, {}, [], {site.function}))
         work.touched.add(site.function)
         work.note(site.function, f"added a function at {target:#x}, a call target")

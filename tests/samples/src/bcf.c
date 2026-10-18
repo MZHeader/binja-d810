@@ -94,3 +94,24 @@ EXPORT uint32_t align_call(uint32_t p, uint32_t n) {
     bcf_sink(q);
     return bcf_id(n) + (p - q);
 }
+
+// v3.5: a read unused in the original code stays when a rewrite in the same function makes the pass
+// remove what the rewrite left dead. The barrier reads v, which Binary Ninja does not see: a load nothing uses.
+EXPORT uint32_t bcf_v;
+
+EXPORT uint32_t dead_read(uint32_t a, uint32_t b) {
+    uint32_t v = bcf_v; B(v);
+    uint32_t t = a ^ b; B(t);
+    uint32_t u = a & b; B(u);
+    return t + 2 * u;
+}
+
+// v3.5: a read through a computed address that a fold leaves unused stays: such a read may fault.
+EXPORT uint32_t bcf_table[4];
+
+EXPORT uint32_t computed_read(uint32_t a, uint32_t c) {
+    uint32_t x = bcf_table[a & 3]; B(x);
+    uint32_t t = x * (x - 1); B(t);
+    if ((t & 1) == 0) return c + 1;
+    return c ^ 0x5a;
+}

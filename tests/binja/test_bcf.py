@@ -16,6 +16,8 @@ TYPES = {
     "const_after_merge": "uint32_t const_after_merge(uint32_t a, uint32_t c)",
     "align_gate2": "uint32_t align_gate2(uint32_t p, uint32_t n)",
     "align_call": "uint32_t align_call(uint32_t p, uint32_t n)",
+    "dead_read": "uint32_t dead_read(uint32_t a, uint32_t b)",
+    "computed_read": "uint32_t computed_read(uint32_t a, uint32_t c)",
 }
 # Builds where a fixture is not folded, with the reason; a listed miss that folds fails the test.
 KNOWN_MISSES = {
@@ -125,3 +127,44 @@ def test_a_constant_read_after_a_merge_reaches_that_read_only(builds):
         return
     assert "sink(1)" in text, text  # k's read; m's reads keep m
     assert text.count("sink(") == 2 and text.count("sink(1)") == 1, text
+
+
+def _bare_reads(func, name: str) -> list[str]:
+    """Statements that only read a global: HLIL shows a load nothing uses as the global alone."""
+    return [str(s) for s in func.hlil.instructions
+            if s.operation in (H.HLIL_DEREF, H.HLIL_DEREF_FIELD) and name in str(s)]
+
+
+# x86-64 ELF reads a default-visibility global through the GOT: a pointer the loader fills, so the read's
+# address is not a fixed one in the image (v3.5).
+_GOT = "x86_64-elf"
+
+
+@pytest.mark.parametrize("name", ["bcf_chain", "bcf_merge", "const_use"])
+def test_a_global_read_a_fold_leaves_unused_is_removed(builds, name):
+    key, on, _ = builds
+    func = function_named(on, name)
+    reads = _bare_reads(func, "bcf_x")
+    if key.startswith(_GOT):
+        assert reads, f"the read through the GOT stays: {key}"
+        return
+    assert not reads, _text(func)
+
+
+def test_a_read_dead_before_the_pass_stays(builds):
+    """A read nothing uses in the original code (-O0: through a stack slot) stays. At -O2 Binary Ninja drops
+    the unused load itself."""
+    from binja_d810.binja import log
+
+    _, on, off = builds
+    func = function_named(on, "dead_read")
+    assert any(r.rewrites for r in log.latest_reports(func).values()), "the MBA rewrite makes a pass commit"
+    if "bcf_v" in _text(function_named(off, "dead_read")):
+        assert "bcf_v" in _text(func), _text(func)
+
+
+def test_a_read_through_a_computed_address_stays(builds):
+    _, on, _ = builds
+    text = _text(function_named(on, "computed_read"))
+    assert "0x5a" not in text, text  # folded
+    assert "bcf_table" in text, text

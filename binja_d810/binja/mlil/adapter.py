@@ -13,7 +13,8 @@ from ...deadline import Deadline
 from ...ir.expr import Expr, is_candidate, tree_size
 from ...ir.paths import Merge, path_variants
 from ..adapter import Candidate, Skip
-from ..deadcode import dead_definitions, dying_with_root, shown_in
+from ..deadcode import dead_with_checks, dying_with_root, shown_in
+from ..memory import FixedLoads
 from ..ssa import definition_of
 from .lift import DIVISION_OPS, SUPPORTED_OPS, candidate_roots, is_safe_division, lift, lift_value
 from .lower import lower
@@ -27,6 +28,7 @@ _PURE_LEAVES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_VAR_SSA_FIELD, Op.MLIL_CONST,
 _COPIES = frozenset({Op.MLIL_VAR_SSA, Op.MLIL_VAR_SSA_FIELD})
 # Flags a rewrite may leave dead (cond:0 = t != 0 once t's 0/1 value is inlined): pure, never trap.
 _PURE_FLAGS = frozenset({Op.MLIL_CMP_E, Op.MLIL_CMP_NE, Op.MLIL_BOOL_TO_INT})
+_FIXED_LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
 
 
 class MLILAdapter:
@@ -39,6 +41,7 @@ class MLILAdapter:
         # the engine only sees candidates it is given (snagit.dll: 60 s, Binary Ninja gave up).
         self.deadline = deadline
         self.backups: list[tuple[int, int]] = []
+        self.fixed_loads = FixedLoads(mlil.source_function.view)
 
     def has_candidates(self) -> bool:
         seen = set()
@@ -282,15 +285,18 @@ class MLILAdapter:
         """Instruction indices of pure SET_VARs whose value is never used, even indirectly.
 
         At -O0 a rewritten result leaves chains of copies through stack slots behind
-        (x8_1 = x8 ^ x9; var_10 = x8_1; x8_2 = var_10; ...), which HLIL would still show.
+        (x8_1 = x8 ^ x9; var_10 = x8_1; x8_2 = var_10; ...), which HLIL would still show. A load from a
+        fixed address in the image's data is pure (v3.5: the reads of OLLVM's predicate globals, once the
+        predicates fold). Whether a division can trap is decided only for definitions about to be removed.
         """
-        pure, roots, index_of = {}, [], {}
+        pure, roots, index_of, checks = {}, [], {}, {}
         for instr in self.mlil.ssa_form.instructions:
-            if instr.operation == Op.MLIL_SET_VAR_SSA and _pure(instr.src):
+            divisions: list = []
+            if instr.operation == Op.MLIL_SET_VAR_SSA and _pure(instr.src, self._fixed_load, divisions):
                 key = _key(instr.dest)
                 pure[key] = [_key(v) for v in _ssa_vars(instr.src)]
                 index_of[key] = instr.non_ssa_form.instr_index
-            elif instr.operation == Op.MLIL_SET_VAR_SSA_FIELD and _pure(instr.src):
+            elif instr.operation == Op.MLIL_SET_VAR_SSA_FIELD and _pure(instr.src, self._fixed_load, divisions):
                 # A partial write (var_8:5.b = x ^ y at -O0) reads the previous version as well.
                 key = _key(instr.dest)
                 pure[key] = [_key(instr.prev)] + [_key(v) for v in _ssa_vars(instr.src)]
@@ -299,9 +305,21 @@ class MLILAdapter:
                 # A merge is not a use: its sources live only if its result does (a folded
                 # predicate's per-path values, merged at -O0 through a stack slot). Not removable.
                 pure[_key(instr.dest)] = [_key(v) for v in instr.src]
+                continue
             else:
                 roots.extend(_key(v) for v in _ssa_vars(instr))
-        return {index_of[key] for key in dead_definitions(pure, roots) if key in index_of}
+                continue
+            if divisions:
+                checks[key] = lambda found=tuple(divisions): all(is_safe_division(d, d) for d in found)
+        return {index_of[key] for key in dead_with_checks(pure, roots, checks) if key in index_of}
+
+    def _fixed_load(self, node: MediumLevelILInstruction) -> bool:
+        """A load from a constant address in the image's data (binja_d810.binja.memory)."""
+        address = node.src
+        if address.operation not in (Op.MLIL_CONST_PTR, Op.MLIL_CONST):
+            return False
+        offset = node.offset if node.operation == Op.MLIL_LOAD_STRUCT_SSA else 0
+        return self.fixed_loads(address.constant + offset, node.size)
 
     def remove(self, dead: set[Hashable]) -> None:
         for index in sorted(dead):
@@ -372,14 +390,22 @@ def _size(e: MediumLevelILInstruction) -> int:
     return sum(1 for _ in _operations(e))
 
 
-def _pure(e: MediumLevelILInstruction) -> bool:
+def _pure(e: MediumLevelILInstruction, load=None, divisions: Optional[list] = None) -> bool:
+    """`load(node)`: whether a load is pure (a fixed address that cannot fault, v3.5); without it no load
+    is. `divisions` collects the divisions, pure until checked (deadcode.dead_with_checks); without it a
+    division is checked here."""
     if e.operation in _PURE_LEAVES:
         return True
+    if e.operation in _FIXED_LOADS:
+        return load is not None and load(e)
     if e.operation in DIVISION_OPS:
-        return is_safe_division(e, e)  # cannot trap: removable once dead
+        if divisions is None:
+            return is_safe_division(e, e)  # cannot trap: removable once dead
+        divisions.append(e)
+        return True
     if e.operation not in SUPPORTED_OPS and e.operation not in _PURE_FLAGS:
         return False
-    return all(_pure(op) for op in e.operands if isinstance(op, MediumLevelILInstruction))
+    return all(_pure(op, load, divisions) for op in e.operands if isinstance(op, MediumLevelILInstruction))
 
 
 def _ssa_vars(e: MediumLevelILInstruction):

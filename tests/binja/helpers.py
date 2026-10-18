@@ -84,3 +84,22 @@ def data_pointers(bv, func) -> list[int]:
             elif isinstance(operand, list):
                 stack.extend(o for o in operand if hasattr(o, "operation"))
     return sorted(found)
+
+
+def settle(bv, seconds: float = 120) -> None:
+    """Wait for the flow fixes (v4.0): analysis idle, and no round queued, armed or running, twice in a row."""
+    import time
+
+    try:
+        from binja_d810.binja.flow import apply
+    except ImportError:  # a plugin revision without the flow fixes (the workbench, back to back with main)
+        bv.update_analysis_and_wait()
+        return
+    deadline = time.monotonic() + seconds
+    quiet = 0
+    while quiet < 2:
+        bv.update_analysis_and_wait()
+        quiet = 0 if apply.busy(bv) else quiet + 1
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"the flow fixes were still busy after {seconds} s")
+        time.sleep(0.05)

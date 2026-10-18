@@ -1,0 +1,354 @@
+"""Deciding and applying the flow fixes (v4.0, spec 3.1 steps 2 and 3), per view.
+
+Sites wait in the view's queue. Once analysis is idle (a completion event), a round decides at most
+SITES_PER_ROUND of them within ROUND_SECONDS, saves the record in the view's metadata and reanalyzes what
+changed. Their MLIL activity collects again; a decided site is not queued again, so rounds stop when nothing
+new is found. Binary Ninja is never called with a state's lock held.
+"""
+
+from __future__ import annotations
+
+import threading
+from collections import defaultdict
+from dataclasses import dataclass, field, replace
+from typing import Optional
+
+from ...deadline import Deadline
+from ...flow.codecheck import call_problem, jump_problem, split_starts
+from ...flow.record import Change, Record
+from ...flow.tables import decode, span_of
+from .. import log
+from . import collect, evidence
+
+KEY = "binja_d810.flow"  # view metadata: the record, as JSON
+SITES_PER_ROUND = 64
+ROUND_SECONDS = 2.0
+NOTES = 40  # report lines kept per function
+
+
+@dataclass
+class State:
+    record: Record
+    saved: Optional[str] = None  # the record's JSON as last stored
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    pending: dict = field(default_factory=dict)  # site key -> Site
+    decided: defaultdict = field(default_factory=lambda: defaultdict(set))  # function -> decided site keys
+    claimants: set = field(default_factory=set)  # functions with a claim in the record
+    rejected: dict = field(default_factory=dict)  # (start, end) -> why it may be written, for the session
+    notes: defaultdict = field(default_factory=lambda: defaultdict(list))  # function -> report lines
+    events: list = field(default_factory=list)  # completion events, kept alive
+    armed: bool = False
+    running: bool = False
+
+    def recount(self) -> None:
+        """Who claims what, after the record changed (the caller holds the lock)."""
+        self.claimants = {c for change in self.record.changes() for c in change.claims}
+
+
+_STATES: dict[int, State] = {}
+_STATES_LOCK = threading.Lock()
+
+
+def state_of(view) -> State:
+    with _STATES_LOCK:
+        state = _STATES.get(view.file.session_id)
+    if state is not None:
+        return state
+    text = _load(view)
+    with _STATES_LOCK:
+        state = _STATES.setdefault(view.file.session_id,
+                                   State(Record.from_json(text) if text else Record(), saved=text))
+    with state.lock:
+        state.recount()
+    return state
+
+
+def _load(view) -> Optional[str]:
+    try:
+        return view.query_metadata(KEY)
+    except KeyError:
+        return None
+
+
+def _store(view, text: Optional[str]) -> None:
+    if text is not None:
+        view.store_metadata(KEY, text)
+        return
+    try:
+        view.remove_metadata(KEY)
+    except KeyError:
+        pass
+
+
+def _arm(view, state: State) -> None:
+    """Run a round once analysis is idle (called without the lock)."""
+    with state.lock:
+        if state.armed:
+            return
+        state.armed = True
+    event = view.add_analysis_completion_event(lambda: _completed(view))
+    with state.lock:
+        state.events = state.events[-15:] + [event]
+
+
+def _completed(view) -> None:
+    try:
+        run_round(view)
+    except Exception as exc:  # never break analysis
+        log.logger.log_error(f"binja-d810 flow round failed: {exc!r}")
+        state = state_of(view)
+        with state.lock:
+            state.running = False
+
+
+def enqueue(view, site) -> None:
+    state = state_of(view)
+    with state.lock:
+        if site.key in state.decided[site.function] or site.key in state.pending:
+            return
+        state.pending[site.key] = site
+    _arm(view, state)
+
+
+def busy(view) -> bool:
+    """Sites wait, or a round is armed or running."""
+    with _STATES_LOCK:
+        state = _STATES.get(view.file.session_id)
+    if state is None:
+        return False
+    with state.lock:
+        return bool(state.pending) or state.armed or state.running
+
+
+def record_of(view) -> Record:
+    """A copy of the view's record."""
+    state = state_of(view)
+    with state.lock:
+        return Record.from_json(state.record.to_json())
+
+
+def notes_for(view, function: int) -> list[str]:
+    """What the flow fixes did or skipped for a function, for its debug report."""
+    with _STATES_LOCK:
+        state = _STATES.get(view.file.session_id)
+    if state is None:
+        return []
+    with state.lock:
+        return list(state.notes.get(function, []))
+
+
+def trusted(view, site) -> bool:
+    """Every table and key global the site reads is const or read-only already."""
+    for load in site.target.loads:
+        span = span_of(load)
+        if span is None or not evidence.constant_data(view, span.start, span.end):
+            return False
+    return True
+
+
+def after_pass(view, func, adapter, report) -> bool:
+    """The end of the MLIL activity for a D-810-enabled function: collect its sites and queue them. True when
+    the MLIL changed."""
+    read = evidence.reader(view)
+    for site, _ in collect.scan(adapter.mlil, Deadline.after(collect.SCAN_SECONDS), read):
+        if site.target is not None:
+            site = replace(site, trusted=trusted(view, site))
+        enqueue(view, site)
+    return False
+
+
+class Round:
+    """One round's work: the view, its record, what to reanalyze, and caches."""
+
+    def __init__(self, view, state: State):
+        self.view, self.state, self.record = view, state, state.record
+        self.read = evidence.reader(view)
+        self.touched: set[int] = set()
+        self.verdicts: dict[tuple[int, int], Optional[str]] = {}
+        self._uses: dict[int, Optional[evidence.Uses]] = {}
+        self._code: dict[str, evidence.BinaryCode] = {}
+
+    def uses_of(self, func) -> Optional[evidence.Uses]:
+        if func.start not in self._uses:
+            try:
+                mlil = func.mlil
+                self._uses[func.start] = None if mlil is None else evidence.Uses(mlil.ssa_form)
+            except Exception:  # noqa: BLE001 - no MLIL for this function
+                self._uses[func.start] = None
+        return self._uses[func.start]
+
+    def code(self, func) -> evidence.BinaryCode:
+        if func.arch.name not in self._code:
+            self._code[func.arch.name] = evidence.BinaryCode(self.view, func.arch)
+        return self._code[func.arch.name]
+
+    def add(self, change: Change) -> Change:
+        """Keep a change; one kept already for the same kind and key gains its claims."""
+        with self.state.lock:
+            return self.record.add(change)
+
+    def drop(self, change: Change) -> None:
+        with self.state.lock:
+            self.record.drop(change.kind, change.key)
+
+    def note(self, function: int, line: str) -> None:
+        with self.state.lock:
+            lines = self.state.notes[function]
+            lines.append(line)
+            del lines[:-NOTES]
+        log.logger.log_info(f"flow: {function:#x}: {line}")
+
+
+def run_round(view) -> None:
+    state = state_of(view)
+    with state.lock:
+        state.armed, state.running = False, True
+        sites = list(state.pending.values())[:SITES_PER_ROUND]
+    work = Round(view, state)
+    deadline = Deadline.after(ROUND_SECONDS)
+    done = []
+    for site in sites:
+        if deadline.expired():
+            break
+        decide(work, site)
+        done.append(site)
+    with state.lock:
+        for site in done:
+            state.pending.pop(site.key, None)
+            state.decided[site.function].add(site.key)
+        left = next(iter(state.pending.values()), None)
+        state.recount()
+        text = state.record.to_json() if len(state.record) else None
+        changed, state.saved = text != state.saved, text
+    if changed:
+        _store(view, text)
+    if left is not None:
+        _arm(view, state)
+        if not work.touched:
+            work.touched.add(left.function)  # analysis must run for the next round to start
+    for start in sorted(work.touched):
+        func = view.get_function_at(start)
+        if func is not None:
+            func.reanalyze()
+    with state.lock:
+        state.running = False
+    view.update_analysis()
+
+
+def _name(view, address: int) -> str:
+    func = view.get_function_at(address)
+    return func.name if func is not None else f"{address:#x}"
+
+
+def decide(work: Round, site) -> None:
+    """Decide one site: check its decoded targets, type its tables const when nothing writes them, add call
+    targets that are not functions yet, and join the code the sweep split off a jump."""
+    if site.kind == "wrapper":
+        return  # decided once identity wrappers are handled
+    func = work.view.get_function_at(site.function)
+    if func is None:
+        return
+    decoded, why = decode(site.target.expr, site.target.loads, work.read)
+    if decoded is None:
+        work.note(site.function, f"{site.address:#x}: skipped: {why}")
+        return
+    code = work.code(func)
+    if site.kind == "jump":
+        problem = jump_problem(decoded.targets, site.function, code)
+    else:
+        problem = call_problem(decoded.targets, code)
+    if problem:
+        work.note(site.function, f"{site.address:#x}: skipped: {problem}")
+        return
+    if not site.trusted:
+        for load, span in zip(site.target.loads, decoded.spans):
+            why = _unwritable(work, load, span)
+            if why:
+                work.note(site.function, f"{site.address:#x}: skipped: {why}")
+                return
+        for load, span in zip(site.target.loads, decoded.spans):
+            _type_table(work, site, load, span, decoded.targets)
+    if site.kind == "call":
+        _add_functions(work, site, func, decoded.targets, code)
+    else:
+        _join_split_code(work, site, decoded.targets, code)
+
+
+def _unwritable(work: Round, load, span) -> Optional[str]:
+    """None when the span may be typed const: typed for another site already, or no other change and no user
+    type there and nothing visible writes it (checked from where its object starts). Else why not."""
+    view, record = work.view, work.record
+    if record.covering(span.start, span.end) is not None:
+        return None
+    other = record.overlapping(span.start, span.end)
+    if other is not None:
+        return f"{span.start:#x} overlaps the {other.kind} at {other.key:#x}"
+    for var in evidence.data_vars(view, span.start, span.end):
+        if not var.auto_discovered:
+            return f"{var.address:#x} has a user type"
+    key = (evidence.object_start(view, span.start, load.base, work.uses_of), span.end)
+    with work.state.lock:
+        rejected = work.state.rejected.get(key)
+    if rejected is not None:
+        return rejected
+    if key not in work.verdicts:
+        work.verdicts[key] = evidence.never_written(view, key[0], key[1], work.uses_of)
+        if work.verdicts[key] is not None:
+            with work.state.lock:
+                work.state.rejected[key] = work.verdicts[key]
+    return work.verdicts[key]
+
+
+def _type_table(work: Round, site, load, span, targets) -> None:
+    view = work.view
+    existing = work.record.covering(span.start, span.end)
+    if existing is not None:  # a table typed for another site, or a read-only range (the setting's alone)
+        if existing.kind == "table" and site.function not in existing.claims:
+            work.add(Change(existing.kind, existing.key, claims={site.function}))
+            work.note(site.function, f"{span.start:#x} is const already")
+        return
+    t = evidence.table_type(view, span)
+    if t is None:
+        work.note(site.function, f"{span.start:#x}: skipped: no const type parses for it")
+        return
+    first = evidence.object_start(view, span.start, load.base, work.uses_of)
+    previous = [[v.address, evidence.type_text(v.type)] for v in evidence.data_vars(view, span.start, span.end)]
+    evidence.define_type(view, span.start, t)
+    targets = sorted(set(targets))
+    work.add(Change("table", span.start, {"end": span.end, "from": first,
+                                          "defined": [[span.start, evidence.type_text(t)]], "targets": targets},
+                    previous, {site.function}))
+    work.touched |= evidence.referencing(view, first, span.end) | {site.function}
+    work.note(site.function, f"typed {span.start:#x}[{span.count}] const, read by a {site.kind} to "
+                             + ", ".join(_name(view, target) for target in targets))
+
+
+def _add_functions(work: Round, site, func, targets, code) -> None:
+    """Call targets that are plain code become functions (auto, recorded)."""
+    for target in sorted(set(targets)):
+        if work.record.get("function", target) is not None:
+            work.add(Change("function", target, claims={site.function}))
+            continue
+        if code.function_at(target):
+            continue
+        work.view.add_function(target, func.platform)
+        work.add(Change("function", target, {}, [], {site.function}))
+        work.touched.add(site.function)
+        work.note(site.function, f"added a function at {target:#x}, a call target")
+
+
+def _join_split_code(work: Round, site, targets, code) -> None:
+    """Functions the sweep split off at a jump's own targets are removed (auto, recorded), so its code joins
+    the jump's function."""
+    for target in split_starts(targets, site.function, code):
+        if work.record.get("split", target) is not None:
+            work.add(Change("split", target, claims={site.function}))
+            continue
+        found = work.view.get_function_at(target)
+        if found is None or not found.auto:
+            continue
+        name = found.name
+        work.view.remove_function(found)
+        work.add(Change("split", target, {"function": site.function}, [], {site.function}))
+        work.touched.add(site.function)
+        work.note(site.function, f"removed {name}: code the sweep split off this jump")

@@ -25,6 +25,8 @@ _FIELD_READS = frozenset({Op.MLIL_VAR_SSA_FIELD, Op.MLIL_VAR_ALIASED, Op.MLIL_VA
 _CONSTANTS = frozenset({Op.MLIL_CONST, Op.MLIL_CONST_PTR})
 _DEFINES = frozenset({"dest", "output"})  # SSA variables named so are written, not read
 _SPLIT_SCAN = 64  # function starts looked at between a jump's function and a target
+_STEP_BACK = 8  # data variables looked at below an entry read at a constant address
+_STRUCT = frozenset({Op.MLIL_LOAD_STRUCT_SSA, Op.MLIL_STORE_STRUCT_SSA})
 
 
 def _key(ssa_var) -> tuple[int, int]:
@@ -48,6 +50,7 @@ class Uses:
         self.kinds: dict[int, str] = {}
         self.parents: dict[int, tuple[int, str]] = {}
         self.addresses: dict[int, int] = {}
+        self.offsets: dict[int, int] = {}  # a struct load's or store's offset from its address
         self.defined: dict[int, list] = {}  # node -> the SSA variables it defines (set_var, phi)
         self.reads: dict[tuple[int, int], list[int]] = {}  # (identifier, version) -> the nodes reading it
         self.indexed: set[int] = set()
@@ -62,6 +65,8 @@ class Uses:
             at, op = node.expr_index, node.operation
             self.kinds[at] = "field" if op in _FIELD_READS else _KINDS.get(op, op.name.lower())
             self.addresses[at] = node.address
+            if op in _STRUCT:
+                self.offsets[at] = node.offset
             if up is not None:
                 self.parents[at] = up
             for name, item in _operands(node):
@@ -192,15 +197,46 @@ def reader(view) -> Read:
     return read
 
 
-def object_start(view, address: int, base: Optional[int] = None) -> int:
-    """Where the never-written check of the object holding `address` starts: the constant an indexed or offset address
-    starts from (within MAX_ENTRIES words below), else the start of the data variable holding or preceding
-    `address`, so a write through the object's start is seen."""
+def object_start(view, address: int, base: Optional[int] = None, uses_of: Optional[Callable] = None) -> int:
+    """Where the never-written check of the object holding `address` starts: the constant an indexed or offset
+    address starts from (within MAX_ENTRIES words below); else the start of the data variable holding
+    `address`. With `uses_of`, an entry read at a constant address starts at the nearest code-referenced data
+    variable below it instead, when code uses that one as a pointer: its table, passed or indexed elsewhere
+    (spec section 7)."""
     reach = 8 * MAX_ENTRIES
     if base is not None and address - reach <= base <= address:
         return base
     first = view.get_previous_data_var_start_before(address + 1)  # the last start at or before `address`
-    return first if address - reach <= first <= address else address
+    if not address - reach <= first <= address:
+        first = address
+    if uses_of is None:
+        return first
+    at = first
+    for _ in range(_STEP_BACK):
+        below = view.get_previous_data_var_start_before(at)  # `at` when there is none
+        if below >= at or below < address - reach:
+            break
+        if next(iter(view.get_code_refs(below, 1)), None) is not None:
+            return below if pointer_use(view, below, uses_of) else first
+        at = below
+    return first
+
+
+def pointer_use(view, address: int, uses_of: Callable) -> bool:
+    """Code uses `address` as a pointer: anything but a plain load or store of it (passed, stored, copied or
+    offset), so the object there may extend past it."""
+    for ref in view.get_code_refs(address, 1):
+        uses = uses_of(ref.function) if ref.function is not None else None
+        if uses is None:
+            return True
+        for node in uses.constants_in(address, address + 1, at=ref.address):
+            up = uses.parent(node)
+            if up is None:
+                return True
+            parent, operand = up
+            if (uses.kind(parent), operand) not in (("load", "src"), ("store", "dest")) or uses.offsets.get(parent):
+                return True
+    return False
 
 
 def referencing(view, start: int, end: int) -> set[int]:
@@ -245,6 +281,25 @@ def constant_data(view, start: int, end: int) -> bool:
         return True
     return any(v.address <= start and end <= v.address + v.type.width and is_const(v.type)
                for v in data_vars(view, start, end))
+
+
+def define_type(view, address: int, t) -> None:
+    """A data variable the flow fixes define: a user type, as Binary Ninja's analysis replaces an auto one (its
+    jump-table analysis retypes a table it resolved), kept out of the user's undo history."""
+    state = view.begin_undo_actions()
+    try:
+        view.define_user_data_var(address, t)
+    finally:
+        view.forget_undo_actions(state)
+
+
+def undefine_type(view, address: int) -> None:
+    """Remove a data variable define_type made, kept out of the user's undo history."""
+    state = view.begin_undo_actions()
+    try:
+        view.undefine_user_data_var(address)
+    finally:
+        view.forget_undo_actions(state)
 
 
 def type_text(t) -> str:

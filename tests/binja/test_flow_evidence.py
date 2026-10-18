@@ -83,3 +83,17 @@ def test_types(bv):
     pointer = evidence.const_copy(bv, evidence.parse_type(bv, "void* __d810"))
     assert evidence.is_const(pointer) and not evidence.is_const(pointer.target)
     assert evidence.parse_type(bv, "not a type at all") is None
+
+
+def test_an_entry_read_is_checked_from_a_pointer_to_its_table(bv):
+    """escaped_call reads etab[1] at a constant address and passes etab to a call one word below."""
+    cache = {}
+
+    def uses_of(func):
+        if func.start not in cache:
+            cache[func.start] = evidence.Uses(func.mlil.ssa_form)
+        return cache[func.start]
+
+    table, entry = data_pointers(bv, function_named(bv, "escaped_call"))[:2]
+    assert evidence.object_start(bv, entry, uses_of=uses_of) == table
+    assert evidence.object_start(bv, entry) == entry

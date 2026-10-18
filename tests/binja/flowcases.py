@@ -14,6 +14,9 @@ _SEES_IDENT = "Binary Ninja sees through the identity wrapper itself: HLIL calls
 NOT_EMITTED: dict[tuple[str, str], str] = {
     ("arm64-O0", "ident_call"): _SEES_IDENT,
     ("arm64-O2", "ident_call"): _SEES_IDENT,
+    # not a negative there: the call reads _off_fb itself, a never-written pointer the flow fixes rightly resolve
+    ("arm64-O0", "not_identity_call"): "Binary Ninja sees x0 pass through not_ident unchanged",
+    ("arm64-O2", "not_identity_call"): "Binary Ninja sees x0 pass through not_ident unchanged",
 }
 # (build-level, function) -> why D-810 does not resolve it there. Strict: a listed case that resolves fails.
 _NEGATIVE_FIXUP = ("ld64's chained fixups cannot hold a negative pointer (address - KEY): Binary Ninja's view "

@@ -3,10 +3,11 @@
 
 import pytest
 from arch import IDS, MATRIX, sample
-from flowcases import CALL_TARGETS, CALLS, JUMP_LABELS, JUMPS, NOT_EMITTED, RAW, check, decoded, text
-from helpers import function_named, open_sample
+from flowcases import (CALL_TARGETS, CALLS, JUMP_LABELS, JUMPS, KNOWN_MISSES, NEGATIVES, NOT_EMITTED, RAW, check,
+                       decoded, has, text)
+from helpers import data_pointers, function_named, open_sample, settle
 
-from binja_d810.binja.flow import collect, evidence
+from binja_d810.binja.flow import apply, collect, evidence
 from binja_d810.deadline import Deadline
 from binja_d810.flow.codecheck import jump_problem
 from binja_d810.flow.tables import decode
@@ -103,3 +104,78 @@ def test_plain_code_has_no_site(off):
     _, bv = off
     for name in ("config_test", "f_a", "ident", "not_ident"):
         assert not _sites(bv, name, kinds=("jump", "call", "wrapper")), name
+
+
+NATIVE_JUMPS = {k: v for k, v in JUMP_LABELS.items() if k != "mba_jump"}  # resolved once their tables are const
+NATIVE_CALLS = {k: v for k, v in CALL_TARGETS.items() if k != "mba_call"}
+
+
+@pytest.fixture(scope="module", params=MATRIX, ids=IDS)
+def builds(request):
+    """(build-level, D-810 on and settled, D-810 off)."""
+    on = open_sample(sample("flow", *request.param), d810=True)
+    settle(on)
+    off = open_sample(sample("flow", *request.param), d810=False)
+    yield "-".join(request.param), on, off
+    on.file.close()
+    off.file.close()
+
+
+def _resolved_jump(hlil: str, labels: list[str]) -> bool:
+    return "jump(" not in hlil and all(has(hlil, c) for c in labels)
+
+
+def _direct_call(hlil: str, callee: str) -> bool:
+    return f"{callee}(" in hlil and not decoded(hlil)
+
+
+def _explain(bv, name: str) -> str:
+    func = function_named(bv, name)
+    return text(func) + "\n-- flow notes --\n" + "\n".join(apply.notes_for(bv, func.start))
+
+
+@pytest.mark.parametrize("name", sorted(NATIVE_JUMPS))
+def test_a_jump_through_a_never_written_table_is_resolved(builds, name):
+    key, on, _ = builds
+    check(key, name, _resolved_jump(text(function_named(on, name)), NATIVE_JUMPS[name]), _explain(on, name))
+
+
+@pytest.mark.parametrize("name", sorted(NATIVE_CALLS))
+def test_a_call_through_a_never_written_table_is_direct(builds, name):
+    key, on, _ = builds
+    check(key, name, _direct_call(text(function_named(on, name)), NATIVE_CALLS[name]), _explain(on, name))
+
+
+@pytest.mark.parametrize("name", NEGATIVES)
+def test_a_negative_is_left_alone(builds, name):
+    key, on, off = builds
+    if (key, name) in NOT_EMITTED:
+        return
+    assert text(function_named(on, name)) == text(function_named(off, name)), _explain(on, name)
+
+
+def test_a_shared_table_is_claimed_by_both_readers(builds):
+    key, on, off = builds
+    names = ("tbl_call_const", "tbl_call_shared")
+    if any((key, n) in NOT_EMITTED or (key, n) in KNOWN_MISSES for n in names):
+        return
+    table = data_pointers(off, function_named(off, "tbl_call_const"))[0]
+    change = apply.record_of(on).overlapping(table, table + 16)
+    assert change is not None and change.kind == "table", apply.record_of(on).to_json()
+    assert {function_named(on, n).start for n in names} <= change.claims
+
+
+def test_rounds_continue_past_the_cap(monkeypatch):
+    """With one site per round, rounds keep coming while analysis is idle, until every positive resolves."""
+    monkeypatch.setattr(apply, "SITES_PER_ROUND", 1)
+    build = MATRIX[0]
+    key = "-".join(build)
+    bv = open_sample(sample("flow", *build), d810=True)
+    try:
+        settle(bv, seconds=300)
+        for name, labels in NATIVE_JUMPS.items():
+            check(key, name, _resolved_jump(text(function_named(bv, name)), labels), _explain(bv, name))
+        for name, callee in NATIVE_CALLS.items():
+            check(key, name, _direct_call(text(function_named(bv, name)), callee), _explain(bv, name))
+    finally:
+        bv.file.close()

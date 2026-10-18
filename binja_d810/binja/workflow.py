@@ -18,6 +18,7 @@ from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
 from . import budget, log, settings
 from .engine import simplify_function
+from .flow import apply as flow_apply
 from .hlil.adapter import HLILAdapter
 from .mlil.adapter import MLILAdapter
 
@@ -79,6 +80,17 @@ def _handle(il) -> int:
     return ctypes.addressof(il.handle.contents)
 
 
+def _flow(ctx, adapter, func, report) -> bool:
+    """The flow fixes (v4.0), after the MLIL pass. True when they changed the MLIL."""
+    try:
+        if not ctx.get_setting_bool(settings.FLOW_FIXES):
+            return False
+        return flow_apply.after_pass(func.view, func, adapter, report)
+    except Exception as exc:  # never break analysis
+        log.logger.log_error(f"binja-d810 flow fixes failed at {func.start:#x}: {exc!r}")
+        return False
+
+
 def _run(ctx, level: str) -> None:
     if _levels_override is not None and level not in _levels_override:
         return
@@ -103,9 +115,10 @@ def _run(ctx, level: str) -> None:
     adapter = make(il, config.limits.max_nodes, allowance.deadline)
     backends = _backends_override if _backends_override is not None else _backends()
     report = simplify_function(adapter, rules, backends if config.tier2 else (), config, allowance.deadline)
+    changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
     allowance.charge(report.total_seconds)
     log.record(func, report, level)
-    if report.rewrites:
+    if report.rewrites or changed:
         if level == "mlil":
             ctx.mlil = il
         else:

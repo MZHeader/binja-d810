@@ -17,11 +17,12 @@ from binaryninja import ILSourceLocation, MediumLevelILOperation as Op
 
 from ...deadline import Deadline
 from ...flow.codecheck import call_problem, is_tail_call, jump_problem, split_starts
+from ...flow.ranges import parse as parse_ranges
 from ...flow.record import Change, Record
 from ...flow.tables import decode, span_of
 from ...ir.evaluate import evaluate
 from .. import log
-from . import collect, evidence, undo, wrappers
+from . import collect, evidence, readonly, undo, wrappers
 
 KEY = "binja_d810.flow"  # view metadata: the record, as JSON
 SITES_PER_ROUND = 64
@@ -39,6 +40,8 @@ class State:
     claimants: set = field(default_factory=set)  # functions with a claim in the record
     rejected: dict = field(default_factory=dict)  # (start, end) -> why it may be written, for the session
     notes: defaultdict = field(default_factory=lambda: defaultdict(list))  # function -> report lines
+    ranges: Optional[list] = None
+    enabled: set = field(default_factory=set)  # functions currently observed with the flow fixes enabled
     events: list = field(default_factory=list)  # completion events, kept alive
     armed: bool = False
     running: bool = False
@@ -63,6 +66,10 @@ def state_of(view) -> State:
                                    State(Record.from_json(text) if text else Record(), saved=text))
     with state.lock:
         state.recount()
+        recorded_ranges = [c for c in state.record.changes() if c.kind == "range"]
+        if recorded_ranges:
+            state.ranges = [(c.key, c.detail["end"]) for c in recorded_ranges]
+            state.enabled = {f for c in recorded_ranges for f in c.detail.get("users", [])}
     return state
 
 
@@ -158,6 +165,38 @@ def release(view, function: int) -> None:
         state.record.release(function)
         state.recount()
     _arm(view, state)
+
+
+def check_ranges(view, texts: list[str]) -> None:
+    """The read-only ranges setting as an MLIL activity saw it ([] with the flow fixes off). A change from what
+    was seen before arms a round, which brings the record in line."""
+    ranges, errors = parse_ranges(texts)
+    state = state_of(view)
+    with state.lock:
+        if state.ranges == ranges:
+            return
+        state.ranges = ranges
+    for text in errors:
+        log.logger.log_warn(f"binja-d810: read-only range {text!r} is not 0xSTART-0xEND; ignored")
+    _arm(view, state)
+
+
+def observe_enabled(func, enabled: bool, texts: list[str]) -> None:
+    """Ranges live while at least one analyzed function uses the flow fixes; unrelated disabled functions
+    must not clear another function's ranges. Runs from the unconditional flow activity."""
+    state = state_of(func.view)
+    with state.lock:
+        was_enabled = func.start in state.enabled
+        if enabled:
+            state.enabled.add(func.start)
+        else:
+            state.enabled.discard(func.start)
+        clear = not state.enabled and state.ranges is not None
+        changed_users = was_enabled != enabled and bool(state.ranges)
+    if enabled or clear:
+        check_ranges(func.view, texts if enabled else [])
+    if changed_users:
+        _arm(func.view, state)
 
 
 def trusted(view, site) -> bool:
@@ -258,6 +297,15 @@ def restore_inline(func) -> None:
         wrappers.set_inline_if_default(func)
 
 
+def _affected(change: Change) -> set[int]:
+    affected = set(change.detail.get("readers", [])) | set(change.detail.get("callers", []))
+    if change.kind in ("branches", "split"):
+        affected.add(change.detail["function"])
+    if change.kind == "inline":
+        affected.add(change.key)
+    return affected
+
+
 class Round:
     """One round's work: the view, its record, what to reanalyze, and caches."""
 
@@ -286,12 +334,7 @@ class Round:
     def add(self, change: Change) -> Change:
         """Keep a change; one kept already for the same kind and key gains its claims."""
         existing = self.record.get(change.kind, change.key)
-        detail = existing.detail if existing is not None else change.detail
-        affected = set(detail.get("readers", [])) | set(detail.get("callers", []))
-        if change.kind in ("branches", "split"):
-            affected.add(detail["function"])
-        if change.kind == "inline":
-            affected.add(change.key)
+        affected = _affected(existing if existing is not None else change)
         # Resolving code changes inferred signatures, which full reanalysis does not clear. Keep the
         # original once, with the same claims as the changes that affect it. User signatures still win.
         signatures = []
@@ -324,6 +367,16 @@ def run_round(view) -> None:
         sites = list(state.pending.values())[:SITES_PER_ROUND]
     work = Round(view, state)
     with state.lock:
+        ranges = list(state.ranges or [])
+    readonly.release_stale(work, ranges)
+    with state.lock:
+        dependencies = defaultdict(set)
+        for change in state.record.changes():
+            for start in _affected(change):
+                dependencies[start] |= change.claims
+        for change in state.record.changes():
+            if change.kind == "signature":
+                change.claims = set(dependencies[change.key])
         stale = state.record.unclaimed()
     defer_signatures = (any(change.kind == "signature" for change in stale)
                         and any(change.kind != "signature" for change in stale))
@@ -334,6 +387,10 @@ def run_round(view) -> None:
         restored |= undo.revert(view, change)
         work.drop(change)
     work.touched |= restored
+    with state.lock:
+        for start in restored:
+            state.decided.pop(start, None)
+    readonly.apply_wanted(work, ranges)
     deadline = Deadline.after(ROUND_SECONDS)
     done = []
     for site in sites:

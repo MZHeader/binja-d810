@@ -174,3 +174,95 @@ def test_undo_preserves_a_user_signature_and_inline_flag():
         assert _no_record(bv)
     finally:
         bv.file.close()
+
+
+def test_a_read_only_range_folds_its_data_and_clearing_it_restores():
+    off = open_sample(sample("flow", *BUILD), d810=False)
+    try:
+        flag = data_pointers(off, function_named(off, "config_test"))[0]
+        before = text(function_named(off, "config_test"))
+    finally:
+        off.file.close()
+    bv = _fresh()
+    try:
+        Settings().set_string_list(settings.READ_ONLY_RANGES, [f"{flag:#x}-{flag + 3:#x}", "not a range"], bv)
+        function_named(bv, "config_test").reanalyze()
+        settle(bv)
+        hlil = text(function_named(bv, "config_test"))
+        assert "== 7" not in hlil and "!= 7" not in hlil, hlil
+        assert apply.record_of(bv).get("range", flag) is not None
+        Settings().set_string_list(settings.READ_ONLY_RANGES, [], bv)
+        function_named(bv, "config_test").reanalyze()
+        settle(bv)
+        assert text(function_named(bv, "config_test")) == before
+        assert apply.record_of(bv).get("range", flag) is None
+    finally:
+        bv.file.close()
+
+
+@pytest.mark.parametrize("reopen", [False, True])
+def test_ranges_follow_the_last_enabled_function(tmp_path, reopen):
+    bv = open_sample(sample("flow", *BUILD), d810=False)
+    try:
+        func = function_named(bv, "config_test")
+        before = text(func)
+        flag = data_pointers(bv, func)[0]
+        Settings().set_string_list(settings.READ_ONLY_RANGES, [f"{flag:#x}-{flag + 3:#x}"], bv)
+        Settings().set_bool(workflow.ACTIVITY_SETTING, True, func)
+        func.reanalyze()
+        settle(bv)
+        assert "== 7" not in text(func) and "!= 7" not in text(func)
+        # An unrelated disabled function must not remove the range.
+        function_named(bv, "f_a").reanalyze()
+        settle(bv)
+        assert apply.record_of(bv).get("range", flag) is not None
+        if reopen:
+            path = tmp_path / "ranges.bndb"
+            assert bv.create_database(str(path))
+            bv.file.close()
+            bv = binaryninja.load(str(path))
+        _disable(bv, function_named(bv, "config_test"))
+        assert text(function_named(bv, "config_test")) == before
+        assert _no_record(bv), apply.record_of(bv).to_json()
+    finally:
+        bv.file.close()
+
+
+def test_a_range_keeps_a_table_after_its_functions_release():
+    bv = _fresh()
+    try:
+        change = _table_of(bv, "tbl_call_const")
+        Settings().set_string_list(settings.READ_ONLY_RANGES,
+                                   [f"{change.key:#x}-{change.detail['end'] - 1:#x}"], bv)
+        function_named(bv, "config_test").reanalyze()
+        settle(bv)
+        _disable(bv, function_named(bv, "tbl_call_const"))
+        _disable(bv, function_named(bv, "tbl_call_shared"))
+        assert "f_b(" in text(function_named(bv, "tbl_call_const"))
+        Settings().set_string_list(settings.READ_ONLY_RANGES, [], bv)
+        function_named(bv, "config_test").reanalyze()
+        settle(bv)
+        assert decoded(text(function_named(bv, "tbl_call_const")))
+        assert apply.record_of(bv).get("table", change.key) is None
+    finally:
+        bv.file.close()
+
+
+def test_a_read_only_range_preserves_user_types():
+    bv = open_sample(sample("flow", *BUILD), d810=False)
+    try:
+        func = function_named(bv, "config_test")
+        flag = data_pointers(bv, func)[0]
+        user = bv.parse_type_string("uint32_t user_flag")[0]
+        bv.define_user_data_var(flag, user)
+        Settings().set_string_list(settings.READ_ONLY_RANGES, [f"{flag:#x}-{flag + 3:#x}"], bv)
+        Settings().set_bool(workflow.ACTIVITY_SETTING, True, func)
+        func.reanalyze()
+        settle(bv)
+        assert str(bv.get_data_var_at(flag).type) == str(user)
+        assert "== 7" in text(func) or "!= 7" in text(func)
+        _disable(bv, func)
+        assert str(bv.get_data_var_at(flag).type) == str(user)
+        assert _no_record(bv)
+    finally:
+        bv.file.close()

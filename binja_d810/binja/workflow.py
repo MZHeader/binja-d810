@@ -157,9 +157,11 @@ def run_hlil_activity(ctx: AnalysisContext) -> None:
 
 def run_branches_activity(ctx: AnalysisContext) -> None:
     try:
+        enabled = _enabled(ctx) and ctx.get_setting_bool(settings.FLOW_FIXES)
         if ctx.function is not None:
+            flow_apply.observe_enabled(ctx.function, enabled, ctx.get_setting_string_list(settings.READ_ONLY_RANGES))
             flow_apply.restore_inline(ctx.function)
-        if _enabled(ctx) and ctx.get_setting_bool(settings.FLOW_FIXES):
+        if enabled:
             branches.apply_branches(ctx.function)
         elif ctx.function is not None:
             # The MBA activity's eligibility skips its callback entirely when its toggle is off.

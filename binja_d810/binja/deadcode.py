@@ -8,7 +8,7 @@ the definitions its own rewrites made dead: dead_after - dead_before.
 
 from __future__ import annotations
 
-from typing import Hashable, Iterable, Mapping, Optional
+from typing import Callable, Hashable, Iterable, Mapping, Optional
 
 
 def dead_definitions(pure: Mapping[Hashable, Iterable[Hashable]], roots: Iterable[Hashable]) -> set[Hashable]:
@@ -21,6 +21,21 @@ def dead_definitions(pure: Mapping[Hashable, Iterable[Hashable]], roots: Iterabl
         live.add(key)
         work.extend(pure.get(key, ()))
     return {key for key in pure if key not in live}
+
+
+def dead_with_checks(pure: Mapping[Hashable, Iterable[Hashable]], roots: Iterable[Hashable],
+                     checks: Mapping[Hashable, Callable[[], bool]]) -> set[Hashable]:
+    """dead_definitions where some definitions are pure only if a check passes (a division that cannot
+    trap, v3.5). A check runs only for a definition that would be removed: a live one keeps what it reads
+    alive whether or not it is pure. One that fails is not removable and keeps its reads alive."""
+    pure, roots, pending = dict(pure), list(roots), dict(checks)
+    while True:
+        dead = dead_definitions(pure, roots)
+        failed = [key for key in dead if key in pending and not pending.pop(key)()]
+        if not failed:
+            return dead
+        for key in failed:
+            roots.extend(pure.pop(key))
 
 
 def dying_with_root(uses: Mapping[Hashable, Iterable[int]], defined_at: Mapping[Hashable, int],

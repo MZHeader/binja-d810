@@ -44,3 +44,21 @@ def test_single_use_definitions_are_shown_in_the_statement_that_uses_them():
     uses = {"m": [2], "a": [3, 4]}
     defined_at = {"m": 1, "a": 2}
     assert shown_in({"m", "a"}, uses, defined_at, root_statement=5) == {"m": "a", "a": "a"}
+
+
+def test_a_check_runs_only_for_a_definition_that_would_be_removed():
+    from binja_d810.binja.deadcode import dead_with_checks
+
+    ran = []
+    checks = {"live": lambda: ran.append("live") or True, "dead": lambda: ran.append("dead") or True}
+    pure = {"live": ["a"], "dead": ["b"], "a": [], "b": []}
+    assert dead_with_checks(pure, ["live"], checks) == {"dead", "b"}
+    assert ran == ["dead"]
+
+
+def test_a_failed_check_keeps_the_definition_and_what_it_reads():
+    from binja_d810.binja.deadcode import dead_with_checks
+
+    # q = a / b where b may be 0: not removable, so a and b stay alive.
+    pure = {"q": ["a", "b"], "a": [], "b": [], "t": []}
+    assert dead_with_checks(pure, [], {"q": lambda: False}) == {"t"}

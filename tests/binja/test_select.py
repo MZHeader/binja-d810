@@ -40,3 +40,14 @@ def test_hlil_lifts_sbb(view):
     assert e is not None, str(ret)
     e = strip_versions(e)
     assert evaluate(e, {"x": 0}) == 0x20 and evaluate(e, {"x": 7}) == 0x30
+
+
+def test_a_select_compared_with_its_arm_folds_to_the_condition():
+    bv = open_sample("select_x86_64.so", d810=True)
+    try:
+        set_types(bv, SIGNATURES)
+        func = function_named(bv, "sel_cmp")
+        hlil = "\n".join(map(str, func.hlil.instructions))
+        assert "sbb" not in hlil and "x != 0" in hlil, hlil
+    finally:
+        bv.file.close()

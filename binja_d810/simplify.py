@@ -12,6 +12,7 @@ from .rules.base import Rewrite, Rule
 from .semantic.backend import Tier2Backend
 from .semantic.constancy import CONSTANCY_Z3_MS, sampled_constant
 from .semantic.linear_mba import is_linear_mba
+from .semantic.selects import fold_select
 from .deadline import Deadline
 from .semantic.verify import Check, Verdict
 from .semantic.verify import check as verify_check
@@ -110,6 +111,14 @@ def simplify_expression(
                 return out
             if tier1_cache is not None and out.skipped is not None and not deadline.expired():
                 tier1_cache[("constancy", current)] = out.skipped
+            out.skipped = out.skipped or skipped
+    if not isinstance(current, Const) and current.width == 1 and is_candidate(expr) and not deadline.expired():
+        # One boolean (v4.2): a condition that reads its inputs only through c is c, not c or a constant.
+        folded = fold_select(current)
+        if folded is not None:
+            skipped, out.skipped = out.skipped, None
+            if _finish(expr, folded, sources + ["select"], out, check, custom_check, deadline):
+                return out
             out.skipped = out.skipped or skipped
     _finish(expr, current, sources, out, check, custom_check, deadline)
     return out

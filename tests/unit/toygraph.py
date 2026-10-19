@@ -66,7 +66,7 @@ class ToyGraph:
                 return BinOp(op, l, r, 1)
         names = set(_NAME.findall(text))
         e = parse(text, 32, {n: self.bits(n.split("#")[0]) for n in names})
-        mapping = {v.name: Var(v.name, v.width, ref=self.key(v.name)) for v in variables(e)}
+        mapping = {v.name: Var(v.name, v.width, ref=self.key(v.name)) for v in variables(e) if "#" in v.name}
         return substitute(e, mapping)
 
     def _step(self, b: int, text: str) -> Step:

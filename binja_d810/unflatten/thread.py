@@ -9,7 +9,7 @@ from typing import Mapping, Optional
 
 from ..deadline import Deadline
 from ..ir.expr import CMP_OPS, BinOp, Const, Expr, Var, substitute, variables
-from .graph import Branch, Goto, Graph, Jump, Key, Phi, dominators, key_of, reaches
+from .graph import Assign, Branch, Goto, Graph, Jump, Key, Phi, dominators, key_of, reaches
 from .values import Values, outcomes
 
 MAX_STEPS = 64
@@ -106,7 +106,7 @@ def _split(graph: Graph, values: Values, pred: int, start: int, env: Mapping[Key
         key = graph.phi_source(start, pred, dest)
         if key is None or values.static(key) is not None:
             continue
-        if isinstance(graph.definition(key), Phi) and graph.def_block(key) == pred:
+        if _merged_in(graph, key, pred):
             continue  # merged in the predecessor itself: the edges into it are threaded instead
         found = values.value_set(key)
         if found is None or len(found) < 2:
@@ -122,6 +122,21 @@ def _split(graph: Graph, values: Values, pred: int, start: int, env: Mapping[Key
     return None
 
 
+def _merged_in(graph: Graph, key: Key, block: int) -> bool:
+    """`key` is a phi of `block`, or a copy of one (through full-width copies)."""
+    seen = set()
+    while key not in seen:
+        seen.add(key)
+        d = graph.definition(key)
+        if isinstance(d, Phi):
+            return graph.def_block(key) == block
+        if not (isinstance(d, Assign) and isinstance(d.expr, Var) and key_of(d.expr) is not None
+                and d.expr.width == graph.width(key_of(d.expr))):
+            return False
+        key = key_of(d.expr)
+    return False
+
+
 def _condition(graph: Graph, values: Values, pred: int, key: Key) -> tuple[Optional[Expr], Optional[int], Optional[int]]:
     """(c, value if c, value if not c) when `key` is a live expression of exactly one boolean c."""
     e = graph.live_expression(pred, key)
@@ -135,20 +150,22 @@ def select(graph: Graph, threads: list[Thread], evidenced: frozenset[int] = froz
     """Spec §3.4: the dispatcher blocks of evidenced state variables, and the threads through them, each cut
     after the dispatcher at the first handler with side effects."""
     counts = Counter(b for t in threads for b in set(_decided(t)))
-    hot = sorted(b for b, n in counts.items() if n >= 2)
     reads: dict[int, set[int]] = {}
     compared: dict[int, set[int]] = defaultdict(set)
     jumped: set[int] = set()
-    for b in hot:
+    for b, n in sorted(counts.items()):
         term = graph.terminator(b)
+        read = _terminator_reads(term)
+        # Later rounds know the state: what a round leaves is often a single edge through a dispatcher block.
+        if n < 2 and not read & evidenced:
+            continue
+        reads[b] = read
         if isinstance(term, Branch):
-            reads[b] = _reads(term.cond)
             found = _compared(term.cond)
             if found is not None:
                 compared[found[0]].add(found[1])
         elif isinstance(term, Jump):
-            reads[b] = _reads(term.dest, *(load.address for load in term.loads.values()))
-            jumped |= reads[b]
+            jumped |= read
     states = {v for read in reads.values() for v in read
               if v in evidenced or v in jumped or len(compared[v]) >= MIN_STATES}
     dispatcher = frozenset(b for b, read in reads.items() if read & states)
@@ -164,6 +181,14 @@ def _outcomes(thread: Thread) -> list[Outcome]:
 
 def _decided(thread: Thread) -> list[int]:
     return [b for o in _outcomes(thread) for b in o.decided]
+
+
+def _terminator_reads(term) -> set[int]:
+    if isinstance(term, Branch):
+        return _reads(term.cond)
+    if isinstance(term, Jump):
+        return _reads(term.dest, *(load.address for load in term.loads.values()))
+    return set()
 
 
 def _reads(*exprs: Optional[Expr]) -> set[int]:
@@ -272,7 +297,7 @@ def simulate(graph: Graph, values: Values, pred: int, start: int, env: Mapping[K
         entered = {}
         for dest in graph.phis(cur):  # together: a phi may read another phi of the same block
             src = graph.phi_source(cur, came, dest)
-            entered[dest] = None if src is None else (env[src] if src in env else values.static(src))
+            entered[dest] = None if src is None else _known(graph, values, env, src)
         for dest, value in entered.items():
             _set(env, dest, value)
         for step in graph.steps(cur):
@@ -290,6 +315,20 @@ def simulate(graph: Graph, values: Values, pred: int, start: int, env: Mapping[K
         path.append(cur)
         came, cur = cur, target
     return Outcome(tuple(path), cur, tuple(decided))
+
+
+def _known(graph: Graph, values: Values, env: Mapping[Key, int], key: Key) -> Optional[int]:
+    """`key`'s value under `env`: its own, that of a variable it copies in the same block (they always change
+    together, and a fact is on the one a test is lifted through), or its static value."""
+    k, seen = key, set()
+    while k not in env and k not in seen:
+        seen.add(k)
+        d = graph.definition(k)
+        source = key_of(d.expr) if isinstance(d, Assign) and isinstance(d.expr, Var) else None
+        if source is None or d.expr.width != graph.width(source) or graph.def_block(source) != graph.def_block(k):
+            break
+        k = source
+    return env[k] if k in env else values.static(key)
 
 
 def _set(env: dict, key: Key, value: Optional[int]) -> None:

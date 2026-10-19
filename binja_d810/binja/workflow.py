@@ -3,20 +3,23 @@
 Two passes, one toggle: the MLIL activity runs after MLIL generation and is the one
 users enable ("D-810: simplify MBA expressions"); the HLIL activity runs after HLIL generation for
 every function and returns at once unless that same setting is on. It sees HLIL generated from the
-already rewritten MLIL, so it only acts on what the MLIL pass could not express.
+already rewritten MLIL, so it only acts on what the MLIL pass could not express. Unflattening (v4.2)
+follows the same toggle in an activity of its own, after Binary Ninja resolves indirect branches.
 """
 
 import ctypes
 import json
+import time
 from functools import lru_cache
 from typing import Optional
 
 from binaryninja import Activity, AnalysisContext, Workflow, log_info
 from binaryninja.interaction import show_plain_text_report
 
+from ..flow.ranges import parse as parse_ranges
 from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
-from . import budget, log, settings
+from . import budget, log, settings, unflatten
 from .engine import simplify_function
 from .flow import apply as flow_apply, branches
 from .hlil.adapter import HLILAdapter
@@ -29,6 +32,10 @@ ACTIVITY_SETTING = ACTIVITY_NAME
 HLIL_ACTIVITY_NAME = "extension.binja_d810.mba_hlil"
 BRANCHES_ACTIVITY_NAME = "extension.binja_d810.branches"
 BRANCH_RESET = "core.function.resetIndirectBranchesOnFullUpdate"
+UNFLATTEN_ACTIVITY_NAME = "extension.binja_d810.unflatten"
+# That analysis reads ctx.mlil: a rewrite before it removes the jump it resolves, and the function's
+# analysis then never settles (v4.2, measured). Without it, unflattening follows the MLIL pass.
+UNFLATTEN_AFTER = "core.function.analyzeIndirectBranches"
 BASE_WORKFLOWS = ("core.function.metaAnalysis", "core.function.objectiveC")
 
 _ACTIVITIES: list[Activity] = []  # keep callbacks alive
@@ -96,6 +103,20 @@ def _flow(ctx, adapter, func, report) -> bool:
         return False
 
 
+def _begin(ctx, config, level: str, il) -> budget.Allowance:
+    # One allowance per function and analysis run, shared by all passes: the generation is the
+    # MLIL the MLIL pass produced, which the later activities see as ctx.mlil (binja/budget.py).
+    func, mlil = ctx.function, ctx.mlil
+    from . import limits  # it imports this module
+
+    # The limit Binary Ninja really applies: the one the binary was opened with (v3.3, measured).
+    limit_ms = limits.in_effect_ms(func, _analysis_limit_ms(ctx))
+    return budget.LEDGER.begin((func.view.file.session_id, func.start), level,
+                               generation=_handle(mlil) if mlil is not None else _handle(il),
+                               keepalive=mlil if mlil is not None else il,
+                               allowance=budget.plugin_allowance(config.function_seconds, limit_ms))
+
+
 def _run(ctx, level: str) -> None:
     if _levels_override is not None and level not in _levels_override:
         return
@@ -105,17 +126,7 @@ def _run(ctx, level: str) -> None:
         return
     config = settings.engine_config(ctx)
     rules = _rules_override if _rules_override is not None else _rules(config.disabled_rules)
-    # One allowance per function and analysis run, shared by both passes: the generation is the
-    # MLIL the MLIL pass produced, which the HLIL activity sees as ctx.mlil (binja/budget.py).
-    mlil = ctx.mlil
-    from . import limits  # it imports this module
-
-    # The limit Binary Ninja really applies: the one the binary was opened with (v3.3, measured).
-    limit_ms = limits.in_effect_ms(func, _analysis_limit_ms(ctx))
-    allowance = budget.LEDGER.begin((func.view.file.session_id, func.start), level,
-                                    generation=_handle(mlil) if mlil is not None else _handle(il),
-                                    keepalive=mlil if mlil is not None else il,
-                                    allowance=budget.plugin_allowance(config.function_seconds, limit_ms))
+    allowance = _begin(ctx, config, level, il)
     make = MLILAdapter if level == "mlil" else HLILAdapter
     adapter = make(il, config.limits.max_nodes, allowance.deadline)
     backends = _backends_override if _backends_override is not None else _backends()
@@ -128,6 +139,27 @@ def _run(ctx, level: str) -> None:
             ctx.mlil = il
         else:
             ctx.hlil = il
+
+
+def _unflatten(ctx) -> None:
+    """Unflattening (v4.2): the MLIL pass's allowance and report, and each round committed to ctx.mlil."""
+    func, mlil = ctx.function, ctx.mlil
+    if mlil is None or not ctx.get_setting_bool(settings.UNFLATTEN):
+        return
+    allowance = _begin(ctx, settings.engine_config(ctx), "mlil", mlil)
+    ranges, _ = parse_ranges(ctx.get_setting_string_list(settings.READ_ONLY_RANGES))
+    started = time.monotonic()
+    try:
+        lines = unflatten.run(ctx, deadline=allowance.deadline, ranges=ranges)
+    finally:
+        allowance.charge(time.monotonic() - started)
+        if _handle(ctx.mlil) != _handle(mlil):
+            allowance.adopt(_handle(ctx.mlil), ctx.mlil)  # the HLIL pass sees the unflattened MLIL
+    report = log.latest_report(func, "mlil")
+    if report is not None:
+        report.unflatten = lines
+    for line in lines:
+        log.logger.log_info(f"{func.start:#x} unflatten: {line}")
 
 
 def debug_report_text(func) -> str:
@@ -167,6 +199,15 @@ def run_hlil_activity(ctx: AnalysisContext) -> None:
         log.logger.log_error(f"binja-d810 HLIL activity failed: {exc!r}")
 
 
+def run_unflatten_activity(ctx: AnalysisContext) -> None:
+    func = ctx.function
+    try:
+        if _enabled(ctx) and (_levels_override is None or "mlil" in _levels_override):
+            _unflatten(ctx)
+    except Exception as exc:  # never break analysis: the last committed MLIL stays
+        log.logger.log_error(f"binja-d810 unflatten failed at {func.start:#x}: {exc!r}")
+
+
 def run_branches_activity(ctx: AnalysisContext) -> None:
     try:
         enabled = _enabled(ctx) and ctx.get_setting_bool(settings.FLOW_FIXES)
@@ -182,10 +223,11 @@ def run_branches_activity(ctx: AnalysisContext) -> None:
         log.logger.log_error(f"binja-d810 branches activity failed: {exc!r}")
 
 
-def register(action=None, hlil_action=None, branches_action=None) -> list[str]:
+def register(action=None, hlil_action=None, branches_action=None, unflatten_action=None) -> list[str]:
     action = action or run_activity
     hlil_action = hlil_action or run_hlil_activity
     branches_action = branches_action or run_branches_activity
+    unflatten_action = unflatten_action or run_unflatten_activity
     config = json.dumps({
         "name": ACTIVITY_NAME,
         "title": "D-810: simplify MBA expressions",
@@ -203,6 +245,11 @@ def register(action=None, hlil_action=None, branches_action=None) -> list[str]:
         "title": "D-810: computed jump targets",
         "description": "Restores recorded wrapper inline flags and computed jump targets (binja-d810).",
     })
+    unflatten_config = json.dumps({
+        "name": UNFLATTEN_ACTIVITY_NAME,
+        "title": "D-810: unflatten control flow",
+        "description": "Threads flattened control flow past its dispatcher in MLIL; enabled by the D-810 setting.",
+    })
     registered = []
     for base in BASE_WORKFLOWS:
         if base not in Workflow:
@@ -210,7 +257,8 @@ def register(action=None, hlil_action=None, branches_action=None) -> list[str]:
         activity = Activity(configuration=config, action=action)
         hlil_activity = Activity(configuration=hlil_config, action=hlil_action)
         branches_activity = Activity(configuration=branches_config, action=branches_action)
-        _ACTIVITIES.extend([activity, hlil_activity, branches_activity])
+        unflatten_activity = Activity(configuration=unflatten_config, action=unflatten_action)
+        _ACTIVITIES.extend([activity, hlil_activity, branches_activity, unflatten_activity])
         wf = Workflow(base).clone(base)
         wf.register_activity(activity)
         wf.register_activity(hlil_activity)
@@ -219,8 +267,10 @@ def register(action=None, hlil_action=None, branches_action=None) -> list[str]:
         wf.register_activity(branches_activity)
         if wf.contains(BRANCH_RESET):
             wf.insert_after(BRANCH_RESET, [BRANCHES_ACTIVITY_NAME])
+        wf.register_activity(unflatten_activity)
+        wf.insert_after(UNFLATTEN_AFTER if wf.contains(UNFLATTEN_AFTER) else ACTIVITY_NAME, [UNFLATTEN_ACTIVITY_NAME])
         wf.register()
         registered.append(base)
-    log_info(f"binja-d810: activities {ACTIVITY_NAME}, {HLIL_ACTIVITY_NAME}, {BRANCHES_ACTIVITY_NAME} registered on "
-             f"{registered}")
+    log_info(f"binja-d810: activities {ACTIVITY_NAME}, {HLIL_ACTIVITY_NAME}, {BRANCHES_ACTIVITY_NAME}, "
+             f"{UNFLATTEN_ACTIVITY_NAME} registered on {registered}")
     return registered

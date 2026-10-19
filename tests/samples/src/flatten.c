@@ -1,7 +1,9 @@
 // v4.2 fixtures: hand-flattened state machines (a sparse compare tree, a dense switch, nested whiles, a machine
 // with a counted loop) and ordinary code D-810 must leave alone. B(s) at every dispatch hands the state to an
 // empty asm that may change it, so the compiler cannot thread the dispatcher away itself; the binary keeps the
-// value unchanged, which is what an analysis sees. Every state constant is made up for these fixtures.
+// value unchanged, which is what an analysis sees. Every state constant is made up for these fixtures, with a
+// byte that is not printable (Binary Ninja writes a store of 4 printable bytes as a strncpy call at -O0).
+// Conditional transitions read what the handlers computed, so the compiler cannot hoist them out of the loop.
 #include <stdint.h>
 #define B(v) __asm__ volatile("" : "+r"(v))
 #define KEEP(p) __asm__ volatile("" : : "r"(p) : "memory")
@@ -15,22 +17,25 @@
 #define LOCAL __attribute__((noinline, used, visibility("hidden")))
 #endif
 
-LOCAL int mark(int k) { B(k); return k; }  // a handler's visible work, in the order the machine runs it
+// A handler's visible work, in the order the machine runs it. Exported and storing k, so every build keeps
+// the calls, names them and passes k (with an empty body, Binary Ninja sees an arm64 ret and drops them).
+EXPORT_DATA volatile int marked;
+EXPORT int mark(int k) { B(k); marked = k; return k; }
 EXPORT_DATA uint32_t *peeked;
 LOCAL void peek(uint32_t *p) { KEEP(p); peeked = p; }  // may read or write *p, later too: p escapes
 
 // ---- Flattened ----
 
-EXPORT int fl_tree(int x) {  // 5 sparse states, one transition picked by x > 3
+EXPORT int fl_tree(int x) {  // 5 sparse states, one transition picked by r > x
     uint32_t s = 0x7a3c19e5u;
     int r = 0;
     for (;;) {
         B(s);
         if (s == 0x7a3c19e5u) { r += mark(1); s = 0x1b4d8c27u; }
-        else if (s == 0x1b4d8c27u) { r += mark(2); s = x > 3 ? 0x5e91a3f0u : 0x33c6d218u; }
+        else if (s == 0x1b4d8c27u) { r += mark(2); s = r > x ? 0x5e91a3f0u : 0x33c6d218u; }
         else if (s == 0x5e91a3f0u) { r += mark(3); s = 0x33c6d218u; }
-        else if (s == 0x33c6d218u) { r += mark(4); s = 0x6f2b7c41u; }
-        else if (s == 0x6f2b7c41u) { return r + mark(5); }
+        else if (s == 0x33c6d218u) { r += mark(4); s = 0x6f2b9c41u; }
+        else if (s == 0x6f2b9c41u) { return r + mark(5); }
         else { return -1; }
     }
 }
@@ -59,7 +64,7 @@ EXPORT int fl_nested(int x) {  // Hodur-style: one while per state inside the di
     for (;;) {
         B(s);
         while (s == 0x2d81f6a3u) { r += mark(21); s = 0x49e07b12u; B(s); }
-        while (s == 0x49e07b12u) { r += mark(22); s = (x & 1) ? 0x0c5a9e84u : 0x71f3d250u; B(s); }
+        while (s == 0x49e07b12u) { r += mark(22); s = ((r ^ x) & 1) ? 0x0c5a9e84u : 0x71f3d250u; B(s); }
         while (s == 0x0c5a9e84u) { r += mark(23); s = 0x71f3d250u; B(s); }
         if (s == 0x71f3d250u) { return r + mark(24); }
     }

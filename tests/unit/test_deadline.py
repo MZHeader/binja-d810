@@ -24,6 +24,16 @@ def test_hlil_pass_gets_only_what_mlil_left():
     assert 1.9 < hlil.remaining() <= 2.0 and hlil.inherited
 
 
+def test_an_adopted_generation_is_inherited_by_the_hlil_pass():
+    # Unflattening replaces the MLIL object (v4.2): the HLIL pass sees the new one as ctx.mlil.
+    ledger = Ledger()
+    mlil = ledger.begin(("view", 0x1000), "mlil", generation=111, keepalive=object(), allowance=5.0)
+    mlil.charge(3.0)
+    mlil.adopt(222, object())
+    hlil = ledger.begin(("view", 0x1000), "hlil", generation=222, keepalive=object(), allowance=5.0)
+    assert 1.9 < hlil.remaining() <= 2.0 and hlil.inherited and mlil.used() == 3.0
+
+
 def test_repeated_calls_in_one_generation_get_no_fresh_allowance():
     ledger = Ledger()
     first = ledger.begin(("view", 0x1000), "mlil", generation=111, keepalive=object(), allowance=5.0)

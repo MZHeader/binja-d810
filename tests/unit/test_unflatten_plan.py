@@ -149,6 +149,36 @@ def test_no_split_on_a_phi_in_the_predecessor_itself():
     assert {2, 3, 4} <= {t.pred for t in plan(g).threads}
 
 
+def test_no_split_on_a_copy_of_a_phi_in_the_predecessor():
+    spec = _tree()  # the handler picks the next state with a branch; its merge copies the pick into the state
+    spec[2] = {"do": ["!", f"t#1 = {B:#x}"], "if": ("q#1 == 0", 15, 16)}
+    spec[15] = {"do": [f"t#2 = {C:#x}"], "goto": 16}
+    spec[16] = {"phi": {"t#3": {2: "t#1", 15: "t#2"}}, "do": ["s#3 = t#3"], "goto": 9}
+    spec[9]["phi"] = {"s#9": {16: "s#3", 3: "s#4", 4: "s#5"}}
+    threads = _by_pred(plan(toy(spec)))
+    assert 16 not in threads and threads[2].outcome.dest == 3 and threads[15].outcome.dest == 4
+
+
+def test_a_fact_holds_for_a_copy_made_in_the_same_block():
+    # At -O0 the dispatcher reloads the state (s#3 = s#2) and its tests are lifted through the copy, so the
+    # fact is on s#2. A loop body that keeps the state passes the copy to the latch.
+    g = toy({
+        0: {"do": [f"s#1 = {A:#x}"], "goto": 1},
+        1: {"phi": {"s#2": {0: "s#1", 9: "s#9"}}, "do": ["s#3 = s#2"], "if": (f"s#2 == {A:#x}", 2, 5)},
+        5: {"if": (f"s#2 == {B:#x}", 3, 6)},
+        6: {"if": (f"s#2 == {C:#x}", 4, 10)},
+        2: {"do": ["!", f"s#4 = {B:#x}"], "goto": 9},
+        3: {"if": ("q#1 u< 4", 7, 8)},
+        7: {"do": ["!"], "goto": 9},
+        8: {"do": [f"s#5 = {C:#x}"], "goto": 9},
+        4: {"do": ["!"], "stop": True},
+        10: {"stop": True},
+        9: {"phi": {"s#9": {2: "s#4", 7: "s#3", 8: "s#5"}}, "goto": 1},
+    })
+    threads = _by_pred(plan(g, evidenced=frozenset({g.key("s#1").var})))
+    assert threads[7].split is None and threads[7].outcome.dest == 3
+
+
 def test_a_path_ends_at_the_first_handler_with_a_side_effect():
     threads = _by_pred(plan(toy(_tree())))
     assert threads[0].outcome.path == (1,) and threads[0].outcome.dest == 2
@@ -269,6 +299,22 @@ def test_a_state_from_a_parameter_is_not_threaded():
 
 
 # --- rounds and time ---
+
+def test_a_lone_edge_of_an_evidenced_state_is_threaded():
+    # What a round leaves is often one edge: later rounds take the dispatcher blocks of the variables
+    # evidenced before even when a single thread decides them.
+    g = toy({
+        0: {"if": ("q#1 u< 4", 5, 4)},
+        5: {"do": [f"s#1 = {A:#x}"], "goto": 1},
+        4: {"do": ["s#4 = ?"], "goto": 1},
+        1: {"phi": {"s#2": {5: "s#1", 4: "s#4"}}, "if": (f"s#2 == {A:#x}", 2, 3)},
+        2: {"do": ["!"], "stop": True},
+        3: {"do": ["!"], "stop": True},
+    })
+    assert plan(g) == EMPTY
+    carried = plan(g, evidenced=frozenset({g.key("s#1").var}))
+    assert _ends(carried) == {(5, 2)} and carried.dispatcher == {1}
+
 
 def test_evidence_is_carried_to_a_residual_tree():
     g = toy({

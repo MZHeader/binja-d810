@@ -134,3 +134,8 @@ def test_the_flow_settings_are_registered_with_their_defaults():
     s = Settings()
     assert s.contains(settings.FLOW_FIXES) and s.get_bool(settings.FLOW_FIXES)
     assert s.contains(settings.READ_ONLY_RANGES) and s.get_string_list(settings.READ_ONLY_RANGES) == []
+
+
+def test_the_unflatten_setting_is_registered_on_by_default():
+    s = Settings()
+    assert s.contains(settings.UNFLATTEN) and s.get_bool(settings.UNFLATTEN)

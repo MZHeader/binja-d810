@@ -81,6 +81,7 @@ class FunctionReport:
     subsumed: int = 0  # candidates skipped because a planned later candidate inlined them
     constant_uses: int = 0  # reads replaced by the constant their definition was proven to be (v3.1)
     flow: list[str] = field(default_factory=list)  # targets the flow fixes made constant in this MLIL (v4.0)
+    unflatten: list[str] = field(default_factory=list)  # one line per unflattening round (v4.2)
     # Time. Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0

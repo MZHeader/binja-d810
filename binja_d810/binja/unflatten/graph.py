@@ -149,7 +149,8 @@ class MLILGraph:
         return substitute(e, mapping) if mapping else e
 
     def _lift(self, e, root) -> Optional[Expr]:
-        found = lift(e, root_instr=root, check_versions=False, max_nodes=self.max_nodes, definitions=self._defs)
+        found = lift(e, root_instr=root, check_versions=False, max_nodes=self.max_nodes, definitions=self._defs,
+                     dataflow=False)
         return None if found is None else self._relink(found)
 
     def _ssa_block(self, block: int):
@@ -235,7 +236,7 @@ class MLILGraph:
     def _jump(self, si, targets: dict[int, int]) -> Jump:
         """The destination with each load a leaf (lift's load_leaves), and each load's address lifted on its own."""
         dest = lift(si.dest, root_instr=si, check_versions=False, max_nodes=self.max_nodes, definitions=self._defs,
-                    load_leaves=True)
+                    load_leaves=True, dataflow=False)
         if dest is None:
             return Jump(None, {}, targets)
         loads = {}

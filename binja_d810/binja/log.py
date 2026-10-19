@@ -65,6 +65,7 @@ def render(report: FunctionReport) -> str:
     if getattr(report, "constant_uses", 0):
         lines.append(f"constants into their uses: {report.constant_uses} reads")
     lines += [f"flow: {line}" for line in getattr(report, "flow", [])]
+    lines += [f"unflatten: {line}" for line in getattr(report, "unflatten", [])]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

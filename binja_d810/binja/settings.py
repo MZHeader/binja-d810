@@ -20,6 +20,7 @@ SKIP_FUNCTIONS = f"{PREFIX}.skipFunctions"
 FUNCTION_SECONDS = f"{PREFIX}.functionSeconds"
 FLOW_FIXES = f"{PREFIX}.flowFixes"
 READ_ONLY_RANGES = f"{PREFIX}.readOnlyRanges"
+UNFLATTEN = f"{PREFIX}.unflatten"
 
 _SPECS = {
     ENABLED: {"title": "Enabled", "type": "boolean", "default": True,
@@ -50,6 +51,10 @@ _SPECS = {
     READ_ONLY_RANGES: {"title": "Read-only ranges", "type": "array", "elementType": "string", "default": [],
                        "description": "Address ranges whose data D-810 treats as constant, as 0xSTART-0xEND "
                                       "(end included). No checks: use it for data you know is never written."},
+    UNFLATTEN: {"title": "Unflatten control flow", "type": "boolean", "default": True,
+                "description": "For functions D-810 is enabled on: remove control-flow flattening by giving each "
+                               "dispatcher entry its own path to the handler it reaches. Duplicates code where "
+                               "needed and never changes behaviour."},
 }
 
 

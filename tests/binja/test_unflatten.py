@@ -1,0 +1,137 @@
+"""v4.2: unflattening, in its activity after the MLIL pass, on the flatten fixtures (tests/samples/src/flatten.c)
+on 8 builds."""
+
+import pytest
+from arch import IDS, MATRIX, sample
+from binaryninja import HighLevelILOperation, RegisterValueType, Settings
+from flowcases import has, text
+from helpers import function_named, open_sample, settle
+from unflattencases import NEGATIVES, NOT_FLATTENED, ORDERS, SHAPES
+
+from binja_d810.binja import log, settings, unflatten, workflow
+from binja_d810.binja.unflatten import rewrite
+
+ONE = ("x86_64-elf", "O2")  # the build the single-build tests use
+_CONSTANT = (RegisterValueType.ConstantValue, RegisterValueType.ConstantPointerValue)
+
+
+@pytest.fixture(scope="module", params=MATRIX, ids=IDS)
+def builds(request):
+    """(build-level, D-810 on and settled, D-810 off)."""
+    on = open_sample(sample("flatten", *request.param), d810=True)
+    settle(on)
+    off = open_sample(sample("flatten", *request.param), d810=False)
+    yield "-".join(request.param), on, off
+    on.file.close()
+    off.file.close()
+
+
+def _states(hlil: str, name: str) -> list[str]:
+    return [hex(c) for c in SHAPES[name] if has(hlil, hex(c))]
+
+
+def _marks(func) -> list[int]:
+    """The constant each call of mark passes, in HLIL order. An argument in a variable is read by its dataflow
+    value: on arm64 mark returns its argument in x0, so Binary Ninja writes x0 = 0xb; _mark(x0)."""
+    def passed(node):
+        if node.operation != HighLevelILOperation.HLIL_CALL or not node.params \
+                or node.dest.operation != HighLevelILOperation.HLIL_CONST_PTR:
+            return None
+        callee = func.view.get_function_at(node.dest.constant)
+        value = node.params[0].value
+        if callee is None or callee.name.lstrip("_") != "mark" or value.type not in _CONSTANT:
+            return None
+        return value.value
+    return [k for instr in func.hlil.instructions for k in instr.traverse(passed)]
+
+
+def _first(marks: list[int], k: int):
+    return marks.index(k) if k in marks else None
+
+
+def _lines(func) -> list[str]:
+    report = log.latest_reports(func).get("mlil")
+    return [] if report is None else report.unflatten
+
+
+@pytest.mark.parametrize("name", sorted(SHAPES))
+def test_a_flattened_function_is_unflattened(builds, name):
+    key, on, _ = builds
+    if (key, name) in NOT_FLATTENED:
+        return
+    func = function_named(on, name)
+    hlil = text(func)
+    assert not _states(hlil, name), hlil
+    marks = _marks(func)
+    for earlier, later in ORDERS[name]:
+        a, b = _first(marks, earlier), _first(marks, later)
+        assert a is not None and b is not None and a < b, f"mark({earlier}) before mark({later}):\n{hlil}"
+    assert _lines(func), workflow.debug_report_text(func)
+
+
+@pytest.mark.parametrize("name", NEGATIVES)
+def test_a_negative_is_unchanged(builds, name):
+    key, on, off = builds
+    func = function_named(on, name)
+    assert not _lines(func), f"{key} {name}: {_lines(func)}"
+    assert text(func) == text(function_named(off, name))
+
+
+def test_the_debug_report_shows_the_rounds(builds):
+    _, on, _ = builds
+    if not _lines(function_named(on, "fl_tree")):
+        pytest.fail("fl_tree was not unflattened")
+    assert "unflatten: round 1" in workflow.debug_report_text(function_named(on, "fl_tree"))
+
+
+def _open_one():
+    bv = open_sample(sample("flatten", *ONE), d810=True)
+    settle(bv)
+    return bv
+
+
+def _reanalyze(bv, name):
+    function_named(bv, name).reanalyze()
+    settle(bv)
+    return text(function_named(bv, name))
+
+
+def test_the_setting_turns_unflattening_off_and_on():
+    bv = _open_one()
+    try:
+        assert not _states(text(function_named(bv, "fl_tree")), "fl_tree")
+        Settings().set_bool(settings.UNFLATTEN, False, bv)
+        assert _states(_reanalyze(bv, "fl_tree"), "fl_tree")
+        Settings().set_bool(settings.UNFLATTEN, True, bv)
+        assert not _states(_reanalyze(bv, "fl_tree"), "fl_tree")
+    finally:
+        bv.file.close()
+
+
+def test_a_failure_keeps_the_function_analyzable(monkeypatch):
+    errors = []
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("injected")
+
+    monkeypatch.setattr(rewrite, "rewrite", fail)
+    monkeypatch.setattr(log.logger, "log_error", lambda message, *args: errors.append(message))
+    bv = _open_one()
+    try:
+        func = function_named(bv, "fl_tree")
+        assert func.hlil is not None and _states(text(func), "fl_tree")
+        assert any("binja-d810 unflatten failed at" in e and "injected" in e for e in errors), errors
+    finally:
+        bv.file.close()
+
+
+def test_a_round_over_the_growth_cap_is_not_applied(monkeypatch):
+    monkeypatch.setattr(unflatten, "GROWTH", 0)
+    monkeypatch.setattr(unflatten, "GROWTH_SLACK", 0)
+    bv = _open_one()
+    try:
+        func = function_named(bv, "fl_tree")
+        assert _states(text(func), "fl_tree")
+        assert any("not applied" in line for line in _lines(func)), _lines(func)
+    finally:
+        bv.file.close()

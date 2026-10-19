@@ -2,7 +2,7 @@
 
 # Each flattened function's state constants.
 SHAPES = {
-    "fl_tree": [0x7a3c19e5, 0x1b4d8c27, 0x5e91a3f0, 0x33c6d218, 0x6f2b7c41],
+    "fl_tree": [0x7a3c19e5, 0x1b4d8c27, 0x5e91a3f0, 0x33c6d218, 0x6f2b9c41],
     "fl_dense": list(range(0x40, 0x47)),
     "fl_nested": [0x2d81f6a3, 0x49e07b12, 0x0c5a9e84, 0x71f3d250],
     "fl_loop": [0x58c2e13b, 0x26b9d4f7, 0x4e7a0d93, 0x1c95b2e6, 0x6a17c05e],

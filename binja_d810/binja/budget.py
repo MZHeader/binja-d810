@@ -46,6 +46,11 @@ class Allowance:
         with self._ledger.lock:
             self._entry.used[self.level] += seconds
 
+    def adopt(self, generation: int, keepalive: object) -> None:
+        """The pass replaced its IL object (v4.2, unflattening): the next pass sees the new one, and inherits."""
+        with self._ledger.lock:
+            self._entry.generation, self._entry.keepalive = generation, keepalive
+
 
 class Ledger:
     def __init__(self, capacity: int = 4096, keep: int = 256):

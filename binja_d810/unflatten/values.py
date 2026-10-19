@@ -98,7 +98,7 @@ class Values:
                 if isinstance(e, Var) and key_of(e) is not None and e.width == self.graph.width(key_of(e)):
                     work.append(key_of(e))  # a copy
                     continue
-                table = outcomes(self._with_statics(e), self.deadline)
+                table = outcomes(self.with_statics(e), self.deadline)
                 if table is None:
                     return None
                 out |= set(table[1].values())
@@ -106,7 +106,8 @@ class Values:
                 return None
         return frozenset(out)
 
-    def _with_statics(self, e: Expr) -> Expr:
+    def with_statics(self, e: Expr) -> Expr:
+        """`e` with each leaf that has a static value replaced by that constant."""
         mapping = {}
         for leaf in variables(e):
             key = key_of(leaf)

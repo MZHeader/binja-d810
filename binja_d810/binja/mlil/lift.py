@@ -33,6 +33,8 @@ _COMPARE = {Op.MLIL_CMP_E: "eq", Op.MLIL_CMP_NE: "ne", Op.MLIL_CMP_ULT: "ult", O
             Op.MLIL_CMP_UGT: "ugt", Op.MLIL_CMP_UGE: "uge", Op.MLIL_CMP_SLT: "slt", Op.MLIL_CMP_SLE: "sle",
             Op.MLIL_CMP_SGT: "sgt", Op.MLIL_CMP_SGE: "sge"}
 _LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
+# x86 sbb/adc (v4.2): (l - r) - carry and (l + r) + carry, followed through definitions but never roots.
+_CARRY = {Op.MLIL_SBB: "sub", Op.MLIL_ADC: "add"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {Op.MLIL_BOOL_TO_INT}
 # Division: lifted only when it cannot trap; otherwise an effect, as before.
 _DIVIDE = {Op.MLIL_DIVU: "udiv", Op.MLIL_DIVS: "sdiv", Op.MLIL_MODU: "urem", Op.MLIL_MODS: "srem"}
@@ -214,6 +216,8 @@ class _Lifter:
         elif op in _UNARY:
             operand = self.expr(self.get(e, "src"), inlined=inlined)
             return None if operand is None else unary(_UNARY[op], operand, width)
+        elif op in _CARRY:
+            return self.with_carry(e, width, inlined=inlined)
         elif op == Op.MLIL_BOOL_TO_INT:
             found = self.boolean(self.get(e, "src"), inlined=inlined)
             if found is not None:
@@ -231,6 +235,19 @@ class _Lifter:
             # Only pure leaves may be evaluated again, or not at all.
             return Var(f"effect@{e.expr_index}", width) if self.effect_leaves else None
         return Var(f"opaque@{e.expr_index}", width, ref=Opaque(e.non_ssa_form))
+
+    def with_carry(self, e: MediumLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
+        """sbb.d(l, r, c) = (l - r) - zx(c), adc.d(l, r, c) = (l + r) + zx(c): the carry is a boolean."""
+        left = self.expr(self.get(e, "left"), inlined=inlined)
+        right = self.expr(self.get(e, "right"), inlined=inlined)
+        carry = self.boolean(self.get(e, "carry"), inlined=inlined)
+        if left is None or right is None or carry is None:
+            return None
+        left, right = fit(as_integer(left, width), width), fit(as_integer(right, width), width)
+        if left is None or right is None:
+            return None
+        op = _CARRY[e.operation]
+        return BinOp(op, BinOp(op, left, right, width), UnOp("zx", carry, width), width)
 
     def division(self, e: MediumLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
         """A division that cannot trap, else None: it stays an effect. Operands

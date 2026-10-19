@@ -28,6 +28,8 @@ _UNARY = {H.HLIL_NEG: "neg", H.HLIL_NOT: "not", H.HLIL_ZX: "zx", H.HLIL_SX: "sx"
 _COMPARE = {H.HLIL_CMP_E: "eq", H.HLIL_CMP_NE: "ne", H.HLIL_CMP_ULT: "ult", H.HLIL_CMP_ULE: "ule",
             H.HLIL_CMP_UGT: "ugt", H.HLIL_CMP_UGE: "uge", H.HLIL_CMP_SLT: "slt", H.HLIL_CMP_SLE: "sle",
             H.HLIL_CMP_SGT: "sgt", H.HLIL_CMP_SGE: "sge"}
+# x86 sbb/adc (v4.2): (l - r) - carry and (l + r) + carry, followed through definitions but never roots.
+_CARRY = {H.HLIL_SBB: "sub", H.HLIL_ADC: "add"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {H.HLIL_BOOL_TO_INT}
 # Division: lifted only when it cannot trap; otherwise an effect, as before.
 _DIVIDE = {H.HLIL_DIVU: "udiv", H.HLIL_DIVS: "sdiv", H.HLIL_MODU: "urem", H.HLIL_MODS: "srem"}
@@ -210,6 +212,8 @@ class _Lifter:
         if op in _UNARY:
             operand = self.expr(e.src, inlined=inlined)
             return None if operand is None else unary(_UNARY[op], operand, width)
+        if op in _CARRY:
+            return self.with_carry(e, width, inlined=inlined)
         if op in DIVISION_OPS:
             found = self.division(e, width, inlined=inlined)
             if found is not None:
@@ -217,6 +221,21 @@ class _Lifter:
         if self.effect_leaves and not inlined:
             return Var(f"effect@{e.expr_index}", width)
         return None
+
+    def with_carry(self, e: HighLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
+        """sbb.d(l, r, c) = (l - r) - zx(c), adc.d(l, r, c) = (l + r) + zx(c) (binja_d810.binja.mlil.lift).
+        A carry wider than a bit is a flag: true when non-zero."""
+        left, right = self.expr(e.left, inlined=inlined), self.expr(e.right, inlined=inlined)
+        carry = self.expr(e.carry, inlined=inlined)
+        if left is None or right is None or carry is None:
+            return None
+        if carry.width != 1:
+            carry = BinOp("ne", carry, Const(0, carry.width), 1)
+        left, right = fit(as_integer(left, width), width), fit(as_integer(right, width), width)
+        if left is None or right is None:
+            return None
+        op = _CARRY[e.operation]
+        return BinOp(op, BinOp(op, left, right, width), UnOp("zx", carry, width), width)
 
     def division(self, e: HighLevelILInstruction, width: int, *, inlined: bool) -> Optional[Expr]:
         """A division that cannot trap, else None (binja_d810.binja.mlil.lift)."""

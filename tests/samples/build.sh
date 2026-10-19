@@ -23,8 +23,8 @@ for opt in O0 O2; do
     ld.lld -shared -nostdlib -o "$OUT/${base}_x86_64-elf_$opt.so" "$OUT/${base}_x86_64-elf_$opt.o"
   done
 done
-# Exact-assembly fixtures: shift boundaries, effects, partial registers.
-for asm in shifts_x86_64 effects_x86_64 partial_x86_64; do
+# Exact-assembly fixtures: shift boundaries, effects, partial registers, carry-flag selects.
+for asm in shifts_x86_64 effects_x86_64 partial_x86_64 select_x86_64; do
   clang -target x86_64-linux-gnu -c "$HERE/src/$asm.S" -o "$OUT/$asm.o"
   ld.lld -shared -o "$OUT/$asm.so" "$OUT/$asm.o"
 done

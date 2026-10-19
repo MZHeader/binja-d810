@@ -185,8 +185,8 @@ def _compared(cond: Optional[Expr]) -> Optional[tuple[int, int]]:
 def _cut(graph: Graph, thread: Thread, dispatcher: frozenset[int]) -> Optional[Thread]:
     if thread.split is None:
         cut = _truncate(graph, thread.outcome, dispatcher)
-        if cut is None or cut.dest == thread.start:
-            return None
+        if cut is None or (cut.dest == thread.start and cut.path == thread.outcome.path):
+            return None  # back at its start undecided, with nothing cut: it would only peel a loop
         return replace(thread, outcome=cut)
     cuts = {}
     for value, o in thread.split.outcomes.items():

@@ -192,6 +192,23 @@ def test_a_path_back_to_its_own_start_is_dropped():
     assert 0 not in threads and {3, 4} <= set(threads)
 
 
+def test_a_path_cut_at_its_own_start_is_kept():
+    g = toy({  # handlers only set the state and an argument; the merge they share makes the call
+        0: {"do": [f"s#1 = {A:#x}"], "goto": 1},
+        1: {"phi": {"s#2": {0: "s#1", 8: "s#9"}}, "if": (f"s#2 == {A:#x}", 2, 5)},
+        5: {"if": (f"s#2 == {B:#x}", 3, 6)},
+        6: {"if": (f"s#2 == {C:#x}", 4, 7)},
+        2: {"do": [f"s#3 = {B:#x}", "k#3 = 1"], "goto": 8},
+        3: {"do": [f"s#4 = {C:#x}", "k#4 = 2"], "goto": 8},
+        4: {"do": [f"s#5 = {D:#x}", "k#5 = 3"], "goto": 8},
+        7: {"stop": True},
+        8: {"phi": {"s#9": {2: "s#3", 3: "s#4", 4: "s#5"}}, "do": ["!"], "goto": 1},
+    })
+    threads = _by_pred(plan(g))
+    assert threads[2].outcome.path == (8, 1, 5, 3) and threads[2].outcome.dest == 8
+    assert threads[3].outcome.dest == 8 and threads[4].outcome.dest == 7
+
+
 def test_a_merge_before_a_threaded_edge_is_not_threaded():
     spec = _tree()  # a lazy resolver: the handler resolves a pointer on first use, then calls through it
     spec[2] = {"do": ["!", f"s#3 = {B:#x}"], "if": ("f#1 == 0", 15, 16)}

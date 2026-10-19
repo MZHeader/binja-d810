@@ -35,5 +35,20 @@ def definition_of(ssa_func, ssa_var, cache: dict, by_storage: bool = True):
     return found
 
 
+def reaching(ssa_func, ssa_block, var):
+    """The version of `var` leaving `ssa_block` (SSA form): written by its last instruction, or current there.
+    None when there is no non-SSA instruction to ask."""
+    from binaryninja import SSAVariable  # at call time: this module imports no binaryninja
+
+    last = ssa_func[ssa_block.end - 1]
+    for written in last.vars_written:
+        if isinstance(written, SSAVariable) and written.var == var:
+            return written
+    try:
+        return SSAVariable(var, last.non_ssa_form.get_ssa_var_version(var))
+    except Exception:  # noqa: BLE001 - no non-SSA instruction for it
+        return None
+
+
 def _storage(ssa_var) -> tuple:
     return int(ssa_var.var.source_type), ssa_var.var.storage, ssa_var.version

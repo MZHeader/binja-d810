@@ -99,6 +99,14 @@ def lift_value(ssa_func, ssa_var: SSAVariable, width: int, *, root_instr: Medium
     return lifter.relate(found)
 
 
+def lift_live(ssa_func, ssa_var: SSAVariable, width: int, *, root_instr: MediumLevelILInstruction,
+              max_nodes: int = 200, definitions: Optional[dict] = None) -> Optional[Expr]:
+    """One SSA value as an expression of values live at `root_instr` (v4.2, a split's condition), or None."""
+    lifter = _Lifter(ssa_func, root_instr, True, max_nodes, False, definitions)
+    found = lifter.var(ssa_var, width)
+    return None if found is None else lifter.relate(found)
+
+
 def lift(ssa_expr: MediumLevelILInstruction, *, root_instr: MediumLevelILInstruction,
          check_versions: bool = True, max_nodes: int = 200, effect_leaves: bool = False,
          inlined: Optional[set] = None, stats: Optional[dict] = None,

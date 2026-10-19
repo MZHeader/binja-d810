@@ -15,7 +15,7 @@ from ...ir.paths import Merge, path_variants
 from ..adapter import Candidate, Skip
 from ..deadcode import dead_with_checks, dying_with_root, shown_in
 from ..memory import FixedLoads
-from ..ssa import definition_of
+from ..ssa import definition_of, reaching as ssa_reaching
 from .lift import DIVISION_OPS, SUPPORTED_OPS, candidate_roots, is_safe_division, lift, lift_value
 from .lower import lower
 
@@ -183,7 +183,7 @@ class MLILAdapter:
         block = phi.il_basic_block
         incoming = []
         for edge in block.incoming_edges:
-            reaching = _reaching(ssa, edge.source, ssa_var.var)
+            reaching = ssa_reaching(ssa, edge.source, ssa_var.var)
             if reaching is None or (reaching.var.identifier, reaching.version) not in sources:
                 return None
             incoming.append(lift_value(ssa, reaching, width, root_instr=instr, max_nodes=self.max_nodes,
@@ -369,18 +369,6 @@ def _invariant_source(ssa, ssa_var: SSAVariable, definitions: Optional[dict] = N
         if len(web) + len(outside) > limit or len(outside) > 1:
             return None
     return next(iter(outside.values())) if len(outside) == 1 else None
-
-
-def _reaching(ssa, block, var) -> Optional[SSAVariable]:
-    """The version of `var` leaving `block` (SSA form): written by its last instruction, or current there."""
-    last = ssa[block.end - 1]
-    for written in last.vars_written:
-        if isinstance(written, SSAVariable) and written.var == var:
-            return written
-    try:
-        return SSAVariable(var, last.non_ssa_form.get_ssa_var_version(var))
-    except Exception:  # noqa: BLE001 - no non-SSA instruction for it
-        return None
 
 
 def _operations(e: MediumLevelILInstruction):

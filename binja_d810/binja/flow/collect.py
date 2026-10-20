@@ -27,6 +27,7 @@ _LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
 KEY_BYTES = 8  # v4.3 spec 3.2: a key is at most this wide
 WRAPPER_BYTES = 64  # spec 3.1: a possible identity wrapper is at most this long
 MAX_NODES = 400
+MAX_MERGED = 16  # variables followed back from a merged target
 SCAN_SECONDS = 2.0  # for proofs that an address is constant, per function
 
 
@@ -137,8 +138,49 @@ def _loads_of(leaf: Var, root, deadline: Deadline, read: Read, exprs: set) -> tu
 
 
 def target_of(instr, deadline: Deadline, read: Read) -> tuple[Optional[Target], str]:
-    """A jump's or call's target (`instr` in SSA form) over the tables it reads, or (None, why not)."""
-    expr = lift(instr.dest, root_instr=instr, check_versions=False, max_nodes=MAX_NODES, load_leaves=True)
+    """A jump's or call's target (`instr` in SSA form) over the tables it reads, or (None, why not). A target
+    merged from the same load on every path (a phi of them: tail merging) is that load."""
+    found, why = _target(instr.dest, instr, deadline, read)
+    if found is None and instr.dest.operation == Op.MLIL_VAR_SSA:
+        merged = _merged(instr.function, instr.dest.src, deadline, read)
+        if merged is not None:
+            return merged, ""
+    return found, why
+
+
+def _merged(ssa, var, deadline: Deadline, read: Read) -> Optional[Target]:
+    """The one load each source of the phi defining `var` reads, through copies and further phis, or None."""
+    d = ssa.get_ssa_var_definition(var)
+    if d is None or d.operation != Op.MLIL_VAR_PHI:
+        return None
+    targets, work, seen = [], list(d.src), {var}
+    while work:
+        source = work.pop()
+        if source in seen:
+            continue
+        seen.add(source)
+        if len(seen) > MAX_MERGED:
+            return None
+        definition = ssa.get_ssa_var_definition(source)
+        if definition is not None and definition.operation == Op.MLIL_VAR_PHI:
+            work.extend(definition.src)
+            continue
+        if definition is None or definition.operation != Op.MLIL_SET_VAR_SSA:
+            return None
+        if definition.src.operation == Op.MLIL_VAR_SSA:
+            work.append(definition.src.src)  # a copy
+            continue
+        found, _ = _target(definition.src, definition, deadline, read)
+        if found is None or len(found.loads) != 1 or not isinstance(found.expr, Var):
+            return None
+        targets.append(found)
+    if not targets or len({(t.loads[0].addresses, t.loads[0].size, t.loads[0].base) for t in targets}) != 1:
+        return None
+    return Target(targets[0].expr, targets[0].loads, frozenset().union(*(t.load_exprs for t in targets)))
+
+
+def _target(dest, instr, deadline: Deadline, read: Read) -> tuple[Optional[Target], str]:
+    expr = lift(dest, root_instr=instr, check_versions=False, max_nodes=MAX_NODES, load_leaves=True)
     if expr is None:
         return None, "the target does not lift"
     leaves = variables(expr)

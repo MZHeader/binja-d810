@@ -1,4 +1,4 @@
-from binja_d810.flow.codecheck import call_problem, is_tail_call, jump_problem, split_starts
+from binja_d810.flow.codecheck import call_problem, is_self_call, is_tail_call, jump_problem, split_starts
 
 
 class Code:
@@ -72,3 +72,9 @@ def test_call_targets():
     assert call_problem([0x1200], code) is None  # code inside no function: it becomes one
     assert "inside the function at 0x1800" in call_problem([0x1810], code)
     assert "not code" in call_problem([0x3000], code)
+
+
+def test_a_jump_to_the_function_itself_is_a_self_call_not_a_tail_call():
+    code = Code(functions={F: 0x1100, 0x1800: 0x1900})
+    assert is_self_call([F, F], F) and not is_tail_call([F], F, code) and jump_problem([F], F, code) is None
+    assert not is_self_call([F, 0x1800], F) and not is_self_call([0x1800], F)

@@ -26,8 +26,11 @@ _LOADS = (Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA)
 
 
 class MLILGraph:
-    def __init__(self, mlil, *, view, ranges: Sequence[tuple[int, int]], max_nodes: int = 200):
+    def __init__(self, mlil, *, view, ranges: Sequence[tuple[int, int]], max_nodes: int = 200,
+                 passed: frozenset = frozenset()):
+        """`passed`: parameters a loop's back edges assign (selfcall), whose entry value is the caller's."""
         self.mlil = mlil
+        self.passed = passed
         self.ssa = mlil.ssa_form
         self.view = view
         self.ranges = list(ranges)
@@ -205,8 +208,12 @@ class MLILGraph:
         return self._relink(found)
 
     def _local(self, ssa_var: SSAVariable) -> bool:
-        """A stack slot below the frame that is not a parameter: its entry version is read before any store."""
+        """A stack slot below the frame that is not a parameter: its entry version is read before any store. Or a
+        parameter in `passed`: its entry version is the first state, which the caller picks, as a flattened
+        function's first store would; it does not count against a state the loop only assigns constants."""
         var = ssa_var.var
+        if ssa_var.version == 0 and var in self.passed:
+            return True
         if ssa_var.version != 0 or var.source_type != VariableSourceType.StackVariableSourceType or var.storage >= 0:
             return False
         return var not in self.mlil.source_function.parameter_vars

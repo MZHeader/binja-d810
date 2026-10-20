@@ -41,6 +41,11 @@ def is_tail_call(targets: Sequence[int], function: int, view: CodeView) -> bool:
     return len(set(targets)) == 1 and _another_start(targets[0], function, view)
 
 
+def is_self_call(targets: Sequence[int], function: int) -> bool:
+    """One target, the function's own start: a tail call to itself (v4.3 spec 3.3), made a back edge later."""
+    return len(set(targets)) == 1 and targets[0] == function
+
+
 def split_starts(targets: Sequence[int], function: int, view: CodeView) -> list[int]:
     """The targets that start a function the sweep split off `function`, ascending: removed once the table
     passes, so the jump's own code joins it."""

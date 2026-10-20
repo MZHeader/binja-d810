@@ -16,7 +16,7 @@ from typing import Optional
 from binaryninja import ILSourceLocation, MediumLevelILOperation as Op
 
 from ...deadline import Deadline
-from ...flow.codecheck import call_problem, is_tail_call, jump_problem, split_starts
+from ...flow.codecheck import call_problem, is_self_call, is_tail_call, jump_problem, split_starts
 from ...flow.ranges import parse as parse_ranges
 from ...flow.record import Change, Record
 from ...flow.tables import Load, Span, decode, span_of
@@ -276,7 +276,7 @@ def _direct(site, instr, read, code) -> Optional[int]:
         return target if code.function_at(target) else None
     if instr.operation == Op.MLIL_JUMP_TO:
         return target if set(instr.targets) == {target} else None
-    return target if is_tail_call([target], site.function, code) else None
+    return target if is_tail_call([target], site.function, code) or is_self_call([target], site.function) else None
 
 
 def _rewrite(adapter, rewrites) -> None:
@@ -498,7 +498,8 @@ def decide(work: Round, site) -> None:
                 return
         for load, span in zip(site.target.loads, decoded.spans):
             _type_table(work, site, load, span, decoded.targets)
-    if site.kind == "jump" and site.trusted and not is_tail_call(decoded.targets, site.function, code):
+    if site.kind == "jump" and site.trusted and not is_tail_call(decoded.targets, site.function, code) \
+            and not is_self_call(decoded.targets, site.function):
         _record_branches(work, site, decoded.targets)
     if site.kind == "call":
         _add_functions(work, site, func, decoded.targets, code)

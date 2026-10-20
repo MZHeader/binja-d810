@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-from binaryninja import MediumLevelILOperation as Op, SSAVariable
+from binaryninja import MediumLevelILOperation as Op, SSAVariable, VariableSourceType
 
 from ...ir.expr import BinOp, Const, Expr, Var, substitute, variables
-from ...unflatten.graph import Assign, Branch, Definition, Edge, Goto, Jump, Key, Load, Phi, Step, Stop, Unknown
+from ...unflatten.graph import (Assign, Branch, Definition, Edge, Goto, Jump, Key, Load, Phi, Step, Stop, Undefined,
+                                Unknown)
 from ..effects import mlil_effect
 from ..memory import fixed_load_is_safe
 from ..mlil.lift import lift, lift_live, lift_value
@@ -203,11 +204,18 @@ class MLILGraph:
             return None
         return self._relink(found)
 
+    def _local(self, ssa_var: SSAVariable) -> bool:
+        """A stack slot below the frame that is not a parameter: its entry version is read before any store."""
+        var = ssa_var.var
+        if ssa_var.version != 0 or var.source_type != VariableSourceType.StackVariableSourceType or var.storage >= 0:
+            return False
+        return var not in self.mlil.source_function.parameter_vars
+
     def _definition(self, key: Key) -> Definition:
         ssa_var = self._vars[key]
         d = definition_of(self.ssa, ssa_var, self._defs)
         if d is None:
-            return Unknown()
+            return Undefined() if self._local(ssa_var) else Unknown()
         if d.operation == Op.MLIL_VAR_PHI:
             return Phi(tuple(self._key(s) for s in d.src))
         if d.operation in _ASSIGNS and mlil_effect(d.src) is None:

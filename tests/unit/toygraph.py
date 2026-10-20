@@ -15,7 +15,8 @@ from typing import Mapping, Optional
 
 from binja_d810.ir.expr import BinOp, Expr, Var, substitute, variables
 from binja_d810.ir.parse import parse
-from binja_d810.unflatten.graph import Assign, Branch, Edge, Goto, Jump, Key, Load, Phi, Step, Stop, Unknown
+from binja_d810.unflatten.graph import (Assign, Branch, Edge, Goto, Jump, Key, Load, Phi, Step, Stop, Undefined,
+                                        Unknown)
 
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*#\d+")
 _CMP = {" == ": "eq", " != ": "ne", " u< ": "ult", " s< ": "slt"}
@@ -23,10 +24,12 @@ _CMP = {" == ": "eq", " != ": "ne", " u< ": "ult", " s< ": "slt"}
 
 class ToyGraph:
     def __init__(self, spec: Mapping[int, dict], *, entry: int = 0, widths: Optional[Mapping[str, int]] = None,
-                 memory: Optional[Mapping[int, int]] = None, live: Optional[Mapping[tuple, str]] = None):
+                 memory: Optional[Mapping[int, int]] = None, live: Optional[Mapping[tuple, str]] = None,
+                 undefined: tuple[str, ...] = ()):
         self.entry = entry
         self._widths = dict(widths or {})
         self._ids: dict[str, int] = {}
+        self._undefined = {self.key(f"{name}#0") for name in undefined}  # locals read before any store
         self._memory = dict(memory or {})
         self._live = {(pred, self.key(text)): source for (pred, text), source in (live or {}).items()}
         self._phis: dict[int, dict[Key, dict[int, Optional[Key]]]] = {}
@@ -115,7 +118,7 @@ class ToyGraph:
         return self._terms[b]
 
     def definition(self, key):
-        return self._defs.get(key, Unknown())
+        return self._defs.get(key, Undefined() if key in self._undefined else Unknown())
 
     def def_block(self, key):
         return self._def_blocks.get(key)

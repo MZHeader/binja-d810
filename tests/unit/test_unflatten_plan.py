@@ -217,9 +217,9 @@ def test_a_path_that_never_leaves_the_dispatcher_is_dropped():
 
 
 def test_a_path_back_to_its_own_start_is_dropped():
-    spec = _tree()
-    spec[2]["do"] = ["s#3 = s#2 + q#1"]  # no side effect, and the next state is unknown
-    threads = _by_pred(plan(toy(spec)))
+    spec = _tree()  # no side effect, and the next state is B or C, picked by a flag passed in
+    spec[2]["do"] = [f"s#3 = ((0 - zx32(c#1)) & {C - B:#x}) + {B:#x}"]
+    threads = _by_pred(plan(toy(spec, widths={"c": 1})))
     assert 0 not in threads and {3, 4} <= set(threads)
 
 
@@ -254,6 +254,18 @@ def test_a_small_machine_is_evidenced_by_the_compares_of_the_whole_function():
     p = plan(g)
     assert {(t.pred, t.outcome.dest) for t in p.threads if t.split is None} == {(0, 3), (3, 4)}
     assert p.dispatcher == {1, 2} and p.states == {g.key("s#1").var}
+
+
+def test_a_state_restored_from_a_slot_read_before_its_first_store_is_still_a_state():
+    # A spare slot carried round the loop is read on entry before anything stores it: SSA gives its phi
+    # the entry value, which the program never defines, so it does not count against the state.
+    spec = _tree()
+    spec[1]["phi"]["t#1"] = {0: "t#0", 9: "t#3"}
+    spec[3]["do"] = ["!", f"t#2 = {D:#x}", f"s#4 = {C:#x}"]
+    spec[4]["do"] = ["!", "s#5 = t#1"]
+    spec[9]["phi"]["t#3"] = {2: "t#1", 3: "t#2", 4: "t#1"}
+    assert _ends(plan(toy(spec, undefined=("t",)))) == {(0, 2), (2, 3), (3, 4)}
+    assert plan(toy(spec)) == EMPTY  # an entry value passed in (a parameter) is not a constant
 
 
 def test_a_merge_before_a_threaded_edge_is_not_threaded():
@@ -315,6 +327,53 @@ def test_a_state_from_a_parameter_is_not_threaded():
     assert plan(g) == EMPTY
 
 
+def test_a_switch_on_a_parameter_then_a_retest_is_not_threaded():
+    g = toy({
+        0: {"if": ("x#1 == 1", 1, 2)},
+        2: {"if": ("x#1 == 2", 3, 4)},
+        4: {"if": ("x#1 == 3", 5, 6)},
+        1: {"do": ["!"], "goto": 6},
+        3: {"do": ["!"], "goto": 6},
+        5: {"do": ["!"], "goto": 6},
+        6: {"do": ["!"], "if": ("x#1 == 1", 7, 8)},
+        7: {"do": ["!"], "goto": 8},
+        8: {"stop": True},
+    })
+    assert plan(g) == EMPTY
+
+
+def test_a_counted_loop_that_tests_its_counter_is_not_threaded():
+    g = toy({
+        0: {"do": ["i#1 = 0"], "goto": 1},
+        1: {"phi": {"i#2": {0: "i#1", 6: "i#5"}}, "if": ("i#2 s< 8", 2, 7)},
+        2: {"do": ["!"], "if": ("i#2 == 2", 3, 4)},
+        3: {"do": ["!"], "goto": 6},
+        4: {"if": ("i#2 == 5", 5, 6)},
+        5: {"do": ["!"], "goto": 6},
+        6: {"do": ["i#5 = i#2 + 1"], "goto": 1},
+        7: {"stop": True},
+    })
+    assert plan(g) == EMPTY
+
+
+def test_a_mode_picked_once_and_tested_three_times_is_not_threaded():
+    g = toy({
+        0: {"if": ("a#1 == 0", 1, 2)},
+        1: {"do": ["m#1 = 1"], "goto": 5},
+        2: {"if": ("b#1 == 0", 3, 4)},
+        3: {"do": ["m#2 = 2"], "goto": 5},
+        4: {"do": ["m#3 = 3"], "goto": 5},
+        5: {"phi": {"m#4": {1: "m#1", 3: "m#2", 4: "m#3"}}, "do": ["!"], "if": ("m#4 == 1", 6, 7)},
+        6: {"do": ["!"], "goto": 7},
+        7: {"do": ["!"], "if": ("m#4 u< 3", 8, 9)},
+        8: {"do": ["!"], "goto": 9},
+        9: {"do": ["!"], "if": ("m#4 != 2", 10, 11)},
+        10: {"do": ["!"], "goto": 11},
+        11: {"stop": True},
+    })
+    assert plan(g) == EMPTY
+
+
 # --- rounds and time ---
 
 def test_a_lone_edge_of_an_evidenced_state_is_threaded():
@@ -365,6 +424,24 @@ def test_no_edge_is_simulated_when_no_variable_could_be_a_state(monkeypatch):
     assert plan(g) == EMPTY
 
 
+def test_no_edge_is_simulated_when_no_tested_variable_only_holds_constants(monkeypatch):
+    def fail(*args):
+        raise AssertionError("simulated")
+
+    monkeypatch.setattr(thread, "simulate", fail)
+    g = toy({  # i is compared with three constants, but it counts
+        0: {"do": ["i#1 = 0"], "goto": 1},
+        1: {"phi": {"i#2": {0: "i#1", 6: "i#5"}}, "if": ("i#2 s< 8", 2, 7)},
+        2: {"do": ["!"], "if": ("i#2 == 2", 3, 4)},
+        3: {"do": ["!"], "goto": 6},
+        4: {"if": ("i#2 == 5", 5, 6)},
+        5: {"do": ["!"], "goto": 6},
+        6: {"do": ["i#5 = i#2 + 1"], "goto": 1},
+        7: {"stop": True},
+    })
+    assert plan(g) == EMPTY
+
+
 def test_only_edges_that_can_reach_a_dispatcher_are_simulated(monkeypatch):
     spec = _tree()
     spec[8] = {"do": ["!"], "if": ("p#1 == 0", 11, 12)}  # after the machine: a merge that never reaches it
@@ -384,3 +461,34 @@ def test_only_edges_that_can_reach_a_dispatcher_are_simulated(monkeypatch):
 
 def test_an_expired_deadline_gives_an_empty_plan():
     assert plan(toy(_tree()), deadline=Deadline.after(0)) == EMPTY
+
+
+class _Countdown:
+    """A deadline that passes after `checks` checks."""
+
+    def __init__(self, checks):
+        self.checks = checks
+
+    def expired(self):
+        self.checks -= 1
+        return self.checks < 0
+
+
+def _lifts(g):
+    lifted, real = [], g.terminator
+    g.terminator = lambda b: lifted.append(b) or real(b)
+    return lifted
+
+
+def test_an_expired_deadline_lifts_nothing():
+    g = toy(_tree())
+    lifted = _lifts(g)
+    assert plan(g, deadline=Deadline.after(0)) == EMPTY
+    assert lifted == []
+
+
+def test_a_deadline_passing_while_terminators_are_lifted_stops_the_lifting():
+    g = toy(_tree())
+    lifted = _lifts(g)
+    assert plan(g, deadline=_Countdown(2)) == EMPTY
+    assert len(lifted) < len(g.blocks())

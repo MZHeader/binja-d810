@@ -84,7 +84,13 @@ class Unknown:
     pass
 
 
-Definition = Union[Phi, Assign, Unknown]
+@dataclass(frozen=True)
+class Undefined:
+    """The value a local holds before anything stores it: none the program gives it. Unknown everywhere,
+    except that it does not count against a state that otherwise only holds constants."""
+
+
+Definition = Union[Phi, Assign, Unknown, Undefined]
 
 
 class Graph(Protocol):

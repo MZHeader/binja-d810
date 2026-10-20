@@ -11,7 +11,7 @@ from ..ir.expr import Const, Expr, Var, substitute, variables
 from ..semantic.constancy import constant_value
 from ..semantic.selects import booleans, replace
 from ..semantic.verify import Verdict
-from .graph import Assign, Graph, Key, Phi, key_of
+from .graph import Assign, Graph, Key, Phi, Undefined, key_of
 
 MAX_VALUES = 16
 MAX_WEB = 256
@@ -25,6 +25,7 @@ class Values:
         self._static: dict[Key, Optional[int]] = {}
         self._active: set[Key] = set()
         self._sets: dict[Key, Optional[frozenset[int]]] = {}
+        self._held: dict[Key, bool] = {}
 
     def static(self, key: Key) -> Optional[int]:
         """The value `key` has on every path: a constant, an expression of static values, or a phi whose
@@ -71,11 +72,19 @@ class Values:
         over at most MAX_BOOLEANS conditions that are a proven constant for each assignment of them."""
         if key in self._sets:
             return self._sets[key]
-        found = self._value_set(key)
+        found = self._value_set(key, MAX_VALUES)
         self._sets[key] = found
         return found
 
-    def _value_set(self, key: Key) -> Optional[frozenset[int]]:
+    def only_constants(self, key: Key) -> bool:
+        """`key` only ever holds constants: value_set without its MAX_VALUES cap (a machine has more states),
+        and with Undefined leaves skipped: a slot read before its first store adds no value."""
+        if key not in self._held:
+            found = self._value_set(key, None, undefined=True)
+            self._held[key] = bool(found)
+        return self._held[key]
+
+    def _value_set(self, key: Key, cap: Optional[int], *, undefined: bool = False) -> Optional[frozenset[int]]:
         work, seen, out = [key], set(), set()
         while work:
             k = work.pop()
@@ -92,6 +101,8 @@ class Values:
                 if isinstance(d, Phi):
                     work.extend(d.sources)
                     continue
+                if undefined and isinstance(d, Undefined):
+                    continue
                 if not isinstance(d, Assign):
                     return None
                 e = d.expr
@@ -102,7 +113,7 @@ class Values:
                 if table is None:
                     return None
                 out |= set(table[1].values())
-            if len(out) > MAX_VALUES:
+            if cap is not None and len(out) > cap:
                 return None
         return frozenset(out)
 

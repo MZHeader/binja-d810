@@ -9,7 +9,7 @@ from typing import Collection, Mapping, Optional
 
 from ..deadline import Deadline
 from ..ir.expr import CMP_OPS, BinOp, Const, Expr, Var, substitute, variables
-from .graph import Assign, Branch, Goto, Graph, Jump, Key, Phi, dominators, key_of, reaches
+from .graph import Assign, Branch, Goto, Graph, Jump, Key, Phi, dominators, key_of, reaches, successors
 from .values import Values, outcomes
 
 MAX_STEPS = 64
@@ -59,15 +59,24 @@ _EMPTY = Plan((), frozenset(), frozenset())
 def plan(graph: Graph, *, evidenced: frozenset[int] = frozenset(), deadline: Deadline = Deadline.never()) -> Plan:
     """The threads worth rewriting (spec §3.1-3.4). `evidenced` holds state variables an earlier round showed
     evidence for. Empty when the deadline passes."""
-    readers = _readers(graph, evidenced)
-    if not readers:
+    found = None if deadline.expired() else _evidence(graph, deadline)
+    if found is None:
         return _EMPTY
+    reads, many, jumped = found
     values = Values(graph, deadline)
+    # select's states are held at a dispatcher block, so held at some block: a path that reaches no test of
+    # such a variable decides nothing select keeps.
+    possible = set(evidenced) | _held(graph, values, reads, (jumped | many) - evidenced)
+    readers = {b for b, read in reads.items() if read & possible}
+    if not readers or deadline.expired():
+        return _EMPTY
     doms = dominators(graph)
+    if deadline.expired():
+        return _EMPTY
     threads = candidates(graph, values, doms, within=_reaching(graph, readers))
     if deadline.expired():
         return _EMPTY
-    found = select(graph, threads, evidenced)
+    found = select(graph, values, threads, evidenced, many)
     return _EMPTY if deadline.expired() else found
 
 
@@ -150,10 +159,12 @@ def _condition(graph: Graph, values: Values, pred: int, key: Key) -> tuple[Optio
     return table[0][0], table[1][(1,)], table[1][(0,)]
 
 
-def select(graph: Graph, threads: list[Thread], evidenced: frozenset[int] = frozenset()) -> Plan:
-    """Spec §3.4: the dispatcher blocks of evidenced state variables, and the threads through them, each cut
-    after the dispatcher at the first handler with side effects. A variable is evidenced when it was before,
-    a dispatcher block jumps on it, or the function compares it with MIN_STATES constants (_many)."""
+def select(graph: Graph, values: Values, threads: list[Thread], evidenced: frozenset[int],
+           many: set[int]) -> Plan:
+    """Spec §3.4: the dispatcher blocks of state variables, and the threads through them, each cut after the
+    dispatcher at the first handler with side effects. A state was evidenced before, or a dispatcher block
+    jumps on it or the function compares it with MIN_STATES constants (`many`), and it is held at a
+    dispatcher block (_held)."""
     counts = Counter(b for t in threads for b in set(_decided(t)))
     reads: dict[int, set[int]] = {}
     jumped: set[int] = set()
@@ -166,8 +177,8 @@ def select(graph: Graph, threads: list[Thread], evidenced: frozenset[int] = froz
         reads[b] = read
         if isinstance(term, Jump):
             jumped |= read
-    many = _many(graph)
-    states = {v for read in reads.values() for v in read if v in evidenced or v in jumped or v in many}
+    held = _held(graph, values, reads, (jumped | many) - evidenced)
+    states = {v for read in reads.values() for v in read if v in evidenced or v in held}
     dispatcher = frozenset(b for b, read in reads.items() if read & states)
     kept = [cut for cut in (_cut(graph, t, dispatcher) for t in threads) if cut is not None]
     edges = {(t.pred, t.start) for t in kept}
@@ -175,25 +186,51 @@ def select(graph: Graph, threads: list[Thread], evidenced: frozenset[int] = froz
     return Plan(final, dispatcher, frozenset(states)) if final else _EMPTY
 
 
-def _many(graph: Graph) -> set[int]:
-    """The variables the function compares with at least MIN_STATES distinct constants: a small machine's
-    tests are spread over blocks that are not each decided twice, and a state may never be assigned."""
+def _evidence(graph: Graph, deadline: Deadline) -> Optional[tuple[dict[int, set[int]], set[int], set[int]]]:
+    """(the variables each block's terminator reads, those the function compares with at least MIN_STATES
+    distinct constants, those a jump reads). A small machine's tests are spread over blocks that are not each
+    decided twice, and a state may never be assigned. None when the deadline passes: every terminator is
+    lifted here."""
+    reads: dict[int, set[int]] = {}
     compared: dict[int, set[int]] = defaultdict(set)
+    jumped: set[int] = set()
     for b in graph.blocks():
+        if deadline.expired():
+            return None
         term = graph.terminator(b)
-        found = _compared(term.cond) if isinstance(term, Branch) else None
-        if found is not None:
-            compared[found[0]].add(found[1])
-    return {v for v, constants in compared.items() if len(constants) >= MIN_STATES}
+        reads[b] = _terminator_reads(term)
+        if isinstance(term, Branch):
+            found = _compared(term.cond)
+            if found is not None:
+                compared[found[0]].add(found[1])
+        elif isinstance(term, Jump):
+            jumped |= reads[b]
+    return reads, {v for v, constants in compared.items() if len(constants) >= MIN_STATES}, jumped
 
 
-def _readers(graph: Graph, evidenced: frozenset[int]) -> set[int]:
-    """The blocks whose terminator reads a variable select could take as a state: one evidenced, read by a
-    jump, or in _many. A path that reaches none of them decides nothing select keeps."""
-    reads = {b: _terminator_reads(graph.terminator(b)) for b in graph.blocks()}
-    possible = set(evidenced) | _many(graph)
-    possible |= {v for b, read in reads.items() if isinstance(graph.terminator(b), Jump) for v in read}
-    return {b for b, read in reads.items() if read & possible}
+def _held(graph: Graph, values: Values, reads: dict[int, set[int]], wanted: set[int]) -> set[int]:
+    """The variables of `wanted` that a block on a cycle reads through a value that only ever holds
+    constants: a dispatcher loops, and its state is only ever assigned constants. A counter, a parameter
+    and a mode picked once before straight-line tests are not states."""
+    out: set[int] = set()
+    for b, read in reads.items():
+        if not (read & wanted) - out or not _on_cycle(graph, b):
+            continue
+        out |= {key.var for key in _terminator_keys(graph.terminator(b))
+                if key.var in wanted and values.only_constants(key)}
+    return out
+
+
+def _on_cycle(graph: Graph, block: int) -> bool:
+    seen, stack = set(), [s for s, _ in successors(graph, block)]
+    while stack:
+        b = stack.pop()
+        if b == block:
+            return True
+        if b not in seen:
+            seen.add(b)
+            stack.extend(s for s, _ in successors(graph, b))
+    return False
 
 
 def _reaching(graph: Graph, targets: set[int]) -> set[int]:
@@ -216,11 +253,17 @@ def _decided(thread: Thread) -> list[int]:
 
 
 def _terminator_reads(term) -> set[int]:
+    return {key.var for key in _terminator_keys(term)}
+
+
+def _terminator_keys(term) -> set[Key]:
     if isinstance(term, Branch):
-        return _reads(term.cond)
-    if isinstance(term, Jump):
-        return _reads(term.dest, *(load.address for load in term.loads.values()))
-    return set()
+        exprs = (term.cond,)
+    elif isinstance(term, Jump):
+        exprs = (term.dest, *(load.address for load in term.loads.values()))
+    else:
+        exprs = ()
+    return {key for e in exprs if e is not None for v in variables(e) if (key := key_of(v)) is not None}
 
 
 def _reads(*exprs: Optional[Expr]) -> set[int]:

@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from binja_d810.ir.expr import BinOp, Var, is_mba, node_count, variables
 from binja_d810.ir.normalize import normalize
 from binja_d810.ir.parse import parse
@@ -277,3 +279,20 @@ def test_cached_tier1_results_carry_the_references_of_the_expression_asked_about
     simplify_expression(substitute(e, {"a": Var("a", 32, ref=old)}), RULES, [], tier1_cache=cache)
     out = simplify_expression(substitute(e, {"a": Var("a", 32, ref=new)}), RULES, [], tier1_cache=cache)
     assert next(v for v in variables(out.rewrite.replacement) if v.name == "a").ref is new
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_xor_cancellation_simplifies(width):
+    out = simplify_expression(ir("x ^ (y ^ x)", width), RULES, LINEAR)
+    assert out.rewrite is not None and out.rewrite.replacement == ir("y", width)
+
+
+@pytest.mark.parametrize("width", [8, 32])
+def test_one_bit_substitution_simplifies(width):
+    out = simplify_expression(ir("(x ^ (y ^ 1)) & x & 1", width), RULES, LINEAR)
+    assert out.rewrite is not None and node_count(out.rewrite.replacement) <= 5
+    assert check_equivalent(out.rewrite.original, out.rewrite.replacement) is Verdict.PROVEN
+
+
+def test_plain_mask_is_left_alone():
+    assert simplify_expression(ir("(x & 0xff00) ^ y"), RULES, LINEAR).rewrite is None

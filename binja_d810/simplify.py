@@ -6,7 +6,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence, Union
 
-from .ir.expr import CMP_OPS, BinOp, Const, Expr, UnOp, is_candidate, is_mba, node_count, relink, to_str, variables
+from .ir.expr import (
+    CMP_OPS, BinOp, Const, Expr, UnOp, is_bitwise_junk, is_candidate, is_mba, node_count, relink, to_str,
+    variables,
+)
 from .ir.normalize import normalize
 from .rules.base import Rewrite, Rule
 from .semantic.backend import Tier2Backend
@@ -87,12 +90,13 @@ def simplify_expression(
         current = _tier1(start, rules, dead, sources, out.errors, deadline)
         if tier1_cache is not None and not deadline.expired():
             tier1_cache[key] = (current, tuple(sources))
-    if is_mba(current) and backends and not deadline.expired():
+    tier2 = is_mba(current) or is_bitwise_junk(current)
+    if tier2 and backends and not deadline.expired():
         current, exhausted = _tier2(current, backends, limits, dead, sources, out, step_check, deadline)
         if exhausted:
             out.skipped = ("budget exhausted" if deadline.expired()
                            else f"too complex: Tier 2 time budget ({limits.tier2_seconds:g} s) exhausted")
-    elif is_mba(current) and backends:
+    elif tier2 and backends:
         out.skipped = "budget exhausted"
     if out.skipped is None and is_mba(current) and len(variables(current)) > limits.max_vars:
         out.skipped = f"too complex: {len(variables(current))} variables > {limits.max_vars}"
@@ -286,7 +290,7 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
     """Simplify MBA subtrees top-down. Returns (result, whether a time budget ran out)."""
     deadline = Deadline.after(limits.tier2_seconds).earlier(shared)
     exhausted = False
-    has_linear = any(getattr(b, "abstracts_atoms", False) for b in backends)
+    has_linear = any(getattr(b, "name", "") == "linear" for b in backends)
 
     def attempt(node: Expr, abstracting_only: bool) -> Optional[Expr]:
         """The first backend result that is better and not refuted. Backends that bound their own
@@ -329,7 +333,7 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
         return None
 
     def visit(node: Expr) -> Expr:
-        if not is_mba(node):
+        if not is_mba(node) and not is_bitwise_junk(node):
             return node
         result = attempt(node, abstracting_only=False)
         if result is not None:

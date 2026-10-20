@@ -4,8 +4,10 @@ import pytest
 
 from binja_d810.ir.evaluate import evaluate
 from binja_d810.ir.expr import (
-    BinOp, Const, UnOp, Var, is_mba, mask, node_count, substitute, to_str, variables,
+    BinOp, Const, UnOp, Var, is_bitwise_junk, is_candidate, is_mba, mask, node_count, substitute, to_str,
+    variables,
 )
+from binja_d810.ir.parse import parse
 
 a, b = Var("a", 32), Var("b", 32)
 M32 = mask(32)
@@ -109,3 +111,25 @@ def test_brief_renders_only_what_it_shows():
     for _ in range(200):
         brief(big, 40)
     assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize("text", [
+    "(x & y) | (x ^ y)", "(x ^ ~y) & x", "(~x & y) | (x & ~y)", "(x ^ (y ^ 1)) & x & 1",
+    "x ^ (y ^ x)", "(x | 0xf0) & 0x0f", "((x >> 3) & y) | ((x >> 3) ^ y)",
+])
+def test_substitution_shapes_are_candidates(text):
+    assert is_bitwise_junk(parse(text, 32)) and is_candidate(parse(text, 32))
+
+
+@pytest.mark.parametrize("text", ["x & 0xff", "a | b", "(h >> 16) ^ h", "(x >> 8) & 0xff", "(x << y) ^ (x & y)"])
+def test_plain_masks_and_combinations_are_not_bitwise_junk(text):
+    assert not is_bitwise_junk(parse(text, 32))
+
+
+def test_arithmetic_is_not_bitwise_junk():
+    assert not is_bitwise_junk(parse("(x + y) & (x ^ y) & 3", 32))  # an MBA, handled as one
+
+
+def test_a_shared_subtree_repeats_its_variables():
+    t = parse("x & y", 32)
+    assert is_bitwise_junk(BinOp("or", t, BinOp("xor", t, Var("z", 32), 32), 32))

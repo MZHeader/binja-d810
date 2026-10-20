@@ -363,13 +363,47 @@ def to_str(e: Expr) -> str:
     return f"({to_str(e.left)} {_SYMBOLS[e.op]} {to_str(e.right)})"
 
 
+_JUNK_UNARY = frozenset({"not", "zx", "sx", "trunc"})
+
+
+def is_bitwise_junk(e: Expr) -> bool:
+    """A bitwise-only expression shaped like instruction substitution (OLLVM, Hikari, Pluto):
+    (a & b) | (a ^ b) for a | b, (a ^ ~b) & a for a & b. Only and, or, xor, not, extensions and
+    shifts by constants; at least two and/or/xor; and a variable that occurs twice or a constant
+    operand. Plain masks (x & 0xff), combinations (a | b) and hash steps ((h >> 16) ^ h) are not."""
+    combining, admitted, names, shared = 0, False, set(), set()
+    for node in nodes(e):
+        if isinstance(node, UnOp) and node.op not in _JUNK_UNARY:
+            return False
+        if isinstance(node, BinOp):
+            if node.op in SHIFT_OPS:
+                if not isinstance(node.right, Const):
+                    return False
+            elif node.op in ("and", "or", "xor"):
+                combining += 1
+                admitted = admitted or isinstance(node.left, Const) or isinstance(node.right, Const)
+            else:
+                return False
+        for child in children(node):
+            if isinstance(child, Var):
+                if child.name in names:
+                    admitted = True
+                names.add(child.name)
+            elif not isinstance(child, Const):
+                if id(child) in shared:
+                    admitted = True  # a shared subtree: its variables occur twice
+                shared.add(id(child))
+    return combining >= 2 and admitted
+
+
 def is_candidate(e: Expr) -> bool:
-    """Worth simplifying: an MBA, or a comparison over a bitwise operation or a product of two
-    non-constants, or one its form decides (x == x after a copy; zx.d(x.b) u> 0xff): opaque
-    predicates, before and after a compiler. Plain comparisons (i < n - 1) are left to Binary Ninja."""
+    """Worth simplifying: an MBA, bitwise substitution junk, or a comparison over a bitwise
+    operation or a product of two non-constants, or one its form decides (x == x after a copy;
+    zx.d(x.b) u> 0xff): opaque predicates, before and after a compiler. Plain comparisons
+    (i < n - 1) are left to Binary Ninja."""
     from .bits import decided_comparison  # bits builds on this module
 
-    if is_mba(e):
+    if is_mba(e) or is_bitwise_junk(e):
         return True
     found = list(nodes(e))
     comparisons = [n for n in found if isinstance(n, BinOp) and n.op in CMP_OPS]

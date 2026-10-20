@@ -28,8 +28,12 @@ And after (4 lines):
 * Divisions that can never trap, like `2 / (x * x + 1)`
 * Jumps and calls through encoded tables of code pointers (Hikari-style indirect branches and
   calls), and identity wrappers around them, when no visible code writes the table
+* Constants encoded against a global key that nothing in the binary writes, like
+  `x ^ key ^ 0x3c1d`
 * Control-flow flattening: state machines driven by compare trees or jump tables, including
-  nested loops
+  nested loops, and machines split across functions, where the dispatcher calls itself for the
+  next state or calls a small function per state that returns through a stub back to it
+* Junk loops that only count a variable up to some value and then throw it away
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 
 Every rewrite is checked before it's applied. Conditions are only folded when Z3 proves them,
@@ -100,7 +104,7 @@ itself lives in a separate **extension** group that Binary Ninja creates.
 * **Flow fixes**: on by default. Resolves code-pointer tables and identity wrappers, and undoes
   it all when D-810 is turned off. Your own types and branch targets always win.
 * **Unflatten control flow**: on by default. It only touches a function with a clear dispatcher:
-  a loop over a state variable that's only ever set to constants.
+  a loop over a state variable that's only ever set to constants. It also removes junk loops.
 * **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant. Use
   them for data you know never changes. Clearing a range puts the old types back.
 * **Enabled**: a kill switch for everything.
@@ -111,8 +115,11 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   before it ran are left alone. They're harmless.
 * Calls through resolved API pointers can show extra arguments, because Binary Ninja guesses them
   from whatever registers happen to be set. Giving the pointer a type fixes it.
-* Unflattening can leave a flag-like compare behind when the next state is picked before shared
-  code or before a loop. Machines that compute their next state are left alone.
+* Unflattening can leave a flag-like compare behind when the next state is picked before a loop,
+  or kept in two places at once. Machines that compute their next state are left alone.
+* State functions pulled into their dispatcher are copied, not moved, so they're still there for
+  anything else that calls them. Unoptimized builds that widen a state function's result on the
+  way out keep their calls.
 * Table resolution checks the decoded targets and any visible writes to the table, but it can't
   see changes made by a loader. The debug report says why a table was rejected.
 

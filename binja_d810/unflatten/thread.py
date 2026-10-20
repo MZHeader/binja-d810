@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
-from typing import Mapping, Optional
+from typing import Collection, Mapping, Optional
 
 from ..deadline import Deadline
 from ..ir.expr import CMP_OPS, BinOp, Const, Expr, Var, substitute, variables
@@ -59,23 +59,27 @@ _EMPTY = Plan((), frozenset(), frozenset())
 def plan(graph: Graph, *, evidenced: frozenset[int] = frozenset(), deadline: Deadline = Deadline.never()) -> Plan:
     """The threads worth rewriting (spec §3.1-3.4). `evidenced` holds state variables an earlier round showed
     evidence for. Empty when the deadline passes."""
+    readers = _readers(graph, evidenced)
+    if not readers:
+        return _EMPTY
     values = Values(graph, deadline)
     doms = dominators(graph)
-    threads = candidates(graph, values, doms)
+    threads = candidates(graph, values, doms, within=_reaching(graph, readers))
     if deadline.expired():
         return _EMPTY
     found = select(graph, threads, evidenced)
     return _EMPTY if deadline.expired() else found
 
 
-def candidates(graph: Graph, values: Values, doms: Mapping[int, frozenset[int]]) -> list[Thread]:
-    """Every edge out of a goto or if into a block with at least two predecessors whose path decides
-    something, directly or split on the value the edge carries."""
+def candidates(graph: Graph, values: Values, doms: Mapping[int, frozenset[int]],
+               within: Optional[Collection[int]] = None) -> list[Thread]:
+    """Every edge out of a goto or if into a block with at least two predecessors (and in `within`) whose
+    path decides something, directly or split on the value the edge carries."""
     out: list[Thread] = []
     known: dict[int, dict[Key, int]] = {}
     for start in graph.blocks():
         preds = graph.preds(start)
-        if len(preds) < 2:
+        if len(preds) < 2 or (within is not None and start not in within):
             continue
         for edge in preds:
             if edge.slot == "jump":
@@ -148,10 +152,10 @@ def _condition(graph: Graph, values: Values, pred: int, key: Key) -> tuple[Optio
 
 def select(graph: Graph, threads: list[Thread], evidenced: frozenset[int] = frozenset()) -> Plan:
     """Spec §3.4: the dispatcher blocks of evidenced state variables, and the threads through them, each cut
-    after the dispatcher at the first handler with side effects."""
+    after the dispatcher at the first handler with side effects. A variable is evidenced when it was before,
+    a dispatcher block jumps on it, or the function compares it with MIN_STATES constants (_many)."""
     counts = Counter(b for t in threads for b in set(_decided(t)))
     reads: dict[int, set[int]] = {}
-    compared: dict[int, set[int]] = defaultdict(set)
     jumped: set[int] = set()
     for b, n in sorted(counts.items()):
         term = graph.terminator(b)
@@ -160,19 +164,47 @@ def select(graph: Graph, threads: list[Thread], evidenced: frozenset[int] = froz
         if n < 2 and not read & evidenced:
             continue
         reads[b] = read
-        if isinstance(term, Branch):
-            found = _compared(term.cond)
-            if found is not None:
-                compared[found[0]].add(found[1])
-        elif isinstance(term, Jump):
+        if isinstance(term, Jump):
             jumped |= read
-    states = {v for read in reads.values() for v in read
-              if v in evidenced or v in jumped or len(compared[v]) >= MIN_STATES}
+    many = _many(graph)
+    states = {v for read in reads.values() for v in read if v in evidenced or v in jumped or v in many}
     dispatcher = frozenset(b for b, read in reads.items() if read & states)
     kept = [cut for cut in (_cut(graph, t, dispatcher) for t in threads) if cut is not None]
     edges = {(t.pred, t.start) for t in kept}
     final = tuple(t for t in kept if not _redundant(t, dispatcher, edges))
     return Plan(final, dispatcher, frozenset(states)) if final else _EMPTY
+
+
+def _many(graph: Graph) -> set[int]:
+    """The variables the function compares with at least MIN_STATES distinct constants: a small machine's
+    tests are spread over blocks that are not each decided twice, and a state may never be assigned."""
+    compared: dict[int, set[int]] = defaultdict(set)
+    for b in graph.blocks():
+        term = graph.terminator(b)
+        found = _compared(term.cond) if isinstance(term, Branch) else None
+        if found is not None:
+            compared[found[0]].add(found[1])
+    return {v for v, constants in compared.items() if len(constants) >= MIN_STATES}
+
+
+def _readers(graph: Graph, evidenced: frozenset[int]) -> set[int]:
+    """The blocks whose terminator reads a variable select could take as a state: one evidenced, read by a
+    jump, or in _many. A path that reaches none of them decides nothing select keeps."""
+    reads = {b: _terminator_reads(graph.terminator(b)) for b in graph.blocks()}
+    possible = set(evidenced) | _many(graph)
+    possible |= {v for b, read in reads.items() if isinstance(graph.terminator(b), Jump) for v in read}
+    return {b for b, read in reads.items() if read & possible}
+
+
+def _reaching(graph: Graph, targets: set[int]) -> set[int]:
+    """The blocks with a path to one of `targets` (the targets included)."""
+    seen, stack = set(targets), list(targets)
+    while stack:
+        for e in graph.preds(stack.pop()):
+            if e.source not in seen:
+                seen.add(e.source)
+                stack.append(e.source)
+    return seen
 
 
 def _outcomes(thread: Thread) -> list[Outcome]:

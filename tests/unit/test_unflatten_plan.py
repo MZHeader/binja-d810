@@ -3,6 +3,7 @@
 from toygraph import toy
 
 from binja_d810.deadline import Deadline
+from binja_d810.unflatten import thread
 from binja_d810.unflatten.graph import dominators
 from binja_d810.unflatten.thread import MAX_COPIED, MAX_DUP, Plan, candidates, plan, split_edge
 from binja_d810.unflatten.values import Values
@@ -239,6 +240,22 @@ def test_a_path_cut_at_its_own_start_is_kept():
     assert threads[3].outcome.dest == 8 and threads[4].outcome.dest == 7
 
 
+def test_a_small_machine_is_evidenced_by_the_compares_of_the_whole_function():
+    # Three constants, but C is never assigned: the blocks threads decide compare only two.
+    g = toy({
+        0: {"do": [f"s#1 = {A:#x}"], "goto": 1},
+        1: {"phi": {"s#2": {0: "s#1", 3: "s#3", 5: "s#2"}}, "if": (f"s#2 == {B:#x}", 4, 2)},
+        2: {"if": (f"s#2 != {A:#x}", 5, 3)},
+        5: {"if": (f"s#2 == {C:#x}", 6, 1)},
+        3: {"do": ["!", f"s#3 = {B:#x}"], "goto": 1},
+        4: {"do": ["!"], "stop": True},
+        6: {"do": ["!"], "stop": True},
+    })
+    p = plan(g)
+    assert {(t.pred, t.outcome.dest) for t in p.threads if t.split is None} == {(0, 3), (3, 4)}
+    assert p.dispatcher == {1, 2} and p.states == {g.key("s#1").var}
+
+
 def test_a_merge_before_a_threaded_edge_is_not_threaded():
     spec = _tree()  # a lazy resolver: the handler resolves a pointer on first use, then calls through it
     spec[2] = {"do": ["!", f"s#3 = {B:#x}"], "if": ("f#1 == 0", 15, 16)}
@@ -330,6 +347,39 @@ def test_evidence_is_carried_to_a_residual_tree():
     assert plan(g) == EMPTY
     carried = plan(g, evidenced=frozenset({state}))
     assert _ends(carried) == {(0, 2), (2, 3), (3, 8)} and carried.states == {state}
+
+
+def test_no_edge_is_simulated_when_no_variable_could_be_a_state(monkeypatch):
+    def fail(*args):
+        raise AssertionError("simulated")
+
+    monkeypatch.setattr(thread, "simulate", fail)
+    g = toy({
+        0: {"if": ("p#1 == 0", 1, 2)},
+        1: {"do": ["!", "i#1 = 0"], "goto": 3},
+        2: {"do": ["i#2 = 0"], "goto": 3},
+        3: {"phi": {"i#3": {1: "i#1", 2: "i#2", 4: "i#4"}}, "if": ("i#3 s< 10", 4, 5)},
+        4: {"do": ["!", "i#4 = i#3 + 1"], "goto": 3},
+        5: {"stop": True},
+    })
+    assert plan(g) == EMPTY
+
+
+def test_only_edges_that_can_reach_a_dispatcher_are_simulated(monkeypatch):
+    spec = _tree()
+    spec[8] = {"do": ["!"], "if": ("p#1 == 0", 11, 12)}  # after the machine: a merge that never reaches it
+    spec[11] = {"do": ["!"], "goto": 12}
+    spec[12] = {"stop": True}
+    starts, real = [], thread.simulate
+
+    def recording(graph, values, pred, start, env):
+        starts.append(start)
+        return real(graph, values, pred, start, env)
+
+    monkeypatch.setattr(thread, "simulate", recording)
+    p = plan(toy(spec))
+    assert _ends(p) == {(0, 2), (2, 3), (3, 4), (4, 8)}
+    assert 1 in starts and 12 not in starts
 
 
 def test_an_expired_deadline_gives_an_empty_plan():

@@ -110,7 +110,7 @@ def marks(func) -> list[int]:
     """The constant each call of mark passes, in HLIL order. An argument in a variable is read by its dataflow
     value: on arm64 mark returns its argument in x0, so Binary Ninja writes x0 = 0xb; _mark(x0)."""
     def passed(node):
-        if node.operation != HighLevelILOperation.HLIL_CALL or not node.params \
+        if node.operation not in (HighLevelILOperation.HLIL_CALL, HighLevelILOperation.HLIL_TAILCALL) or not node.params \
                 or node.dest.operation != HighLevelILOperation.HLIL_CONST_PTR:
             return None
         callee = func.view.get_function_at(node.dest.constant)

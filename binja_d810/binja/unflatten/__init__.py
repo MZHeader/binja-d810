@@ -6,7 +6,7 @@ from typing import Sequence
 
 from ...deadline import Deadline
 from ...unflatten.thread import plan
-from . import rewrite, selfcall, splice
+from . import junk, rewrite, selfcall, splice
 from .graph import MLILGraph
 
 MAX_ROUNDS = 4
@@ -48,6 +48,10 @@ def run(ctx, *, deadline: Deadline, ranges: Sequence[tuple[int, int]]) -> list[s
     original = len(mlil)
     cap = max(GROWTH * original, original + GROWTH_SLACK)
     evidenced: frozenset[int] = frozenset()
+    removed = junk.loops(mlil, ctx.function.view)
+    if removed is not None:
+        ctx.mlil = mlil = removed[0]
+        lines.append(f"{removed[1]} junk loops removed")
     first = _looped(mlil, ctx.function.view, ranges, deadline)
     if first is not None:
         mlil = first[0].mlil

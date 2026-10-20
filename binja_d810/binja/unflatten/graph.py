@@ -93,11 +93,13 @@ class MLILGraph:
 
     def def_block(self, key: Key) -> Optional[int]:
         d = definition_of(self.ssa, self._vars[key], self._defs)
-        if d is None:
-            return None
+        return None if d is None else self.block_of(d)
+
+    def block_of(self, ssa_instr) -> Optional[int]:
+        """The block holding an instruction of the SSA form."""
         if self._from_ssa is None:
             self._from_ssa = {self._ssa_block(b).start: b for b in self._blocks}
-        return self._from_ssa.get(d.il_basic_block.start)
+        return self._from_ssa.get(ssa_instr.il_basic_block.start)
 
     def width(self, key: Key) -> int:
         return self._bits(self._vars[key].var)

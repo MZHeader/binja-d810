@@ -21,8 +21,10 @@ And after (4 lines):
 
 * MBA expressions, through D-810's rules, a built-in linear MBA simplifier, and
   [CoBRA](https://github.com/trailofbits/CoBRA) if you have it installed
+* OLLVM-style instruction substitution, like `(x & y) | (x ^ y)` for `x | y`
 * Opaque predicates, including ones hidden behind long chains of masked constants, ones that
-  only hold on every path into a merge, and values carried round loops
+  only hold on every path into a merge, values carried round loops, and the classic
+  number-theoretic ones like `7 * y * y - 1 != x * x`
 * Divisions that can never trap, like `2 / (x * x + 1)`
 * Jumps and calls through encoded tables of code pointers (Hikari-style indirect branches and
   calls), and identity wrappers around them, when no visible code writes the table

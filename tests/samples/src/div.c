@@ -1,4 +1,4 @@
-// v3.2 fixtures: division in opaque predicates (x-tunnel.bin's 2 / (x * x + 1) == y * y + 3) and
+// v3.2 fixtures: division in opaque predicates (2 / (x * x + 1) == y * y + 3) and
 // divisions that may trap. Barriers keep the compilers from seeing through values, so the divisions
 // are emitted as division instructions (x86 div/idiv, ARM64 udiv/sdiv).
 #include <stdint.h>
@@ -67,7 +67,7 @@ EXPORT uint32_t div_keep(uint32_t a) {
     return (q ^ a) + 2 * (q & a);
 }
 
-// x-tunnel.bin 0x4485a0: r = y * y + 3 is computed before a loop and carried round it unchanged
+// r = y * y + 3 is computed before a loop and carried round it unchanged
 // through copies (t = r; r = t), while the loop updates x. The quotient is compared with r in the
 // loop: r is a merge whose only value from outside is y * y + 3, and x a merge of two values. The
 // comparison is false for every x. Always a + n.

@@ -217,7 +217,7 @@ def test_an_unchanged_candidate_that_did_not_simplify_is_not_planned_again():
 
 
 def test_cheap_backends_reach_every_candidate_before_slow_ones_spend_the_budget():
-    # tigress_vm: one function with 248 candidates. CoBRA's slow failures on the first candidates
+    # A Tigress VM: one function with 248 candidates. CoBRA's slow failures on the first candidates
     # left no budget for later ones the linear backend answers in milliseconds.
     import time
 
@@ -240,7 +240,7 @@ def test_cheap_backends_reach_every_candidate_before_slow_ones_spend_the_budget(
 
 class SharedAdapter(FakeAdapter):
     """r = (a ^ z) + 2 * (a & z) where a = (x * y) - (x | y) + (x & 7) is also used elsewhere: the
-    deep lift inlines a, and its result a + z copies a's definition into r (tigress_vm)."""
+    deep lift inlines a, and its result a + z copies a's definition into r (a Tigress VM's handlers)."""
 
     def __init__(self):
         super().__init__({"r": p("((((x * y) - (x | y)) + (x & 7)) ^ z) + 2 * ((((x * y) - (x | y)) + (x & 7)) & z)")})
@@ -278,7 +278,7 @@ def test_a_smaller_result_over_shared_values_wins_even_when_the_deep_one_shrinks
 
 def test_roots_that_do_not_simplify_are_not_lifted_again_over_their_shared_values():
     # Ordinary code: most roots with shared definitions do not simplify at all; lifting each again
-    # over its shared values doubled planning time on halflife_keygen (median 0.06 -> 0.26 s).
+    # over its shared values doubled planning time on one sample (median 0.06 -> 0.26 s).
     adapter = SharedAdapter()
     adapter.roots["r"] = p("(x * y) ^ (x + z)")  # no deep rewrite, not too complex
     simplify_function(adapter, [], [LinearMBABackend()], EngineConfig())
@@ -303,7 +303,7 @@ def test_reports_separate_cpu_time_from_waiting():
 
 
 def test_concurrent_passes_are_limited_and_waiting_counts_against_the_deadline():
-    # Functions analyzed in parallel contend for Python's lock: on snagit.dll one HLIL pass took 27 s
+    # Functions analyzed in parallel contend for Python's lock: on one DLL an HLIL pass took 27 s
     # of wall time for about 1 s of work, past Binary Ninja's 20 s limit, and Binary Ninja abandoned
     # such functions. At most PASS_SLOTS passes plan at once; a pass that does not get a slot before
     # its deadline does no work and reports its budget exhausted.
@@ -360,7 +360,7 @@ def test_reports_say_where_planning_time_goes():
 
 
 class SplitAdapter(FakeAdapter):
-    """snagit.dll: b = (a & M) | (~a & ~M) over a = x * K + y (single use). Inlining a gives a mixed
+    """OLLVM: b = (a & M) | (~a & ~M) over a = x * K + y (single use). Inlining a gives a mixed
     expression where each visible statement was arithmetic or bitwise only; over a alone, b is
     ~(a ^ M)."""
 
@@ -433,7 +433,7 @@ def test_an_unchecked_lift_never_gives_a_non_constant_rewrite():
 
 
 class SharedDagAdapter(FakeAdapter):
-    """A condition whose lift, as a tree, is far over maxNodes (snagit.dll's export): the adapter
+    """A condition whose lift, as a tree, is far over maxNodes (an OLLVM-obfuscated export): the adapter
     offers it as shared values only, and only a proven constant may replace it."""
 
     def __init__(self, condition):
@@ -466,7 +466,7 @@ def test_a_condition_over_shared_values_is_folded_by_constancy_only():
 
 
 class EnclosedAdapter(FakeAdapter):
-    """halflife_keygen 0x415890: d = p - ((p + 8) & -8) is its own instruction, used once by
+    """glibc's pointer alignment: d = p - ((p + 8) & -8) is its own instruction, used once by
     n + d - 8, which HLIL shows as one arithmetic statement with it. d is -8 | p: correct and
     smaller, but the statement would read n + (-8 | p) - 8, mixed where it was not."""
 
@@ -494,7 +494,7 @@ def test_a_rewrite_never_makes_the_statement_that_uses_it_mixed():
 
 
 class PathAdapter(FakeAdapter):
-    """x-tunnel.bin: 2 / (x * x + 1) == i with i merged from y1 * y1 + 3 and y2 * y2 + 3: not constant
+    """An opaque predicate: 2 / (x * x + 1) == i with i merged from y1 * y1 + 3 and y2 * y2 + 3: not constant
     over i, false on each incoming path. The adapter offers the per-path variants."""
 
     def __init__(self, variants):
@@ -564,7 +564,7 @@ def test_path_alternatives_are_tried_in_order():
 
 def test_per_path_constancy_waits_for_every_other_candidate():
     # v3.3: per-path folding is the costliest mechanism and the rarest; it runs after the last round's
-    # other attempts on every candidate, with what remains of the budget (snagit.dll's 271 shared-value
+    # other attempts on every candidate, with what remains of the budget (one export's 271 shared-value
     # folds came after per-path attempts on earlier conditions and ran out of time).
     from binja_d810.ir.expr import Const
     from binja_d810.semantic.backend import default_backends
@@ -598,7 +598,7 @@ def test_per_path_constancy_waits_for_every_other_candidate():
 
 
 def test_constant_folds_come_before_every_backend():
-    # snagit.dll's sub_180009da0 (v3.3): hundreds of junk MBA roots took the whole budget in Tier 2
+    # v3.3: in one OLLVM-obfuscated function, hundreds of junk MBA roots took the whole budget in Tier 2
     # before the opaque predicates' constant-only folds (shared values, 10-60 ms each) were reached.
     # Constant folds run first in each pass: a folded predicate removes the junk behind it.
     import sys
@@ -637,7 +637,7 @@ def test_constant_folds_come_before_every_backend():
 
 def test_a_pass_that_folds_constants_commits_them_before_any_backend_runs():
     # v3.3: folded predicates remove the code behind them, so the backends wait for the next pass, over
-    # what remains (snagit.dll's sub_180009da0: Tier 2 on junk in branches that were about to disappear).
+    # what remains (an OLLVM-obfuscated function: Tier 2 on junk in branches that were about to disappear).
     import sys
     from pathlib import Path
 
@@ -671,7 +671,7 @@ def test_a_pass_that_folds_constants_commits_them_before_any_backend_runs():
 
 def test_a_stuck_candidate_still_gets_its_constant_only_attempts():
     # The cache of stuck candidates is keyed by the version-safe lift, but the per-path variants and the
-    # constant-only lifts depend on more (x-tunnel.bin 0x4485a0: a merge that resolves only once other
+    # constant-only lifts depend on more (an opaque predicate: a merge that resolves only once other
     # folds changed the IL). Only the simplification is skipped; those attempts run again.
     from binja_d810.ir.expr import Const
     from binja_d810.semantic.backend import default_backends

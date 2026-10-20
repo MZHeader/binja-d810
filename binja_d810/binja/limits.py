@@ -3,7 +3,7 @@
 During analysis, Binary Ninja defers a function whose analysis takes longer than
 analysis.limits.maxFunctionAnalysisTime (20 s by default): no HLIL. It applies the limit a binary had
 when its analysis started; a later change of the setting, on the binary or the function, does not
-apply in that session (measured: 40 s set afterwards still deferred tigress_vm's 0x401159 at 20 s).
+apply in that session (measured: 40 s set afterwards still left a function deferred at 20 s).
 
 So, when a binary is finalized, before its analysis starts:
 - with D-810 enabled for it, its limit is raised to twice D-810's budget (unless higher, or 0: none);

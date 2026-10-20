@@ -108,7 +108,7 @@ def test_constants_over_shared_values_are_proven_without_expanding_the_tree():
 
 
 def test_an_unproven_constant_is_not_proven_again_in_the_same_function_run():
-    # x-tunnel.bin 0x42a673: a 17-node condition spent its 2 s proof in both rounds of a pass.
+    # A 17-node condition spent its 2 s proof in both rounds of a pass.
     from binja_d810.semantic.verify import Check
 
     calls = []
@@ -135,7 +135,7 @@ def test_fold_shared_evaluates_a_variable_free_expression():
 
 def test_fold_shared_samples_a_few_dozen_times_before_the_proof(monkeypatch):
     # v3.3: sampling only guesses the value (and rejects ordinary roots after a sample or two); the proof
-    # decides. snagit.dll's sub_180009da0 spent 13.5 of 20 s evaluating shared values 277 times each.
+    # decides. One OLLVM-obfuscated function spent 13.5 of 20 s evaluating shared values 277 times each.
     from binja_d810.semantic import constancy
 
     samples = []
@@ -148,7 +148,7 @@ def test_fold_shared_samples_a_few_dozen_times_before_the_proof(monkeypatch):
 
 
 def test_an_inconclusive_fold_is_remembered_for_the_run_by_shape(monkeypatch):
-    # v3.5: x-tunnel.bin's slowest root (2 s, "constant on every sample, not proven") was proven again in
+    # v3.5: one large function's slowest root (2 s, "constant on every sample, not proven") was proven again in
     # every pass: its lift's names change from pass to pass, its shape does not.
     from binja_d810.semantic import constancy, memo
 

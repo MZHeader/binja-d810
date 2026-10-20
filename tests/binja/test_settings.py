@@ -51,7 +51,7 @@ def test_the_default_budget_is_20_seconds_with_room_in_binary_ninjas_limit():
 
 def test_a_limit_raised_after_the_analysis_started_never_raises_the_budget():
     # Binary Ninja analyzes a binary with the limit it had when the binary was opened (measured: 40 s set
-    # afterwards, on the binary and the function, still deferred tigress_vm's 0x401159 at 20 s). The
+    # afterwards, on the binary and the function, still left a function deferred at 20 s). The
     # budget is at most half of that limit, whatever the setting says later.
     from binja_d810.binja import workflow
 

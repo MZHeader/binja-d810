@@ -3,5 +3,5 @@
 # The harness writes <out>/real/spot/<sample>/<address>.txt: HLIL with the plugin off, HLIL with it
 # on, and both passes' reports. Addresses that are not function starts are reported, not fatal.
 
-[mba_challenge]
-functions = ["0x4011a5", "0x401301"]
+["sample.bin"]
+functions = ["0x401000", "0x401200"]

@@ -26,7 +26,7 @@ from .storage import visible_size
 
 # Passes planning at once, process-wide. Binary Ninja analyzes functions on parallel threads, and
 # Python runs one at a time: with every function's pass planning together, each pass's wall time
-# stretched far past its CPU time (snagit.dll: 27 s for 1 s of work) and past Binary Ninja's own
+# stretched far past its CPU time (27 s for 1 s of work on one large export) and past Binary Ninja's own
 # per-function limit. Two slots let one pass plan while another waits on Z3 or CoBRA; waiting for a
 # slot counts against the pass's deadline.
 PASS_SLOTS = 2
@@ -41,7 +41,7 @@ class EngineConfig:
     disabled_rules: frozenset[str] = frozenset()
     # Shared by both passes of one analysis run. v3.3: 20 s, with Binary Ninja's own
     # per-function limit raised to twice that where D-810 is enabled (binja_d810.binja.limits). At 10 s,
-    # snagit.dll's export needed 85% of the budget and stopped short on a slower machine.
+    # an OLLVM-obfuscated export needed 85% of the budget and stopped short on a slower machine.
     function_seconds: float = 20.0
 
 
@@ -122,7 +122,7 @@ def _kinds(e) -> frozenset:
 
 def _newly_mixes(candidate, replacement) -> bool:
     """The statement HLIL shows the root in (its value's single-use consumers, v3.1) was arithmetic
-    or bitwise only and would mix: n + d - 8 with d = -8 | p (halflife_keygen 0x415890)."""
+    or bitwise only and would mix: n + d - 8 with d = -8 | p (glibc's pointer alignment)."""
     both = {"arith", "bitwise"}
     before = candidate.consumer_kinds | candidate.root_kinds
     return not both <= before and both <= (candidate.consumer_kinds | _kinds(replacement))
@@ -146,7 +146,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
     """Plan, apply and clean up until nothing changes, the iteration cap or the deadline.
 
     Each pass tries every candidate with the cheap backends (rules and the atom-abstracting linear
-    backend) first, and only then the others on what is left: in tigress_vm's one 248-candidate
+    backend) first, and only then the others on what is left: in a Tigress VM's one 248-candidate
     function, CoBRA's slow failures on the first candidates otherwise used up the budget before
     later candidates the linear backend answers in milliseconds were reached.
     """
@@ -173,7 +173,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
         by_path: list = []  # last-round candidates left for per-path constancy
         # Constant folds first (v3.3): the lifts only a proven constant may come from, by constancy alone,
         # before any backend runs. An opaque predicate folded now removes the junk code behind it in the
-        # next pass (snagit.dll's sub_180009da0: Tier 2 on hundreds of junk roots used the whole budget
+        # next pass (an OLLVM-obfuscated function: Tier 2 on hundreds of junk roots used the whole budget
         # before its predicates' 10-60 ms folds were reached). Constancy rejects ordinary roots after a
         # sample or two.
         rest = []
@@ -230,7 +230,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                 if (known is None and candidate.shared and worth and hasattr(adapter, "shallow")
                         and not deadline.expired()):
                     # The lift inlined definitions that stay alive (values used several times, as in
-                    # tigress_vm's handlers): a result over those shared values may be smaller, and
+                    # a Tigress VM's handlers): a result over those shared values may be smaller, and
                     # never copies them. The smaller visible result wins. Only worth a second
                     # simplification when the first found a rewrite (which may copy them) or gave up
                     # on size; most roots of ordinary code simplify neither way.
@@ -274,7 +274,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     consumed |= chosen.consumes
             pending = deferred
         # Per-path constancy last, with what remains of the budget (v3.3): the costliest
-        # and rarest mechanism must not take the time of other candidates' folds (snagit.dll's export).
+        # and rarest mechanism must not take the time of other candidates' folds (an OLLVM-obfuscated export).
         for candidate in by_path:
             if deadline.expired():
                 report.budget_exhausted = True
@@ -324,7 +324,7 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
 def _constant_only(candidate, constants: dict, deadline: Deadline, inconclusive: dict):
     """Lifts only a proven constant may come from (v3.1), by constancy alone: the root over inputs whose
     registers were reused before it (x86-64 -O2's x in rdi; arm64 -O2's per-path values), and the root
-    too large as a tree but small as shared values (snagit.dll's export). A constant reads no variable.
+    too large as a tree but small as shared values (an OLLVM-obfuscated export). A constant reads no variable.
     (rewrite or None, whether a lift was constant on every sample but not proven). Outcomes are
     remembered in `constants` by lift (an outcome cut short by the deadline is not)."""
     unchecked = candidate.unchecked

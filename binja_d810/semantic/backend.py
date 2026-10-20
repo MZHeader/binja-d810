@@ -21,7 +21,7 @@ def default_backends() -> list[Tier2Backend]:
     from .linear_mba import LinearMBABackend
 
     # Linear first: it answers linear MBAs over atoms in milliseconds ((A ^ B) + 2 * (A & B) with
-    # sums A, B in tigress_vm), where CoBRA spent up to its whole 2 s; CoBRA gets what is left.
+    # sums A, B in a Tigress VM), where CoBRA spent up to its whole 2 s; CoBRA gets what is left.
     backends: list[Tier2Backend] = [LinearMBABackend()]
     solve = load()
     if solve is not None:

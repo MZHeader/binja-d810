@@ -1,8 +1,8 @@
 """Verdicts remembered by shape, process-wide.
 
 A proof's verdict cannot change when variables of the same width are renamed, so PROVEN and REFUTED
-outcomes are kept under ir.expr.shape_key: a predicate repeated with other variables (x-tunnel.bin
-repeats one hundreds of times) is proven once. Inconclusive outcomes depend on time and are never
+outcomes are kept under ir.expr.shape_key: a predicate repeated with other variables (one large
+function repeats one hundreds of times) is proven once. Inconclusive outcomes depend on time and are never
 kept here. Keys hold no Binary Ninja references (shape_key rebuilds the leaves).
 """
 

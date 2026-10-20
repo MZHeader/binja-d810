@@ -85,7 +85,7 @@ def test_random_linear_mbas_simplify_to_equivalent_smaller_forms():
 
 
 def test_arithmetic_operands_of_bitwise_operations_are_atoms():
-    # tigress_vm: (A ^ B) + 2 * (~A | B) with A, B sums; as a whole, A ^ B is not one atom, or the
+    # A Tigress VM: (A ^ B) + 2 * (~A | B) with A, B sums; as a whole, A ^ B is not one atom, or the
     # relation between A ^ B and ~A | B would be lost. It is B - A - 2.
     e = normalize(ir("((x + y) ^ (z - w)) + 2 * (~(x + y) | (z - w))"))
     result = backend.simplify(e)

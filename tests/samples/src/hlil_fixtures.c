@@ -54,7 +54,7 @@ EXPORT uint32_t hl_select(uint32_t x, uint32_t y, uint32_t c) {
 }
 
 // Lift work (v2.1): each step reads both values twice, so the fully inlined tree grows fourfold per
-// step (VM handlers in tigress_vm). A lift must cut deep definitions without exploring that tree.
+// step (the handlers of a Tigress VM). A lift must cut deep definitions without exploring that tree.
 #define DAG_STEP a = (a ^ b) + 2 * (a & b); B(a); b = (b | a) - (b & ~a); B(b);
 EXPORT uint32_t lift_dag(uint32_t x, uint32_t y) {
     uint32_t a = x, b = y;
@@ -63,7 +63,7 @@ EXPORT uint32_t lift_dag(uint32_t x, uint32_t y) {
     return a ^ b;
 }
 
-// Comparison results used as values (x86 setcc, ARM64 cset) inside MBA (mba_challenge 0x401301):
+// Comparison results used as values (x86 setcc, ARM64 cset) inside MBA:
 // b is x & 1 (bool_ne) or its complement (bool_eq), so both return x + y. In bool_wide, b is not
 // x & 3, and nothing may treat it so.
 EXPORT uint32_t bool_ne(uint32_t x, uint32_t y) {
@@ -82,7 +82,7 @@ EXPORT uint32_t bool_wide(uint32_t x, uint32_t y) {
     return ((x | b) ^ y) + 2 * ((x | b) & y);
 }
 
-// A value used twice and kept (tigress_vm's handlers): a is stored and also combined, so a rewrite
+// A value used twice and kept (a Tigress VM's handlers): a is stored and also combined, so a rewrite
 // of the return over a's definition would copy it; over a itself, (a ^ z) + 2 * (a & z) is a + z.
 EXPORT uint32_t shared_value(uint32_t x, uint32_t y, uint32_t z, uint32_t *out) {
     uint32_t a = (x * y) - (x | y) + (x & 7); B(a);
@@ -90,14 +90,14 @@ EXPORT uint32_t shared_value(uint32_t x, uint32_t y, uint32_t z, uint32_t *out) 
     return (a ^ z) + 2 * (a & z);
 }
 
-// snagit.dll: an arithmetic definition and a bitwise use, each unmixed; merging them made one
+// OLLVM: an arithmetic definition and a bitwise use, each unmixed; merging them made one
 // mixed expression. Over a itself the use is a ^ 0x00ff00ff.
 EXPORT uint32_t split_mix(uint32_t x, uint32_t y) {
     uint32_t a = x * 7 + y; B(a);
     return (a & 0xff00ff00) | (~a & 0x00ff00ff);
 }
 
-// mba_challenge: single-use temporaries, each unmixed in three-address MLIL, that HLIL shows as one
+// Three-address MBA: single-use temporaries, each unmixed in three-address MLIL, that HLIL shows as one
 // mixed statement. A smaller mixed result, (x + y) | z, may replace it.
 EXPORT uint32_t mixed_chain(uint32_t x, uint32_t y, uint32_t z) {
     uint32_t a = x ^ y; B(a);

@@ -89,7 +89,7 @@ def test_too_many_paths():
 
 
 def test_an_invariant_merge_is_its_one_source():
-    # x-tunnel 0x4485a0 (v3.3): i is merged round a loop with copies of itself, so its only value from
+    # v3.3: i is merged round a loop with copies of itself, so its only value from
     # outside is y * y + 3 (Merge with one incoming value). It is substituted, renamed apart, without
     # multiplying the variants; x, merged from two values, may stay a free leaf.
     x, i = v("x"), v("i")

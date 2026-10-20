@@ -38,7 +38,7 @@ class MLILAdapter:
         self.mlil = mlil
         self.max_nodes = max_nodes
         # Enumeration lifts every root; in a large function with no MBA that is all the work, and
-        # the engine only sees candidates it is given (snagit.dll: 60 s, Binary Ninja gave up).
+        # the engine only sees candidates it is given (one large export: 60 s, Binary Ninja gave up).
         self.deadline = deadline
         self.backups: list[tuple[int, int]] = []
         self.fixed_loads = FixedLoads(mlil.source_function.view)
@@ -202,8 +202,8 @@ class MLILAdapter:
         # that only removes copies while duplicating a kept value's definition grows the code shown.
         trees = [root] + [definitions[key].src for key in dying if definitions[key].src.operation not in _COPIES]
         # Mixed if one statement as HLIL shows it is. Single-use temporaries fold into their use
-        # (mba_challenge: t = a + 3; u = t | b reads as one mixed line); a value used several times
-        # is a statement of its own (snagit.dll: a = x * 7 + y read twice by (a & M) | (~a & ~M) —
+        # (three-address MBA: t = a + 3; u = t | b reads as one mixed line); a value used several times
+        # is a statement of its own (OLLVM: a = x * 7 + y read twice by (a & M) | (~a & ~M) —
         # each unmixed, and merging them is what the gate refuses).
         statements: dict = {None: set(_operations(root))}
         shown = shown_in(dying, uses, {key: d.instr_index for key, d in definitions.items()},
@@ -346,7 +346,7 @@ class MLILAdapter:
 def _invariant_source(ssa, ssa_var: SSAVariable, definitions: Optional[dict] = None,
                       limit: int = 64) -> Optional[SSAVariable]:
     """The one value entering a web of merges and whole copies from outside it, if there is exactly one
-    (v3.3): i = phi(i0, i'), i' = esi, esi = phi(i0, i), as x-tunnel.bin carries y * y + 3 round a loop.
+    (v3.3): i = phi(i0, i'), i' = esi, esi = phi(i0, i), as an opaque predicate's y * y + 3 is carried round a loop.
     Every member then holds some instance of that value. None otherwise."""
     shared = definitions is not None
     definitions = {} if definitions is None else definitions

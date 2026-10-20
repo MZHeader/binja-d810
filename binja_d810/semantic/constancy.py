@@ -70,7 +70,7 @@ def constant_value(e: Expr, deadline: Deadline, prove: Optional[Prover] = None) 
 
 def fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int = CONSTANCY_Z3_MS,
                 inconclusive: Optional[dict] = None) -> Optional[tuple[int, Check]]:
-    """constant_value for an expression too large to expand as a tree (values shared: snagit.dll's
+    """constant_value for an expression too large to expand as a tree (values shared: an OLLVM-obfuscated
     export, spec v3.1 goal 1). Samples evaluate each shared value once and the Z3 query is built
     with sharing. (value, check) when constant on every sample (or variable-free); the check says
     whether it is proven. None as soon as two samples differ, or when a proof refutes it. Proven and refuted outcomes are

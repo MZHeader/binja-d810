@@ -2,7 +2,7 @@
 
 Binary Ninja numbers SSA versions per storage location (binja_d810.binja.mlil.lift). After rewrites
 and SSA regeneration, a read can name another variable of the same storage than its definition does:
-x-tunnel.bin 0x424760 reads edx_98#97, which edx_103#97 = phi(edx_98#90, edx_98#96) defines, and asking
+a function can read edx_98#97, which edx_103#97 = phi(edx_98#90, edx_98#96) defines, and asking
 for edx_98#97's definition finds nothing.
 """
 
@@ -23,8 +23,8 @@ def definition_of(ssa_func, ssa_var, cache: dict, by_storage: bool = True):
     if found is None and ssa_var.version > 0 and by_storage:
         index = cache.get(_BY_STORAGE)
         if index is None:
-            # One scan of the SSA form, by what each instruction writes (v3.5): 0.14 s on x-tunnel.bin
-            # 0x424760, where every SSA version of every variable (ssa_vars, one call per variable) took 12 s.
+            # One scan of the SSA form, by what each instruction writes (v3.5): 0.14 s on a
+            # large function, where every SSA version of every variable (ssa_vars, one call per variable) took 12 s.
             index = cache[_BY_STORAGE] = {}
             for instr in ssa_func.instructions:
                 for written in instr.vars_written:

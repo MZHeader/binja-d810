@@ -17,7 +17,7 @@ def ssa(v, version):
 
 
 class FakeSSA:
-    """x-tunnel.bin 0x424760: if (edx_98#97 != ...) reads version 97 of edx, which edx_103#97 = phi(...) defines."""
+    """A function where if (edx_98#97 != ...) reads version 97 of edx, which edx_103#97 = phi(...) defines."""
 
     def __init__(self):
         self.edx_98, self.edx_103, self.eax = var("edx_98", 1), var("edx_103", 2), var("eax", 3, storage=0)

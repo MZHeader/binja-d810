@@ -2,5 +2,5 @@
 # and list, per sample file name, the function start addresses to reanalyze with the plugin on.
 # Run: BINJA_D810_SAMPLES=<dir> scripts/binja_pytest.sh tests/binja/real/test_workbench.py
 
-[mba_challenge]
-functions = ["0x4011a5", "0x401301"]
+["sample.bin"]
+functions = ["0x401000", "0x401200"]

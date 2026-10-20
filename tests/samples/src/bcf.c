@@ -1,4 +1,4 @@
-// v3.1 fixtures: OLLVM-style bogus control flow (snagit.dll's export) and the shapes around it.
+// v3.1 fixtures: OLLVM-style bogus control flow (an obfuscated export) and the shapes around it.
 // Intermediates pass through empty asm barriers so the compiler keeps the structure.
 #include <stdint.h>
 #define B(v) __asm__ volatile("" : "+r"(v))
@@ -56,7 +56,7 @@ EXPORT uint32_t const_use(uint32_t a) {
     return a + k * 3;
 }
 
-// glibc's alignment (halflife_keygen 0x415890): q is used twice; p - q is -8 | p, which must not
+// glibc's pointer alignment: q is used twice; p - q is -8 | p, which must not
 // make the arithmetic line mixed.
 EXPORT uint32_t align_gate(uint32_t p, uint32_t n) {
     uint32_t q = (p + 8) & ~7u; B(q);
@@ -76,7 +76,7 @@ EXPORT uint32_t const_after_merge(uint32_t a, uint32_t c) {
     return m;
 }
 
-// halflife_keygen 0x415890's shape: d = p - q is its own instruction, used once by arithmetic that
+// glibc's pointer alignment, again: d = p - q is its own instruction, used once by arithmetic that
 // HLIL shows as one statement with it. d is -8 | p, which must not make that statement mixed.
 EXPORT uint32_t align_gate2(uint32_t p, uint32_t n) {
     uint32_t q = (p + 8) & ~7u; B(q);

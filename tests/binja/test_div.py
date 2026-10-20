@@ -1,4 +1,4 @@
-"""v3.2: division in opaque predicates (x-tunnel.bin) and divisions that may trap (tests/samples/src/div.c),
+"""v3.2: division in opaque predicates (y * y + 3 shapes) and divisions that may trap (tests/samples/src/div.c),
 on 8 builds."""
 
 import oracle
@@ -82,7 +82,7 @@ def test_division_predicates_are_folded(builds, name):
 
 
 def test_a_value_carried_round_a_loop_is_its_one_source(builds):
-    # x-tunnel 0x4485a0 (v3.3): the predicate's y * y + 3 reaches the comparison through a merge whose
+    # v3.3: the predicate's y * y + 3 reaches the comparison through a merge whose
     # only value from outside is y * y + 3 (the loop copies it round), beside x merged from two values.
     _, on, off = builds
     assert "0x5a" in _text(function_named(off, "div_loop"))

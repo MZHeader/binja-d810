@@ -134,7 +134,7 @@ def test_solver_lock_contention_is_bounded_by_each_functions_deadline():
 
 
 def test_enumeration_stops_at_the_deadline():
-    # snagit.dll: one function's roots took 60 s to lift (thousands of roots, none an MBA), and the
+    # One large export's roots took 60 s to lift (thousands of roots, none an MBA), and the
     # engine only checked the deadline between candidates it was given, so Binary Ninja abandoned
     # 162 functions. The adapters check the deadline themselves, per instruction.
     from binja_d810.binja.hlil.adapter import HLILAdapter

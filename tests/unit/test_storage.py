@@ -142,8 +142,8 @@ def test_division_operands_keep_their_value():
 
 
 def test_a_comparison_read_as_an_integer_is_zero_or_one():
-    # Binary Ninja gives a comparison the value 0 or 1 at its operand size: (y s< 10).b (snagit.dll,
-    # MSVC's setl r8b) is its zero extension, and so is sx.q(x < y) - never -1.
+    # Binary Ninja gives a comparison the value 0 or 1 at its operand size: (y s< 10).b
+    # (MSVC's setl r8b) is its zero extension, and so is sx.q(x < y) - never -1.
     from binja_d810.binja.storage import as_integer, unary
     from binja_d810.ir.evaluate import evaluate
 

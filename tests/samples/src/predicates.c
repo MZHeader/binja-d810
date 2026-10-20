@@ -58,7 +58,7 @@ EXPORT uint32_t mirrored(uint32_t x, uint32_t y) {
 }
 
 // Loop conditions over bitwise operations and products: they depend on the inputs and stay. HLIL
-// gives a loop's condition size 0 (a boolean) over 4-byte operands (zeus_stage3, every build here).
+// gives a loop's condition size 0 (a boolean) over 4-byte operands (seen on real code, and on every build here).
 EXPORT uint32_t loop_bitwise(uint32_t x, uint32_t y) {
     uint32_t acc = 0;
     for (uint32_t i = 0; ((i ^ x) & 7) != y; i++) {

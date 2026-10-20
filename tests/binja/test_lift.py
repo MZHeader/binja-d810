@@ -107,7 +107,7 @@ def test_candidate_roots_are_supported_and_maximal(plain_mba):
 @pytest.mark.parametrize("build,level", MATRIX, ids=IDS)
 def test_lift_work_is_bounded_when_definitions_are_shared(build, level):
     """lift_dag reads both values twice per step: the fully inlined tree is exponential. Each lift
-    must stay within a few times its node budget (tigress_vm: 249 roots took 6 s to lift)."""
+    must stay within a few times its node budget (a Tigress VM: 249 roots took 6 s to lift)."""
     from binja_d810.binja.hlil.lift import candidate_roots as hlil_roots, expression_roots, lift as hlil_lift
 
     bv = open_sample(sample("hlil_fixtures", build, level), d810=False)
@@ -177,7 +177,7 @@ def test_statements_that_were_each_unmixed_are_not_merged_into_a_mixed_expressio
 @pytest.mark.parametrize("build,level", MATRIX, ids=IDS)
 def test_a_chain_of_single_use_temporaries_is_one_statement(build, level):
     # The MLIL pass alone: its statements are three-address code, so mixedness is judged on the
-    # statements HLIL shows (mba_challenge lost most of its v2.1 gains to this).
+    # statements HLIL shows (a three-address MBA sample lost most of its v2.1 gains to this).
     from binja_d810.binja import log, workflow
 
     # x86-64 -O2 reuses x's and y's registers before the combining instruction: the version-safe

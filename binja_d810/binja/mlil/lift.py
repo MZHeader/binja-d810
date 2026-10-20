@@ -180,8 +180,8 @@ class _Lifter:
 
     def get(self, e, name: str):
         """`e.<name>`, read once per SSA form (v3.3): Binary Ninja builds a new Python object at every
-        read of an operand, and roots read the same definitions again and again (snagit.dll's
-        sub_180009da0 spent half its budget building them). Shared with `definitions` (other keys)."""
+        read of an operand, and roots read the same definitions again and again (one
+        large function spent half its budget building them). Shared with `definitions` (other keys)."""
         key = (e.expr_index, name)
         found = self.definitions.get(key, _UNREAD)
         if found is _UNREAD:

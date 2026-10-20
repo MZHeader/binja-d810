@@ -89,8 +89,8 @@ def fit(e: Expr, width: int) -> Optional[Expr]:
 
 def as_integer(e: Expr, width: int) -> Expr:
     """A 1-bit value (a comparison or a flag) read as a `width`-bit integer. Binary Ninja gives a
-    comparison the value 0 or 1, whatever reads it, so this is its zero extension: (y s< 10).b (snagit.dll,
-    MSVC's setl r8b), sx.q(x < y) (1, never -1)."""
+    comparison the value 0 or 1, whatever reads it, so this is its zero extension: (y s< 10).b
+    (MSVC's setl r8b), sx.q(x < y) (1, never -1)."""
     return UnOp("zx", e, width) if e.width == 1 and width > 1 else e
 
 

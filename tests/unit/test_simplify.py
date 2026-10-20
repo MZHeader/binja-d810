@@ -322,3 +322,17 @@ def test_nonlinear_over_six_variables_is_left_alone_quickly():
     started = time.perf_counter()
     out = simplify_expression(e, RULES, LINEAR)
     assert time.perf_counter() - started < 1.0 and out.rewrite is None
+
+
+def test_only_atom_abstracting_backends_are_asked_about_bitwise_roots():
+    # CoBRA is for MBA: on bitwise junk the bitwise normal form is exact within CoBRA's own limits.
+    asked = []
+
+    class Counting:
+        name = "counting"
+
+        def simplify(self, e, deadline=None):
+            asked.append(e)
+
+    simplify_expression(ir("(x & 0xf0f0) | (y & ~0xf0f0) | (x & y & 0x0f0f)"), [], [Counting()])
+    assert not asked

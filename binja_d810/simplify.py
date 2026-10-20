@@ -301,14 +301,16 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
         others only within the variable limit."""
         nonlocal exhausted
         within_limit = len(variables(node)) <= limits.max_vars
-        # The linear backend decides linear MBAs by their signature; on 102 such real-sample
-        # queries CoBRA never found anything smaller (1.6 s spent).
-        linear_decided = has_linear and is_linear_mba(node)
+        # Only the atom-abstracting backends where they decide: the linear backend decides linear
+        # MBAs by their signature (on 102 such real-sample queries CoBRA never found anything
+        # smaller, 1.6 s spent), and the bitwise backend bitwise roots, exactly within CoBRA's own
+        # limits (CoBRA's answers mix: (x & 0xff00) | 0xff as 255 + (x & 0xff00)).
+        decided = (has_linear and is_linear_mba(node)) or not is_mba(node)
         for backend in backends:
             abstracting = getattr(backend, "abstracts_atoms", False)
             if (abstracting_only and not abstracting) or not (within_limit or abstracting):
                 continue
-            if linear_decided and not abstracting:
+            if decided and not abstracting:
                 continue
             names = getattr(backend, "names", None)
             if names is not None and names(node) > limits.max_vars:

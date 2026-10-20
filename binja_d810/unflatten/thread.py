@@ -15,6 +15,7 @@ from .values import Values, outcomes
 MAX_STEPS = 64
 MAX_COPIED = 64
 MAX_DUP = 8  # side effects copied before the first dispatcher block
+MAX_ARM = 4  # blocks of one arm of a pick (v4.3)
 MIN_STATES = 3  # distinct constants a state variable is compared with, without other evidence
 
 
@@ -135,6 +136,47 @@ def _split(graph: Graph, values: Values, pred: int, start: int, env: Mapping[Key
     return None
 
 
+def _pick(graph: Graph, values: Values, pred: int, key: Key) -> tuple[Optional[Expr], Optional[int], Optional[int]]:
+    """(v4.3) (c at the end of `pred`, value if c, value if not c) when `key` merges two constants at the join of
+    one branch on c: a state picked before shared code that has branches of its own, tested after it."""
+    none = None, None, None
+    if not isinstance(graph.definition(key), Phi):
+        return none
+    join, sides = graph.def_block(key), {}
+    for edge in graph.preds(join):
+        source = graph.phi_source(join, edge.source, key)
+        value = None if source is None else values.static(source)
+        side = _side(graph, edge)
+        if value is None or side is None or sides.setdefault(side, value) != value:
+            return none
+    branch = {b for b, _ in sides}
+    if len(branch) != 1 or len(sides) != 2:
+        return none
+    branch = branch.pop()
+    cond = graph.terminator(branch).cond
+    live = {}
+    for leaf in [] if cond is None else variables(cond):
+        k = key_of(leaf)
+        found = None if k is None else graph.live_expression(pred, k)
+        if found is None:
+            return none
+        live[leaf.name] = found
+    return (none if cond is None else (substitute(cond, live), sides[(branch, "true")], sides[(branch, "false")]))
+
+
+def _side(graph: Graph, edge) -> Optional[tuple[int, str]]:
+    """(branch block, slot) an edge into a join comes from: the branch itself, or an arm of at most MAX_ARM
+    blocks, each entered only from the one before, that goes on to the join."""
+    for _ in range(MAX_ARM + 1):
+        if isinstance(graph.terminator(edge.source), Branch):
+            return edge.source, edge.slot
+        preds = graph.preds(edge.source)
+        if not isinstance(graph.terminator(edge.source), Goto) or len(preds) != 1:
+            return None
+        edge = preds[0]
+    return None
+
+
 def _merged_in(graph: Graph, key: Key, block: int) -> bool:
     """`key` is a phi of `block`, or a copy of one (through full-width copies), or (v4.3) an expression of one
     with no other variable: a pick decoded on its way into the state."""
@@ -158,7 +200,7 @@ def _condition(graph: Graph, values: Values, pred: int, key: Key) -> tuple[Optio
     e = graph.live_expression(pred, key)
     table = None if e is None else outcomes(values.with_statics(e), values.deadline)
     if table is None or len(table[0]) != 1 or table[1][(0,)] == table[1][(1,)]:
-        return None, None, None
+        return _pick(graph, values, pred, key)
     return table[0][0], table[1][(1,)], table[1][(0,)]
 
 

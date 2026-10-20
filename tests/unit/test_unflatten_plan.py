@@ -171,6 +171,43 @@ def test_no_split_on_an_expression_of_a_phi_in_the_predecessor():
     assert 16 not in threads and threads[2].outcome.dest == 3 and threads[15].outcome.dest == 4
 
 
+def _picked_before_shared_code():
+    """Handler 2 picks the next state with a branch (B if q#1 == 0, else C), then runs shared code with a branch
+    of its own (a lazy resolver) before the latch."""
+    spec = _tree()
+    spec[2] = {"do": ["!", f"t#1 = {C:#x}"], "if": ("q#1 == 0", 15, 16)}
+    spec[15] = {"do": [f"t#2 = {B:#x}"], "goto": 16}
+    spec[16] = {"phi": {"t#3": {2: "t#1", 15: "t#2"}}, "do": ["!"], "if": ("f#1 == 0", 17, 18)}
+    spec[17] = {"do": ["!"], "goto": 18}
+    spec[18] = {"do": ["!"], "goto": 9}
+    spec[9]["phi"] = {"s#9": {18: "t#3", 3: "s#4", 4: "s#5"}}
+    return spec
+
+
+def test_a_state_picked_before_shared_code_splits_on_the_pick():
+    # v4.3: no boolean expression of the state is live after the shared code, but the pick's condition is.
+    g = toy(_picked_before_shared_code(), live={(18, "q#1"): "q#1"})
+    split = _by_pred(plan(g))[18].split
+    assert split.key == g.key("t#3") and split.condition == g.expr("q#1 == 0")
+    assert (split.if_one, split.if_zero) == (B, C)
+    assert split.outcomes[B].dest == 3 and split.outcomes[C].dest == 4
+
+
+def test_a_pick_whose_arm_is_two_blocks_splits_on_the_pick():
+    spec = _picked_before_shared_code()
+    spec[15]["goto"] = 19
+    spec[19] = {"goto": 16}
+    spec[16]["phi"] = {"t#3": {2: "t#1", 19: "t#2"}}
+    g = toy(spec, live={(18, "q#1"): "q#1"})
+    split = _by_pred(plan(g))[18].split
+    assert split.condition == g.expr("q#1 == 0") and (split.if_one, split.if_zero) == (B, C)
+
+
+def test_a_pick_whose_condition_is_no_longer_live_splits_into_a_chain():
+    split = _by_pred(plan(toy(_picked_before_shared_code())))[18].split
+    assert split.condition is None and set(split.outcomes) == {B, C}
+
+
 def test_a_fact_holds_for_a_copy_made_in_the_same_block():
     # At -O0 the dispatcher reloads the state (s#3 = s#2) and its tests are lifted through the copy, so the
     # fact is on s#2. A loop body that keeps the state passes the copy to the latch.

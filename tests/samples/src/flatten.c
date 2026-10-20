@@ -86,6 +86,28 @@ EXPORT int fl_loop(int n) {  // a counted loop inside one state
     }
 }
 
+static int (*lazy)(int);  // resolved on first use, as malware resolves its imports
+LOCAL int twice(int v) { B(v); return v * 2; }
+EXPORT int fl_glue(int x) {  // a handler picks the next state, then shared code with a branch of its own runs
+    uint32_t s = 0x3e6a1d97u;
+    int r = 0;
+    for (;;) {
+        B(s);
+        if (s == 0x3e6a1d97u) {  // the pick reads a value the shared code reads again
+            int v = mark(51);
+            s = 0x17f4a6c9u;
+            if (v > x) s = 0x52c8b0e3u;
+            KEEP(&lazy);
+            if (!lazy) lazy = twice;
+            r += lazy(v) + v;
+        }
+        else if (s == 0x52c8b0e3u) { r += mark(52); s = 0x6d09e3b5u; }
+        else if (s == 0x17f4a6c9u) { r ^= mark(53) * 3; s = 0x6d09e3b5u; }  // unlike 52: not merged into one call
+        else if (s == 0x6d09e3b5u) { return r + mark(54); }
+        else { return -1; }
+    }
+}
+
 // ---- Negatives: no state machine, or a state the function does not own ----
 
 EXPORT int plain_for(int n) {

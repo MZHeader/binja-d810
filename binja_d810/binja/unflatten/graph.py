@@ -23,6 +23,7 @@ from ..ssa import definition_of, reaching
 _PHIS = (Op.MLIL_VAR_PHI, Op.MLIL_MEM_PHI)
 _ASSIGNS = (Op.MLIL_SET_VAR_SSA, Op.MLIL_SET_VAR_SSA_FIELD)
 _LOADS = (Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA)
+MAX_COPIES = 8  # copies of a value searched for one live at a split
 
 
 class MLILGraph:
@@ -116,11 +117,31 @@ class MLILGraph:
             return None
 
     def live_expression(self, pred: int, key: Key) -> Optional[Expr]:
+        """The value of `key` in values live at the end of `pred`: rebuilt from them, or (v4.3) a full-width copy
+        of it that is still live there (a value saved across a call: the register it was made in is clobbered)."""
         b = self._blocks[pred]
         root = self.ssa[self.mlil.get_ssa_instruction_index(b.end - 1)]
         found = lift_live(self.ssa, self._vars[key], self.width(key), root_instr=root, max_nodes=self.max_nodes,
                           definitions=self._defs)
-        return None if found is None else self._relink(found)
+        if found is not None:
+            return self._relink(found)
+        copy = self._live_copy(self._vars[key], root)
+        return None if copy is None else Var(f"{copy.var.name}#{copy.version}", self.width(key), ref=self._key(copy))
+
+    def _live_copy(self, ssa_var: SSAVariable, root) -> Optional[SSAVariable]:
+        width, work, seen = _bits(ssa_var.var), [ssa_var], {ssa_var}
+        while work and len(seen) <= MAX_COPIES:
+            for use in self.ssa.get_ssa_var_uses(work.pop(0)):
+                if use.operation != Op.MLIL_SET_VAR_SSA or use.src.operation != Op.MLIL_VAR_SSA:
+                    continue
+                dest = use.dest
+                if dest in seen or _bits(dest.var) != width:
+                    continue
+                if root.get_ssa_var_version(dest.var) == dest.version:
+                    return dest
+                seen.add(dest)
+                work.append(dest)
+        return None
 
     # --- for the rewrite ---
 

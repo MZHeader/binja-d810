@@ -9,14 +9,25 @@ from .expr import CMP_OPS, BinOp, Const, Expr, UnOp, Var, mask
 
 
 def possible_ones(e: Expr) -> int:
-    """A mask with every bit that can be one in some evaluation of `e`."""
+    """A mask with every bit that can be one in some evaluation of `e`. Shared values once."""
+    return _possible(e, {})
+
+
+def _possible(e: Expr, memo: dict[int, int]) -> int:
+    found = memo.get(id(e))
+    if found is None:
+        found = memo[id(e)] = _possible_node(e, memo)
+    return found
+
+
+def _possible_node(e: Expr, memo: dict[int, int]) -> int:
     m = mask(e.width)
     if isinstance(e, Const):
         return e.value
     if isinstance(e, Var):
         return m
     if isinstance(e, UnOp):
-        inner = possible_ones(e.operand)
+        inner = _possible(e.operand, memo)
         if e.op in ("zx", "trunc"):
             return inner & m
         if e.op == "sx":
@@ -26,7 +37,7 @@ def possible_ones(e: Expr) -> int:
     assert isinstance(e, BinOp)
     if e.op in CMP_OPS:
         return 1
-    left, right = possible_ones(e.left), possible_ones(e.right)
+    left, right = _possible(e.left, memo), _possible(e.right, memo)
     if e.op == "and":
         return left & right
     if e.op in ("or", "xor"):
@@ -41,6 +52,23 @@ def possible_ones(e: Expr) -> int:
         count = shift_count(e.right.value, e.width)
         return (left << count) & m if e.op == "shl" else left >> count
     return m
+
+
+def upper_bound(e: Expr) -> int:
+    """The largest unsigned value `e` can take (sound, never above possible_ones): 2 / (y * y + 1)
+    is at most 2, where its possible ones allow 3."""
+    bound = possible_ones(e)
+    if isinstance(e, Const):
+        return e.value
+    if isinstance(e, UnOp) and e.op == "zx":
+        return min(bound, upper_bound(e.operand))
+    if isinstance(e, BinOp) and e.op == "udiv":
+        return min(bound, upper_bound(e.left))
+    if isinstance(e, BinOp) and e.op == "urem" and isinstance(e.right, Const) and e.right.value:
+        return min(bound, upper_bound(e.left), e.right.value - 1)
+    if isinstance(e, BinOp) and e.op == "and":
+        return min(bound, upper_bound(e.left), upper_bound(e.right))
+    return bound
 
 
 _MIRRORED = {"eq": "eq", "ne": "ne", "ult": "ugt", "ule": "uge", "ugt": "ult", "uge": "ule"}

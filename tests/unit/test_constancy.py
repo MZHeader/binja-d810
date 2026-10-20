@@ -2,7 +2,7 @@ from binja_d810.deadline import Deadline
 from binja_d810.ir.expr import Const, to_str
 from binja_d810.ir.normalize import normalize
 from binja_d810.ir.parse import parse
-from binja_d810.semantic.constancy import constant_value
+from binja_d810.semantic.constancy import constant_value, fold_shared
 from binja_d810.semantic.verify import Verdict
 from binja_d810.simplify import simplify_expression
 
@@ -155,6 +155,7 @@ def test_an_inconclusive_fold_is_remembered_for_the_run_by_shape(monkeypatch):
     memo.clear()
     calls = []
     monkeypatch.setattr(constancy, "_z3_prove", lambda *a: (calls.append(1), (None, "z3 timeout"))[1])
+    monkeypatch.setattr(constancy, "low_bits_value", lambda e: None)  # only the stubbed solver decides
     run: dict = {}
     first = constancy.fold_shared(c("eq((x * (x + 1)) & 1, 0)"), Deadline.never(), inconclusive=run)
     second = constancy.fold_shared(c("eq((y * (y + 1)) & 1, 0)"), Deadline.never(), inconclusive=run)
@@ -170,7 +171,20 @@ def test_a_proof_cut_short_by_the_deadline_is_not_remembered(monkeypatch):
     memo.clear()
     calls = []
     monkeypatch.setattr(constancy, "_z3_prove", lambda *a: (calls.append(a[3]), (None, "z3 timeout"))[1])
+    monkeypatch.setattr(constancy, "low_bits_value", lambda e: None)  # only the stubbed solver decides
     run: dict = {}
     for _ in range(2):
         constancy.fold_shared(c("eq((x * (x + 1)) & 1, 0)"), Deadline.after(0.5), inconclusive=run)
     assert len(calls) == 2 and not run
+
+
+def test_fold_shared_proves_by_low_bits():
+    value, found = fold_shared(parse("eq(7 * y * y - 1, x * x)", 64), Deadline.never())
+    assert value == 0 and (found.verdict, found.method) == (Verdict.PROVEN, "low bits")
+
+
+def test_per_path_square_variants_fold():
+    # i = phi(a * a, b * b): each per-path variant of 7 * y * y - 1 == i is proven never true (merged squares).
+    for square in ("a * a", "b * b"):
+        value, found = fold_shared(parse(f"eq(7 * y * y - 1, {square})", 32), Deadline.never())
+        assert value == 0 and found.verdict is Verdict.PROVEN

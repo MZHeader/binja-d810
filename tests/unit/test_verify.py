@@ -5,9 +5,9 @@ import z3
 from exprgen import DEFAULT_OPS, random_expr
 
 from binja_d810.ir.evaluate import evaluate
-from binja_d810.ir.expr import to_str, variables
+from binja_d810.ir.expr import Const, to_str, variables
 from binja_d810.ir.parse import parse
-from binja_d810.semantic.verify import Verdict, check_equivalent, sample_envs, to_z3
+from binja_d810.semantic.verify import Verdict, check, check_equivalent, sample_envs, to_z3
 
 
 def p(text, width=32):
@@ -155,3 +155,8 @@ def test_atom_signatures_never_refute():
     # not. A mismatch over atoms is no verdict: sampling and Z3 decide.
     a, b = p("((x + 1) ^ x) & 1"), p("1")
     assert check_equivalent(a, b, samples=0, use_z3=False) is Verdict.TESTED
+
+
+def test_polynomial_predicate_proven_without_z3():
+    found = check(parse("eq(7 * y * y - 1, x * x)", 64), Const(0, 1), use_z3=False)
+    assert (found.verdict, found.method) == (Verdict.PROVEN, "low bits")

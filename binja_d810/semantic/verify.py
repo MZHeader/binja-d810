@@ -19,6 +19,7 @@ from ..ir.expr import CMP_OPS, DIV_OPS, BinOp, Const, Expr, UnOp, Var, mask, sha
 from ..ir.normalize import normalize
 from . import memo
 from .linear_mba import abstract_atoms, is_linear_mba, signature
+from .low_bits import low_bits_value
 
 _SIGNATURE_MAX_VARS = 12
 _Z3_LOCAL = threading.local()
@@ -101,6 +102,11 @@ def _check(
         return Check(Verdict.PROVEN if by_signature else Verdict.REFUTED, "signature")
     if _atom_signature_proof(a, b):
         return Check(Verdict.PROVEN, "signature")
+    if isinstance(a, BinOp) and a.op in ("eq", "ne") and isinstance(b, Const):
+        # Polynomial predicates (7 * y * y - 1 == x * x): exact, where Z3 times out on the products.
+        decided = low_bits_value(a)
+        if decided is not None:
+            return Check(Verdict.PROVEN if decided == b.value else Verdict.REFUTED, "low bits")
     if isinstance(a, BinOp) and a.op in ("eq", "ne") and isinstance(b, Const) and b.value == int(a.op == "eq"):
         # eq(L, R) is always 1 (ne always 0) exactly when L == R is an identity, which signatures
         # prove for MBAs where Z3 on the comparison often times out.

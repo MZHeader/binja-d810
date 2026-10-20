@@ -702,6 +702,7 @@ def test_an_inconclusive_constant_is_proven_once_per_run_by_shape(monkeypatch):
     memo.clear()
     calls = []
     monkeypatch.setattr(constancy, "_z3_prove", lambda *a: (calls.append(1), (None, "z3 timeout"))[1])
+    monkeypatch.setattr(constancy, "low_bits_value", lambda e: None)  # only the stubbed solver decides
     a, b = p("eq((x * (x + 1)) & 1, 0)", 1), p("eq((y * (y + 1)) & 1, 0)", 1)
 
     class Constants(FakeAdapter):

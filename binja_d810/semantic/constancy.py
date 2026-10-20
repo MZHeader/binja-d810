@@ -10,6 +10,7 @@ from ..deadline import Deadline
 from ..ir.evaluate import evaluate, evaluate_shared, evaluate_shared_batch
 from ..ir.expr import Const, Expr, mask, shape_key, variables
 from . import memo
+from .low_bits import low_bits_value
 from .verify import Check, Verdict, _z3_prove, check, sample_envs
 
 _EXHAUSTIVE_BITS = 16
@@ -105,6 +106,9 @@ def _fold_shared(e: Expr, deadline: Deadline, z3_timeout_ms: int) -> Optional[tu
     if first[0] != first[1] or any(found != first[0] for found in evaluate_shared_batch(e, envs[2:])):
         return None
     value = first[0]
+    decided = low_bits_value(e)
+    if decided is not None:  # a polynomial predicate: no solver needed
+        return (value, Check(Verdict.PROVEN, "low bits")) if decided == value else None
     if deadline.at != float("inf"):
         remaining_ms = deadline.remaining() * 1000
         if remaining_ms < 2:

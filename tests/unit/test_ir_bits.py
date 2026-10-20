@@ -2,7 +2,7 @@ import random
 
 from exprgen import random_expr
 
-from binja_d810.ir.bits import decided_comparison, possible_ones
+from binja_d810.ir.bits import decided_comparison, possible_ones, upper_bound
 from binja_d810.ir.evaluate import evaluate
 from binja_d810.ir.expr import BinOp, Const, UnOp, Var, mask
 from binja_d810.ir.parse import parse
@@ -79,3 +79,9 @@ def test_comparisons_decided_by_bounds_hold_on_every_input():
                 for env in ({"a": i, "b": rng.getrandbits(8), "c": rng.getrandbits(8)} for i in range(256)):
                     assert evaluate(BinOp(op, a, b, 1), env) == value, (op, a, b)
     assert decided > 50
+
+
+def test_upper_bound_of_a_division_by_a_variable():
+    assert upper_bound(parse("udiv(2, y * y + 1)", 32)) == 2
+    assert upper_bound(parse("urem(x, 10)", 32)) == 9
+    assert upper_bound(parse("x & 0x30", 32)) == 0x30

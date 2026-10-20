@@ -50,6 +50,7 @@ def test_check_remembers_proofs_by_shape(monkeypatch):
 def test_check_does_not_remember_inconclusive_outcomes(monkeypatch):
     real = verify._z3_prove
     monkeypatch.setattr(verify, "_z3_prove", lambda *args, **kwargs: (None, "z3 timeout"))
+    monkeypatch.setattr(verify, "low_bits_value", lambda e: None)  # only the stubbed solver decides
     assert check(_predicate("p", "q"), Const(1, 1)).verdict is Verdict.TESTED
     monkeypatch.setattr(verify, "_z3_prove", real)
     assert check(_predicate("p", "q"), Const(1, 1)).verdict is Verdict.PROVEN
@@ -72,6 +73,7 @@ def test_fold_shared_remembers_by_shape(monkeypatch):
 def test_fold_shared_does_not_remember_inconclusive_outcomes(monkeypatch):
     real = constancy._z3_prove
     monkeypatch.setattr(constancy, "_z3_prove", lambda *args, **kwargs: (None, "z3 timeout"))
+    monkeypatch.setattr(constancy, "low_bits_value", lambda e: None)  # only the stubbed solver decides
     first = constancy.fold_shared(_predicate("g", "h"), Deadline.never())
     assert first is not None and first[1].verdict is Verdict.TESTED
     monkeypatch.setattr(constancy, "_z3_prove", real)

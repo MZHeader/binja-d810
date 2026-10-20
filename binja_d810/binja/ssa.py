@@ -36,20 +36,19 @@ def definition_of(ssa_func, ssa_var, cache: dict, by_storage: bool = True):
 
 
 def reaching(ssa_func, ssa_block, var, depth: int = 8):
-    """The version of `var` leaving `ssa_block` (SSA form): its last write in the block (a phi
-    included); else what leaves the block's only predecessor (a loop's back edge through a block of
-    just a goto, at -O2, where the non-SSA form answers version 0); else the version current at its
-    last instruction. None when there is no non-SSA instruction to ask."""
+    """The version of `var` leaving `ssa_block` (SSA form): written by its last instruction, or current there.
+    A block of one instruction that does not write it, with one predecessor (a loop's back edge through a
+    lone goto, at -O2, where the non-SSA form answers version 0), passes on what leaves its predecessor.
+    None when there is no non-SSA instruction to ask."""
     from binaryninja import SSAVariable  # at call time: this module imports no binaryninja
 
-    for index in range(ssa_block.end - 1, ssa_block.start - 1, -1):
-        for written in ssa_func[index].vars_written:
-            if isinstance(written, SSAVariable) and written.var == var:
-                return written
-    edges = ssa_block.incoming_edges
-    if depth and len(edges) == 1:
-        return reaching(ssa_func, edges[0].source, var, depth - 1)
     last = ssa_func[ssa_block.end - 1]
+    for written in last.vars_written:
+        if isinstance(written, SSAVariable) and written.var == var:
+            return written
+    edges = ssa_block.incoming_edges
+    if depth and ssa_block.length == 1 and len(edges) == 1:
+        return reaching(ssa_func, edges[0].source, var, depth - 1)
     try:
         return SSAVariable(var, last.non_ssa_form.get_ssa_var_version(var))
     except Exception:  # noqa: BLE001 - no non-SSA instruction for it

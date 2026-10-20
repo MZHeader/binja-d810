@@ -136,17 +136,20 @@ def _split(graph: Graph, values: Values, pred: int, start: int, env: Mapping[Key
 
 
 def _merged_in(graph: Graph, key: Key, block: int) -> bool:
-    """`key` is a phi of `block`, or a copy of one (through full-width copies)."""
+    """`key` is a phi of `block`, or a copy of one (through full-width copies), or (v4.3) an expression of one
+    with no other variable: a pick decoded on its way into the state."""
     seen = set()
     while key not in seen:
         seen.add(key)
         d = graph.definition(key)
         if isinstance(d, Phi):
             return graph.def_block(key) == block
-        if not (isinstance(d, Assign) and isinstance(d.expr, Var) and key_of(d.expr) is not None
-                and d.expr.width == graph.width(key_of(d.expr))):
+        if not isinstance(d, Assign):
             return False
-        key = key_of(d.expr)
+        leaves = {key_of(leaf) for leaf in variables(d.expr)}
+        if len(leaves) != 1 or None in leaves:
+            return False
+        key = leaves.pop()
     return False
 
 

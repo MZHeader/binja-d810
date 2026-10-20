@@ -56,6 +56,22 @@ def test_value_set_of_three_flags():
     assert Values(g).value_set(g.key("s#1")) == {0, 1, 2, 3}
 
 
+def test_value_set_of_an_expression_over_a_phi_of_constants():
+    # s = (flag ? A : B) - K once K is constant: each value of the phi, through the expression.
+    g = toy({0: {"do": [f"t#1 = {A:#x}", f"t#2 = {B:#x}"], "goto": 1},
+             1: {"phi": {"t#3": {0: "t#1", 2: "t#2"}}, "do": ["s#1 = t#3 - 0x5a17c3e9"], "stop": True}})
+    v = Values(g)
+    assert v.value_set(g.key("s#1")) == {(A - 0x5a17c3e9) & 0xffffffff, (B - 0x5a17c3e9) & 0xffffffff}
+    assert v.only_constants(g.key("s#1"))
+
+
+def test_a_counter_over_its_own_phi_has_no_value_set():
+    g = toy({0: {"do": ["i#1 = 0"], "goto": 1},
+             1: {"phi": {"i#2": {0: "i#1", 1: "i#3"}}, "do": ["i#3 = i#2 + 1"], "goto": 1}})
+    v = Values(g)
+    assert v.value_set(g.key("i#3")) is None and not v.only_constants(g.key("i#2"))
+
+
 def test_no_value_set_for_four_flags():
     g = toy({0: {"do": ["s#1 = zx32(p#1) + zx32(q#1) + zx32(r#1) + zx32(u#1)"], "stop": True}},
             widths={"p": 1, "q": 1, "r": 1, "u": 1})

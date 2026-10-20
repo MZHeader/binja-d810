@@ -21,11 +21,14 @@ def sample(base: str, build: str, level: str) -> str:
 _ALIASED = ("the address-taken value is reloaded into a register that is reused before the combining "
             "instruction, and HLIL reads the address-taken variable itself, an aliased read the effect "
             "policy rejects")
+_PAGE = ("arm64 -O0 spills an adrp page base that is the key's own address to the stack and uses it for a "
+         "neighbour; the use rules do not follow a value through memory, so the key may be written")
 MISSES: dict[tuple[str, str], str] = {
     ("eff_aliased", "x86_64-pe-O0"): _ALIASED,
     ("eff_aliased", "i686-pe-O0"): _ALIASED,
     ("eff_aliased", "i686-pe-O2"): _ALIASED,
     ("eff_aliased", "x86_64-elf-O0"): _ALIASED,
+    **{(name, "arm64-O0"): _PAGE for name in ("key_xor", "key_mba", "key_shift", "key_states", "key_report")},
 }
 
 

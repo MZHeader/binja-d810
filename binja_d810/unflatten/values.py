@@ -26,6 +26,7 @@ class Values:
         self._active: set[Key] = set()
         self._sets: dict[Key, Optional[frozenset[int]]] = {}
         self._held: dict[Key, bool] = {}
+        self._mapping: set[Key] = set()
 
     def static(self, key: Key) -> Optional[int]:
         """The value `key` has on every path: a constant, an expression of static values, or a phi whose
@@ -68,8 +69,9 @@ class Values:
             return None
 
     def value_set(self, key: Key) -> Optional[frozenset[int]]:
-        """Every value `key` can hold: the leaves of its phi/copy web are static constants, or expressions
-        over at most MAX_BOOLEANS conditions that are a proven constant for each assignment of them."""
+        """Every value `key` can hold: the leaves of its phi/copy web are static constants, expressions over at
+        most MAX_BOOLEANS conditions that are a proven constant for each assignment of them, or expressions over
+        one variable that has a value set (v4.3: a select minus a key)."""
         if key in self._sets:
             return self._sets[key]
         found = self._value_set(key, MAX_VALUES)
@@ -110,12 +112,37 @@ class Values:
                     work.append(key_of(e))  # a copy
                     continue
                 table = outcomes(self.with_statics(e), self.deadline)
-                if table is None:
+                found = set(table[1].values()) if table is not None else self._mapped(e, cap, undefined)
+                if found is None:
                     return None
-                out |= set(table[1].values())
+                out |= found
             if cap is not None and len(out) > cap:
                 return None
         return frozenset(out)
+
+    def _mapped(self, e: Expr, cap: Optional[int], undefined: bool) -> Optional[set[int]]:
+        """`e`'s values over the value set of its one variable leaf: a select's result minus a key. A leaf
+        already being mapped is a cycle through expressions (a counter): no value set."""
+        leaves = {key_of(leaf) for leaf in variables(self.with_statics(e))}
+        if len(leaves) != 1 or None in leaves:
+            return None
+        (leaf,) = leaves
+        if leaf in self._mapping:
+            return None
+        self._mapping.add(leaf)
+        try:
+            found = self._value_set(leaf, cap, undefined=undefined)
+        finally:
+            self._mapping.discard(leaf)
+        if found is None:
+            return None
+        out = set()
+        for value in found:
+            result = self.eval(e, {leaf: value})
+            if result is None:
+                return None
+            out.add(result)
+        return out
 
     def with_statics(self, e: Expr) -> Expr:
         """`e` with each leaf that has a static value replaced by that constant."""

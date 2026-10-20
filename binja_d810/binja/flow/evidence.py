@@ -4,10 +4,12 @@ variables and types a change touches."""
 
 from __future__ import annotations
 
+import itertools
 from typing import Callable, Optional
 
-from binaryninja import MediumLevelILOperation as Op, SectionSemantics, SSAVariable, TypeClass
+from binaryninja import MediumLevelILOperation as Op, SectionSemantics, SSAVariable, SymbolBinding, TypeClass
 
+from ...deadline import Deadline
 from ...flow import uses as use_rules
 from ...flow.tables import MAX_ENTRIES, Read, Span
 from . import lowlevel
@@ -18,12 +20,14 @@ _KINDS = {
     Op.MLIL_SET_VAR_SSA: "set_var", Op.MLIL_VAR_PHI: "phi", Op.MLIL_VAR_SSA: "var",
     Op.MLIL_CONST: "const", Op.MLIL_CONST_PTR: "const",
     Op.MLIL_ADD: "add", Op.MLIL_SUB: "sub", Op.MLIL_MUL: "mul", Op.MLIL_LSL: "shl",
+    Op.MLIL_XOR: "xor", Op.MLIL_NEG: "neg", Op.MLIL_AND: "and", Op.MLIL_OR: "or", Op.MLIL_NOT: "not",
     Op.MLIL_ZX: "zx", Op.MLIL_SX: "sx", Op.MLIL_LOW_PART: "trunc",
     Op.MLIL_CALL_SSA: "call", Op.MLIL_TAILCALL_SSA: "call", Op.MLIL_CALL_UNTYPED_SSA: "call",
     Op.MLIL_TAILCALL_UNTYPED_SSA: "call", Op.MLIL_JUMP: "jump", Op.MLIL_JUMP_TO: "jump",
 }
 _FIELD_READS = frozenset({Op.MLIL_VAR_SSA_FIELD, Op.MLIL_VAR_ALIASED, Op.MLIL_VAR_ALIASED_FIELD})
 _CONSTANTS = frozenset({Op.MLIL_CONST, Op.MLIL_CONST_PTR})
+_LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
 _DEFINES = frozenset({"dest", "output"})  # SSA variables named so are written, not read
 _SPLIT_SCAN = 64  # function starts looked at between a jump's function and a target
 _STEP_BACK = 8  # data variables looked at below an entry read at a constant address
@@ -54,6 +58,7 @@ class Uses:
         self.offsets: dict[int, int] = {}  # a struct load's or store's offset from its address
         self.defined: dict[int, list] = {}  # node -> the SSA variables it defines (set_var, phi)
         self.reads: dict[tuple[int, int], list[int]] = {}  # (identifier, version) -> the nodes reading it
+        self.children: dict[int, list[tuple[str, int]]] = {}
         self.indexed: set[int] = set()
         self._lowlevel = None
 
@@ -80,6 +85,7 @@ class Uses:
                 self.offsets[at] = node.offset
             if up is not None:
                 self.parents[at] = up
+                self.children.setdefault(up[0], []).append((up[1], at))
             for name, item in _operands(node):
                 if hasattr(item, "operation"):
                     stack.append((item, (at, name)))
@@ -97,6 +103,9 @@ class Uses:
 
     def readers(self, node: int) -> list[int]:
         return [reader for ssa_var in self.defined.get(node, []) for reader in self.readers_of(ssa_var)]
+
+    def operands(self, node: int) -> list[tuple[str, int]]:
+        return self.children.get(node, [])
 
     def readers_of(self, ssa_var) -> list[int]:
         for use in self.ssa.get_ssa_var_uses(ssa_var):
@@ -133,12 +142,16 @@ class Uses:
             return []
 
 
-def never_written(view, start: int, end: int, uses_of: Callable) -> Optional[str]:
+def never_written(view, start: int, end: int, uses_of: Callable,
+                  deadline: Deadline = Deadline.never()) -> Optional[str]:
     """None when no visible code writes [start, end) or lets its address escape (spec 3.2), else why not.
-    `uses_of(func)` gives a function's Uses, or None without MLIL (shared within a round)."""
+    `uses_of(func)` gives a function's Uses, or None without MLIL (shared within a round). A key read across
+    many functions (v4.3 spec 3.2) is checked until `deadline`."""
     for source in view.get_data_refs(start, end - start):
         return f"data reference from {source:#x}"
     for ref in view.get_code_refs(start, end - start):
+        if deadline.expired():
+            return "too many readers to check in time"
         func = ref.function
         if func is None:
             return f"reference at {ref.address:#x} outside a function"
@@ -154,6 +167,46 @@ def never_written(view, start: int, end: int, uses_of: Callable) -> Optional[str
         if verdict != use_rules.READ:
             return f"{verdict} at {uses.address(where):#x}"
     return None
+
+
+def key_problem(view, start: int, end: int, read: Read) -> Optional[str]:
+    """None when [start, end) may hold a key (v4.3 spec 3.2): the program's own value, not exported (another
+    module may write it), not relocated, not an address in the image (the loader's value, or a pointer) and not
+    zero (an uninitialized global reads as zero until something writes it; a zero key encodes nothing)."""
+    for symbol in view.get_symbols(start, end - start):
+        if symbol.binding in (SymbolBinding.GlobalBinding, SymbolBinding.WeakBinding):
+            return f"{symbol.name} is exported"
+    if view.range_contains_relocation(start, end - start):
+        return "relocated"
+    value = read(start, end - start)
+    if value is None:
+        return f"cannot read {start:#x}"
+    if view.get_segment_at(value) is not None:
+        return "an address in the image"
+    if value == 0:
+        return "zero"
+    return None
+
+
+def widest_read(view, address: int, size: int, uses_of: Callable, cap: int, limit: int = 256) -> int:
+    """The widest load at exactly `address` (at least `size`, at most `cap` bytes) in the functions that reference
+    it, so a key read whole by one function and a byte at a time by another is typed once, whole (v4.3 spec 3.2)."""
+    widest = size
+    for ref in itertools.islice(view.get_code_refs(address, 1), limit):
+        uses = uses_of(ref.function) if ref.function is not None else None
+        for statement in uses._statements_at(ref.address) if uses is not None else ():
+            for node in statement.traverse(lambda n: n if n.operation in _LOADS else None):
+                offset = node.offset if node.operation == Op.MLIL_LOAD_STRUCT_SSA else 0
+                if node.src.operation in _CONSTANTS and node.src.constant + offset == address:
+                    widest = max(widest, node.size)
+    return min(widest, cap)
+
+
+def writable_data(view, start: int, end: int) -> bool:
+    """[start, end) lies in a writable, non-executable segment and is not constant already."""
+    segment = view.get_segment_at(start)
+    return (segment is not None and segment.writable and not segment.executable and end <= segment.end
+            and not constant_data(view, start, end))
 
 
 class BinaryCode:

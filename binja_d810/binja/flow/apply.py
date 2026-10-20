@@ -19,7 +19,7 @@ from ...deadline import Deadline
 from ...flow.codecheck import call_problem, is_tail_call, jump_problem, split_starts
 from ...flow.ranges import parse as parse_ranges
 from ...flow.record import Change, Record
-from ...flow.tables import decode, span_of
+from ...flow.tables import Load, Span, decode, span_of
 from ...ir.evaluate import evaluate
 from .. import log
 from . import collect, evidence, readonly, undo, wrappers
@@ -27,6 +27,7 @@ from . import collect, evidence, readonly, undo, wrappers
 KEY = "binja_d810.flow"  # view metadata: the record, as JSON
 SITES_PER_ROUND = 64
 ROUND_SECONDS = 2.0
+KEY_SECONDS = 10.0  # v4.3 spec 3.2: the never-written check of one key, read across many functions
 NOTES = 40  # report lines kept per function
 
 
@@ -250,6 +251,8 @@ def after_pass(view, func, adapter, report) -> bool:
             if not site.target.loads:
                 continue  # a constant target: no table to decide on
         enqueue(view, site)
+    for site in collect.keys(adapter.mlil):
+        enqueue(view, site)
     if not rewrites:
         return False
     _rewrite(adapter, rewrites)
@@ -467,6 +470,9 @@ def decide(work: Round, site) -> None:
     if site.kind == "wrapper":
         wrappers.decide(work, site)
         return
+    if site.kind == "key":
+        _decide_key(work, site)
+        return
     if site.trusted and not trusted(work.view, site):
         site = replace(site, trusted=False)  # a range can have been cleared since collection
     func = work.view.get_function_at(site.function)
@@ -500,7 +506,22 @@ def decide(work: Round, site) -> None:
         _join_split_code(work, site, decoded.targets, code)
 
 
-def _unwritable(work: Round, load, span) -> Optional[str]:
+def _decide_key(work: Round, site) -> None:
+    """A key (v4.3 spec 3.2) is typed const like a table's one entry, when it is the program's own value and nothing
+    visible writes it. Binary Ninja then folds what it encodes in every reader, and the MBA pass the rest."""
+    size = evidence.widest_read(work.view, site.data, site.size, work.uses_of, collect.KEY_BYTES)
+    start, end = site.data, site.data + size
+    if evidence.constant_data(work.view, start, end):
+        return
+    load, span = Load("key", (start,), size), Span(start, size, 1)
+    why = evidence.key_problem(work.view, start, end, work.read) or _unwritable(work, load, span, KEY_SECONDS)
+    if why:
+        work.note(site.function, f"{site.address:#x}: key {start:#x} skipped: {why}")
+        return
+    _type_table(work, site, load, span, ())
+
+
+def _unwritable(work: Round, load, span, seconds: Optional[float] = None) -> Optional[str]:
     """None when the span may be typed const: typed for another site already, or no other change and no user
     type there and nothing visible writes it (checked from where its object starts). Else why not."""
     view, record = work.view, work.record
@@ -518,7 +539,8 @@ def _unwritable(work: Round, load, span) -> Optional[str]:
     if rejected is not None:
         return rejected
     if key not in work.verdicts:
-        work.verdicts[key] = evidence.never_written(view, key[0], key[1], work.uses_of)
+        deadline = Deadline.never() if seconds is None else Deadline.after(seconds)
+        work.verdicts[key] = evidence.never_written(view, key[0], key[1], work.uses_of, deadline)
         if work.verdicts[key] is not None:
             with work.state.lock:
                 work.state.rejected[key] = work.verdicts[key]
@@ -548,8 +570,11 @@ def _type_table(work: Round, site, load, span, targets) -> None:
                                           "readers": sorted(readers), "symbols": symbols},
                     previous, {site.function}))
     work.touched |= readers
-    work.note(site.function, f"typed {span.start:#x}[{span.count}] const, read by a {site.kind} to "
-                             + ", ".join(_name(view, target) for target in targets))
+    if site.kind == "key":
+        work.note(site.function, f"typed {span.start:#x} const: a key, read by {len(readers)} functions")
+    else:
+        work.note(site.function, f"typed {span.start:#x}[{span.count}] const, read by a {site.kind} to "
+                                 + ", ".join(_name(view, target) for target in targets))
 
 
 def _add_functions(work: Round, site, func, targets, code) -> None:

@@ -1,4 +1,4 @@
-from binja_d810.flow.uses import ESCAPE, READ, WRITE, classify, reaches_target
+from binja_d810.flow.uses import ESCAPE, READ, WRITE, classify, encodes, reaches_target
 
 
 class Graph:
@@ -15,6 +15,9 @@ class Graph:
 
     def readers(self, node):
         return self.readers_of.get(node, [])
+
+    def operands(self, node):
+        return [(name, child) for child, (parent, name) in self.parents.items() if parent == node]
 
 
 def _copies(n, end_kind="load", end_operand="src"):
@@ -110,3 +113,97 @@ def test_a_result_used_as_an_argument_or_in_arithmetic_is_not_a_target():
     assert not reaches_target(["v"], Graph({"v": "var", "call": "call"}, {"v": ("call", "params")}))
     g = Graph({"v": "var", "add": "add", "call": "call"}, {"v": ("add", "left"), "add": ("call", "dest")})
     assert not reaches_target(["v"], g)
+
+
+def test_an_access_outside_the_object_is_not_a_use():
+    # An arm64 page address (adrp) that a neighbour's store goes through: [page + 0x10] misses the object.
+    g = Graph({"c": "const", "add": "add", "st": "store_outside"}, {"c": ("add", "left"), "add": ("st", "dest")})
+    assert classify(["c"], g) == (READ, None)
+    g = Graph({"c": "const", "add": "add", "ld": "load_outside"}, {"c": ("add", "left"), "add": ("ld", "src")})
+    assert classify(["c"], g) == (READ, None)
+
+
+def test_an_address_computed_past_the_object_is_not_a_use():
+    # adrp page; add #0x14: the page is the object's start, the sum a neighbour above it, passed on.
+    g = Graph({"c": "const", "add": "address_outside", "call": "call"}, {"c": ("add", "left"), "add": ("call", "params")})
+    assert classify(["c"], g) == (READ, None)
+
+
+def test_an_address_stored_outside_the_object_still_escapes():
+    g = Graph({"c": "const", "st": "store_outside"}, {"c": ("st", "src")})
+    assert classify(["c"], g) == (ESCAPE, "st")
+
+
+def _key(*chain, other="var", end=None):
+    """ld (the key's load) -> chain[0] -> chain[1] ...; each op's other operand is `other` ("var", "const" or
+    None for none); the last node's result goes to `end` (kind, operand) when given."""
+    kinds, parents, node = {"ld": "load"}, {}, "ld"
+    for i, op in enumerate(chain):
+        kinds[f"op{i}"] = op
+        parents[node] = (f"op{i}", "right")
+        if other is not None and op != "neg":
+            kinds[f"o{i}"] = other
+            parents[f"o{i}"] = (f"op{i}", "left")
+        node = f"op{i}"
+    if end is not None:
+        kinds["end"] = end[0]
+        parents[node] = ("end", end[1])
+    return Graph(kinds, parents)
+
+
+def test_a_key_combined_with_a_variable_encodes():
+    for op in ("add", "sub", "mul", "xor"):
+        assert encodes(["ld"], _key(op)), op  # x op K
+
+
+def test_a_constant_encoded_against_a_key_and_used_encodes():
+    # c - K returned, stored, passed; -K returned.
+    for end in (("mlil_ret", "src"), ("store", "src"), ("call", "params")):
+        assert encodes(["ld"], _key("sub", other="const", end=end)), end
+    assert encodes(["ld"], _key("neg", end=("mlil_ret", "src")))
+
+
+def test_a_key_through_constant_operations_into_a_variable_encodes():
+    # x << ((K + c) & 31)
+    g = _key("add", "and", other="const")
+    g.kinds.update({"shl": "shl", "x": "var"})
+    g.parents.update({"op1": ("shl", "right"), "x": ("shl", "left")})
+    assert encodes(["ld"], g)
+
+
+def test_a_key_compared_after_constant_operations_does_not_encode():
+    # (K ^ c) == d is K == c ^ d; K - 7 tested at -O0 is K == 7: a setting, not a key.
+    assert not encodes(["ld"], _key("xor", other="const", end=("mlil_cmp_e", "left")))
+    assert not encodes(["ld"], _key("sub", other="const", end=("mlil_if", "condition")))
+
+
+def test_a_key_used_without_an_encoding_operation_does_not_encode():
+    # return K; x & K; [K + 8]; K passed or stored: a setting, a mask or a pointer.
+    for chain, end in (((), ("mlil_ret", "src")), (("and",), ("mlil_ret", "src")), (("or",), ("store", "src")),
+                       ((), ("load", "src")), ((), ("call", "params")), ((), ("store", "src")),
+                       ((), ("mlil_cmp_e", "left"))):
+        assert not encodes(["ld"], _key(*chain, end=end)), (chain, end)
+
+
+def test_a_key_through_a_truncation_and_a_copy_encodes():
+    g = Graph({"ld": "load", "t": "trunc", "s": "set_var", "v": "var", "neg": "neg", "r": "mlil_ret"},
+              {"ld": ("t", "src"), "t": ("s", "src"), "v": ("neg", "src"), "neg": ("r", "src")}, {"s": ["v"]})
+    assert encodes(["ld"], g)
+
+
+def test_a_key_through_a_merge_encodes():
+    g = Graph({"ld": "load", "s": "set_var", "phi": "phi", "v": "var", "x": "xor", "y": "var"},
+              {"ld": ("s", "src"), "v": ("x", "left"), "y": ("x", "right")}, {"s": ["phi"], "phi": ["v"]})
+    assert encodes(["ld"], g)
+
+
+def test_an_encoding_beyond_the_copy_limit_does_not_encode():
+    kinds, parents, readers, node = {"ld": "load", "end": "sub", "x": "var"}, {"x": ("end", "right")}, {}, "ld"
+    for i in range(1, 10):
+        kinds[f"s{i}"], kinds[f"v{i}"] = "set_var", "var"
+        parents[node] = (f"s{i}", "src")
+        readers[f"s{i}"] = [f"v{i}"]
+        node = f"v{i}"
+    parents[node] = ("end", "left")
+    assert not encodes(["ld"], Graph(kinds, parents, readers))
+    assert encodes(["ld"], Graph(kinds, parents, readers), max_depth=9)

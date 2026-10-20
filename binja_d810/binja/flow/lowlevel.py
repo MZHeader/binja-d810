@@ -1,5 +1,7 @@
 """Address-use evidence for references that MLIL folded away. LLIL SSA retains dead loads and address
-construction, so the same bounded use policy can still distinguish reads from writes and escapes."""
+construction, so the same bounded use policy can still distinguish reads from writes and escapes. An arm64 adrp
+names a page: a neighbour's access through it, at a constant address outside the object, does not use it, nor does
+the page plus a neighbour's offset: an address starting another data variable past the object."""
 
 from binaryninja import LowLevelILOperation as Op
 from binaryninja.lowlevelil import SSARegister
@@ -13,6 +15,9 @@ _KINDS = {
     Op.LLIL_ZX: "zx", Op.LLIL_SX: "sx", Op.LLIL_LOW_PART: "trunc",
 }
 _ADDRESS = frozenset({"const", "var", "add", "sub", "mul", "shl", "zx", "sx", "trunc"})
+_ARITHMETIC = frozenset({"add"})
+_PAGE = 0x1000  # an arm64 adrp's granule
+_CONSTANT = ("ConstantValue", "ConstantPointerValue")
 
 
 def _key(reg):
@@ -30,6 +35,7 @@ class Uses:
         if cc is not None:
             self.return_regs.update(r for r in (cc.int_return_reg, cc.high_int_return_reg) if r is not None)
         self.has_return = any(i.operation == Op.LLIL_RET for i in self.ssa.instructions)
+        self.object = None  # (start, end) while read_only asks about it
 
     def index(self, statement):
         if statement.expr_index in self.indexed:
@@ -55,7 +61,49 @@ class Uses:
     def kind(self, node):
         if node == -1:
             return "unknown"
-        return _KINDS.get(self.nodes[node].operation, "unknown")
+        instr = self.nodes[node]
+        kind = _KINDS.get(instr.operation, "unknown")
+        if self.object is not None:
+            if kind in ("load", "store") and self._misses(instr, kind):
+                return kind + "_outside"
+            if kind in _ARITHMETIC and self._past(instr):
+                return "address_outside"
+        return kind
+
+    def _misses(self, instr, kind) -> bool:
+        """The access is at a constant address and none of its bytes is the object's."""
+        address = instr.src if kind == "load" else instr.dest
+        try:
+            value = address.value
+        except Exception:  # noqa: BLE001 - no dataflow there
+            return False
+        if value.type.name not in _CONSTANT:
+            return False
+        start, end = self.object
+        at = value.value & ((1 << (8 * address.size)) - 1)
+        return at + instr.size <= start or at >= end
+
+    def _past(self, instr) -> bool:
+        """An add of an offset to a page base (an arm64 adrp) that is the object's own start, reaching a constant
+        that starts another data variable past the object and the data variable holding it: the page names the
+        object only by coincidence; the sum is a neighbour's address. An offset from the object's own address
+        (not a page) may still index back into it."""
+        if instr.operation != Op.LLIL_ADD:
+            return False
+        try:
+            value, bases = instr.value, [o.value for o in (instr.left, instr.right)]
+        except Exception:  # noqa: BLE001 - no dataflow there
+            return False
+        view, (start, end) = self.func.view, self.object
+        if value.type.name not in _CONSTANT or not any(
+                b.type.name in _CONSTANT and b.value % _PAGE == 0 and start <= b.value < end for b in bases):
+            return False
+        at = value.value & ((1 << (8 * instr.size)) - 1)
+        holder = view.get_data_var_at(start)
+        if holder is not None and holder.type is not None:
+            end = max(end, holder.address + holder.type.width)
+        neighbour = view.get_data_var_at(at)
+        return at >= end and neighbour is not None and neighbour.address == at
 
     def parent(self, node):
         return self.parents.get(node)
@@ -73,6 +121,13 @@ class Uses:
         return found or [-1]  # missing consumers are not evidence of a read
 
     def read_only(self, address: int, start: int, end: int) -> bool:
+        self.object = (start, end)
+        try:
+            return self._read_only(address, start, end)
+        finally:
+            self.object = None
+
+    def _read_only(self, address: int, start: int, end: int) -> bool:
         starts = set()
         for instr in self.func.get_llils_at(address):
             instr = instr.ssa_form

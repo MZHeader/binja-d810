@@ -160,6 +160,17 @@ def test_no_split_on_a_copy_of_a_phi_in_the_predecessor():
     assert 16 not in threads and threads[2].outcome.dest == 3 and threads[15].outcome.dest == 4
 
 
+def test_no_split_on_an_expression_of_a_phi_in_the_predecessor():
+    # As above, with the pick decoded on the way into the state (v4.3: (flag ? A : B) - K once K is constant).
+    spec = _tree()
+    spec[2] = {"do": ["!", f"t#1 = {B + 0x10:#x}"], "if": ("q#1 == 0", 15, 16)}
+    spec[15] = {"do": [f"t#2 = {C + 0x10:#x}"], "goto": 16}
+    spec[16] = {"phi": {"t#3": {2: "t#1", 15: "t#2"}}, "do": ["s#3 = t#3 - 0x10"], "goto": 9}
+    spec[9]["phi"] = {"s#9": {16: "s#3", 3: "s#4", 4: "s#5"}}
+    threads = _by_pred(plan(toy(spec)))
+    assert 16 not in threads and threads[2].outcome.dest == 3 and threads[15].outcome.dest == 4
+
+
 def test_a_fact_holds_for_a_copy_made_in_the_same_block():
     # At -O0 the dispatcher reloads the state (s#3 = s#2) and its tests are lifted through the copy, so the
     # fact is on s#2. A loop body that keeps the state passes the copy to the latch.

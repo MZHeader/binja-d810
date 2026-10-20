@@ -1,5 +1,6 @@
 """Sites for the flow fixes (v4.0, spec 3.1 step 1), found in a function's MLIL at the end of the D-810 MLIL
-activity: jumps and calls whose target reads tables, and calls to possible identity wrappers."""
+activity: jumps and calls whose target reads tables, calls to possible identity wrappers, and (v4.3, spec 3.2)
+reads of key globals that encode constants."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from binaryninja import MediumLevelILOperation as Op
 
 from ...deadline import Deadline
 from ...flow.tables import Load, Read, addresses_from
-from ...flow.uses import reaches_target
+from ...flow.uses import encodes, reaches_target
 from ...ir.evaluate import evaluate
 from ...ir.expr import BinOp, Const, Expr, Var, variables
 from ...semantic.constancy import constant_value
@@ -22,6 +23,8 @@ JUMPS = frozenset({Op.MLIL_JUMP, Op.MLIL_JUMP_TO})
 CALLS = frozenset({Op.MLIL_CALL_SSA, Op.MLIL_TAILCALL_SSA, Op.MLIL_CALL_UNTYPED_SSA, Op.MLIL_TAILCALL_UNTYPED_SSA})
 _DIRECT_CALLS = frozenset({Op.MLIL_CALL_SSA, Op.MLIL_CALL_UNTYPED_SSA})
 _CONSTANTS = frozenset({Op.MLIL_CONST, Op.MLIL_CONST_PTR})
+_LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
+KEY_BYTES = 8  # v4.3 spec 3.2: a key is at most this wide
 WRAPPER_BYTES = 64  # spec 3.1: a possible identity wrapper is at most this long
 MAX_NODES = 400
 SCAN_SECONDS = 2.0  # for proofs that an address is constant, per function
@@ -38,14 +41,16 @@ class Target:
 class Site:
     function: int
     address: int  # the jump's or call's
-    kind: str  # "jump", "call" or "wrapper"
+    kind: str  # "jump", "call", "wrapper" or "key"
     target: Optional[Target] = None
     callee: Optional[int] = None  # a wrapper's start
     trusted: bool = False  # every table const or read-only when collected (set by apply.after_pass)
+    data: Optional[int] = None  # a key's address
+    size: int = 0  # a key's width in bytes
 
     @property
     def key(self) -> tuple:
-        return self.function, self.address, self.kind, self.trusted
+        return self.function, self.address, self.kind, self.trusted, self.data
 
 
 def _is_load(leaf: Var) -> bool:
@@ -180,3 +185,35 @@ def scan(mlil, deadline: Deadline, read: Read) -> Iterator[tuple[Site, object]]:
         target, _ = target_of(instr, deadline, read)
         if target is not None:
             yield Site(func.start, instr.address, "jump" if op in JUMPS else "call", target), instr
+
+
+def _loads_in(instr) -> Iterator:
+    stack = [instr]
+    while stack:
+        node = stack.pop()
+        if node.operation in _LOADS:
+            yield node
+        for _, value, _ in node.detailed_operands:
+            stack.extend(v for v in (value if isinstance(value, list) else (value,)) if hasattr(v, "operation"))
+
+
+def keys(mlil) -> Iterator[Site]:
+    """Each possible key a function's MLIL reads (v4.3 spec 3.2): a load of at most KEY_BYTES at a constant
+    address in writable data that is not constant already, whose value encodes a constant (flow.uses.encodes),
+    once per address."""
+    func = mlil.source_function
+    view = func.view
+    ssa = mlil.ssa_form
+    uses, seen = None, set()
+    for instr in ssa.instructions:
+        for node in _loads_in(instr):
+            if node.src.operation not in _CONSTANTS or not 0 < node.size <= KEY_BYTES:
+                continue
+            at = node.src.constant + _offset(node)
+            if at in seen or not evidence.writable_data(view, at, at + node.size):
+                continue
+            uses = uses or evidence.Uses(ssa)
+            uses.index(instr)
+            if encodes([node.expr_index], uses):
+                seen.add(at)
+                yield Site(func.start, node.address, "key", data=at, size=node.size)

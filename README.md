@@ -26,15 +26,14 @@ And after (4 lines):
 * Divisions that can never trap, like `2 / (x * x + 1)`
 * Jumps and calls through encoded tables of code pointers (Hikari-style indirect branches and
   calls), and identity wrappers around them, when no visible code writes the table
-* Control-flow flattening: switch dispatchers lowered to compare trees or jump tables, and nested
-  state loops. Each dispatcher entry gets its own copy of the path to the handler it reaches, so
-  behaviour never changes.
+* Control-flow flattening: state machines driven by compare trees or jump tables, including
+  nested loops
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 
 Every rewrite is checked before it's applied. Conditions are only folded when Z3 proves them,
 and D-810's rules are only used at the bit widths Z3 proved them for. It runs in two passes,
-MLIL then HLIL, and the HLIL pass picks up whatever MLIL couldn't express. Unflattening runs on
-the MLIL in between, once Binary Ninja has resolved the function's jump tables.
+MLIL then HLIL, and the HLIL pass picks up whatever MLIL couldn't express. Unflattening happens
+in between, by copying code rather than guessing, so the program's behaviour doesn't change.
 
 ## Requirements
 
@@ -96,15 +95,12 @@ itself lives in a separate **extension** group that Binary Ninja creates.
 * **Generic MBA simplifier (Tier 2)**: the linear simplifier and CoBRA. Turn it off to use the
   rules only.
 * **Skipped functions** and **Disabled rules**: addresses and rule names to leave alone.
-* **Flow fixes**: on by default when D-810 is enabled. Resolves code-pointer tables and identity
-  wrappers. Disabling D-810 undoes its changes; shared changes remain while another enabled function
-  needs them. User types, inline flags and branch targets take precedence.
-* **Unflatten control flow**: on by default when D-810 is enabled. A function is only rewritten
-  when a dispatcher shows itself: a state variable compared with at least three constants, or
-  driving a jump table. The debug report lists each round (`unflatten: round 1: ...`).
-* **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant while
-  D-810 is enabled. Use these for data you know stays unchanged: they bypass the write check.
-  Clearing a range restores its previous types. Existing user types are preserved.
+* **Flow fixes**: on by default. Resolves code-pointer tables and identity wrappers, and undoes
+  it all when D-810 is turned off. Your own types and branch targets always win.
+* **Unflatten control flow**: on by default. It only touches a function with a clear dispatcher:
+  a loop over a state variable that's only ever set to constants.
+* **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant. Use
+  them for data you know never changes. Clearing a range puts the old types back.
 * **Enabled**: a kill switch for everything.
 
 ## Notes
@@ -113,11 +109,10 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   before it ran are left alone. They're harmless.
 * Calls through resolved API pointers can show extra arguments, because Binary Ninja guesses them
   from whatever registers happen to be set. Giving the pointer a type fixes it.
-* A state carried in a variable across shared code can stay as a flag-like compare. So can a
-  state the compiler picked before a loop (a transition that doesn't change inside it).
-* Automatic table resolution checks decoded targets and visible writes or escaping addresses. It
-  cannot detect changes made by a loader or by code missing from the analysis. The debug report
-  lists flow changes and reasons for rejecting a table.
+* Unflattening can leave a flag-like compare behind when the next state is picked before shared
+  code or before a loop. Machines that compute their next state are left alone.
+* Table resolution checks the decoded targets and any visible writes to the table, but it can't
+  see changes made by a loader. The debug report says why a table was rejected.
 
 ## Tests
 
@@ -128,7 +123,6 @@ scripts/binja_pytest.sh     # integration tests, in a hidden Binary Ninja instan
 ```
 
 The integration tests need `pytest` installed in Binary Ninja's Python too.
-On macOS, the hidden test instance prevents idle system sleep for the test run, up to the runner's timeout.
 
 ## License
 

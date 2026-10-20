@@ -1,4 +1,5 @@
 import random
+import time
 
 import pytest
 
@@ -130,3 +131,14 @@ def test_the_answer_cache_keeps_no_binary_ninja_references():
     for key, value in b._cache.items():
         for e in (key, value):
             assert e is None or all(v.ref is None for v in variables(e))
+
+
+@pytest.mark.parametrize("k", [5, 6, 7, 8])
+def test_linear_mba_over_many_variables(k):
+    names = [f"v{i}" for i in range(k)]
+    pairs = [f"(({a} ^ {b}) + 2 * ({a} & {b}))" for a, b in zip(names[0::2], names[1::2])]
+    e = parse(" + ".join(pairs + ([names[-1]] if k % 2 else [])), 32)
+    started = time.perf_counter()
+    found = LinearMBABackend().simplify(e)
+    assert time.perf_counter() - started < 0.5
+    assert found is not None and not is_mba(found) and check_equivalent(e, found) is Verdict.PROVEN

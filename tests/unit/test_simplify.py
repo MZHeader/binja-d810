@@ -315,3 +315,10 @@ def test_tier2_never_mixes_a_bitwise_root():
     # Equivalent and smaller, but arithmetic where there was none: CoBRA's answer to this one.
     out = simplify_expression(ir("(x & 0xff00) | ((x | 0xff) & 0xf0ff)"), [], [Mixing()])
     assert out.rewrite is None or not is_mba(out.rewrite.replacement)
+
+
+def test_nonlinear_over_six_variables_is_left_alone_quickly():
+    e = ir("((a * b) ^ c) + ((d * e) & f) + (a | f)")
+    started = time.perf_counter()
+    out = simplify_expression(e, RULES, LINEAR)
+    assert time.perf_counter() - started < 1.0 and out.rewrite is None

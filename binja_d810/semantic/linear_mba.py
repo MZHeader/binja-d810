@@ -181,7 +181,7 @@ class LinearMBABackend:
     name = "linear"
     abstracts_atoms = True  # bounds its own atom count (max_vars), whatever the leaf variables
 
-    def __init__(self, max_vars: int = 6, cache_size: int = 4096):
+    def __init__(self, max_vars: int = 8, cache_size: int = 4096):
         self.max_vars = max_vars
         # Tier 2 asks again about the same subexpressions (each candidate of a chain, each pass).
         self._cache: "OrderedDict[Expr, Optional[Expr]]" = OrderedDict()
@@ -203,7 +203,7 @@ class LinearMBABackend:
         return result
 
     def _simplify(self, e: Expr) -> Optional[Expr]:
-        # Bounded by max_vars (at most 2**6 signature entries): no deadline checks needed.
+        # Bounded by max_vars (at most 2**8 signature entries): no deadline checks needed.
         atoms: dict[Expr, Var] = {}
         linear = _abstract(e, atoms, {v.name for v in variables(e)})
         if not is_linear_mba(linear):
@@ -262,7 +262,10 @@ class LinearMBABackend:
         # leaves x ^ y, while keeping every single term would leave -2 * (x & y) instead.
         singles = [coeff[1 << k] for k in range(t)]
         active = [k for k in range(t) if singles[k]]
-        for chosen in range(1 << len(active)):
+        # Every subset up to 6 variables; above, none or all (Tigress's sums over 8: 256 subsets of
+        # 256 entries each would cost more than the rest of the function).
+        subsets = range(1 << len(active)) if t <= 6 else sorted({0, (1 << len(active)) - 1})
+        for chosen in subsets:
             kept = [k for j, k in enumerate(active) if (chosen >> j) & 1]
             resid = [(g[i] - sum(singles[k] for k in kept if (i >> k) & 1)) & m for i in range(n)]
             nonzero = set(resid) - {0}

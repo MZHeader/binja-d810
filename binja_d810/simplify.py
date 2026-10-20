@@ -162,7 +162,10 @@ def _finish(expr: Expr, current: Expr, sources: list[str], out: Outcome, check: 
 
 
 def _better(new: Expr, old: Expr) -> bool:
-    """Smaller: fewer nodes, or as many nodes without mixing arithmetic and bitwise operations."""
+    """Smaller: fewer nodes, or as many nodes without mixing arithmetic and bitwise operations. Never
+    mixed where it was not: CoBRA answers (x & 0xff00) | ((x | 0xff) & 0xf0ff) with 255 + (x & 0xff00)."""
+    if is_mba(new) and not is_mba(old):
+        return False
     n, o = node_count(new), node_count(old)
     return n < o or (n == o and is_mba(old) and not is_mba(new))
 

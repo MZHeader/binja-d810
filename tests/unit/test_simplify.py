@@ -7,6 +7,7 @@ from binja_d810.ir.normalize import normalize
 from binja_d810.ir.parse import parse
 from binja_d810.rules.base import Rewrite
 from binja_d810.rules.registry import load_rules
+from binja_d810.semantic.backend import default_backends
 from binja_d810.semantic.linear_mba import LinearMBABackend
 from binja_d810.semantic.verify import Verdict, check_equivalent
 from binja_d810.simplify import Limits, simplify_expression
@@ -296,3 +297,21 @@ def test_one_bit_substitution_simplifies(width):
 
 def test_plain_mask_is_left_alone():
     assert simplify_expression(ir("(x & 0xff00) ^ y"), RULES, LINEAR).rewrite is None
+
+
+def test_constant_interaction_simplifies_through_default_backends():
+    out = simplify_expression(ir("(~x & 0x55) | (x & 0xaa)"), RULES, default_backends())
+    assert out.rewrite is not None and node_count(out.rewrite.replacement) <= 5  # (x ^ 0x55) & 0xff
+
+
+class Mixing:
+    name = "mixing"
+
+    def simplify(self, e, deadline=None):
+        return ir("255 + (0xff00 & x)")
+
+
+def test_tier2_never_mixes_a_bitwise_root():
+    # Equivalent and smaller, but arithmetic where there was none: CoBRA's answer to this one.
+    out = simplify_expression(ir("(x & 0xff00) | ((x | 0xff) & 0xf0ff)"), [], [Mixing()])
+    assert out.rewrite is None or not is_mba(out.rewrite.replacement)

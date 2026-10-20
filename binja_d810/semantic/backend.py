@@ -16,13 +16,15 @@ class Tier2Backend(Protocol):
 
 
 def default_backends() -> list[Tier2Backend]:
+    from .bitwise import BitwiseBackend
     from .cobra_backend import CobraBackend
     from .cobra_shim import load
     from .linear_mba import LinearMBABackend
 
-    # Linear first: it answers linear MBAs over atoms in milliseconds ((A ^ B) + 2 * (A & B) with
-    # sums A, B in a Tigress VM), where CoBRA spent up to its whole 2 s; CoBRA gets what is left.
-    backends: list[Tier2Backend] = [LinearMBABackend()]
+    # Bitwise first: it answers bitwise-only roots exactly and declines anything else at once. Then
+    # linear: it answers linear MBAs over atoms in milliseconds ((A ^ B) + 2 * (A & B) with sums A, B
+    # in a Tigress VM), where CoBRA spent up to its whole 2 s; CoBRA gets what is left.
+    backends: list[Tier2Backend] = [BitwiseBackend(), LinearMBABackend()]
     solve = load()
     if solve is not None:
         backends.append(CobraBackend(solve))

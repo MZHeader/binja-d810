@@ -43,6 +43,8 @@ class State:
     notes: defaultdict = field(default_factory=lambda: defaultdict(list))  # function -> report lines
     ranges: Optional[list] = None
     enabled: set = field(default_factory=set)  # functions currently observed with the flow fixes enabled
+    readers: defaultdict = field(default_factory=lambda: defaultdict(set))  # function -> who unflattened over its IL
+    waiting: set = field(default_factory=set)  # readers of functions the last round changed, reanalyzed next round
     events: list = field(default_factory=list)  # completion events, kept alive
     armed: bool = False
     running: bool = False
@@ -55,6 +57,15 @@ class State:
 
 _STATES: dict[int, State] = {}
 _STATES_LOCK = threading.Lock()
+
+
+def read_by(view, start: int, reader: int) -> None:
+    """The unflattening of `reader` read the MLIL of the function at `start` (a handler it may splice, a
+    forwarder back to it): a round that changes that function reanalyzes `reader` once it is analyzed again.
+    A flow fix in a callee changes no caller's type when the callee's own type stays."""
+    state = state_of(view)
+    with state.lock:
+        state.readers[start].add(reader)
 
 
 def state_of(view) -> State:
@@ -441,11 +452,17 @@ def run_round(view) -> bool:
         changed, state.saved = text != state.saved, text
     if changed:
         _store(view, text)
-    another_round = left is not None or defer_signatures or needs_undo
+    with state.lock:
+        # This round runs once analysis is idle: what the last round changed is analyzed, and its readers may
+        # read it now. Readers of what this round changes wait for the next.
+        ready = state.waiting
+        state.waiting = {r for start in work.touched for r in state.readers.pop(start, ())}
+        another_round = left is not None or defer_signatures or needs_undo or bool(state.waiting)
     if another_round:
         _arm(view, state)
         if not work.touched and left is not None:
             work.touched.add(left.function)  # analysis must run for the next round to start
+    work.touched |= ready
     for start in sorted(work.touched):
         func = view.get_function_at(start)
         if func is not None:

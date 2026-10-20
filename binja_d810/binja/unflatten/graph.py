@@ -17,7 +17,7 @@ from ...unflatten.graph import (Assign, Branch, Definition, Edge, Goto, Jump, Ke
                                 Unknown)
 from ..effects import mlil_effect
 from ..memory import fixed_load_is_safe
-from ..mlil.lift import lift, lift_live, lift_value
+from ..mlil.lift import Backing, lift, lift_live, lift_value
 from ..ssa import definition_of, reaching
 
 _PHIS = (Op.MLIL_VAR_PHI, Op.MLIL_MEM_PHI)
@@ -49,6 +49,7 @@ class MLILGraph:
         self._steps: dict[int, tuple[Step, ...]] = {}
         self._terms: dict[int, object] = {}
         self._definitions: dict[Key, Definition] = {}
+        self._widths: dict[int, int] = {}
         self._preds: dict[int, list[Edge]] = {b: [] for b in self._blocks}
         for b, block in self._blocks.items():
             for target, slot in self._edges(block):
@@ -99,7 +100,7 @@ class MLILGraph:
         return self._from_ssa.get(d.il_basic_block.start)
 
     def width(self, key: Key) -> int:
-        return _bits(self._vars[key].var)
+        return self._bits(self._vars[key].var)
 
     def read(self, address: int, width: int) -> Optional[int]:
         """Constant memory: a load fixed_load_is_safe allows, in a segment that is not writable or inside one
@@ -129,13 +130,13 @@ class MLILGraph:
         return None if copy is None else Var(f"{copy.var.name}#{copy.version}", self.width(key), ref=self._key(copy))
 
     def _live_copy(self, ssa_var: SSAVariable, root) -> Optional[SSAVariable]:
-        width, work, seen = _bits(ssa_var.var), [ssa_var], {ssa_var}
+        width, work, seen = self._bits(ssa_var.var), [ssa_var], {ssa_var}
         while work and len(seen) <= MAX_COPIES:
             for use in self.ssa.get_ssa_var_uses(work.pop(0)):
                 if use.operation != Op.MLIL_SET_VAR_SSA or use.src.operation != Op.MLIL_VAR_SSA:
                     continue
                 dest = use.dest
-                if dest in seen or _bits(dest.var) != width:
+                if dest in seen or self._bits(dest.var) != width:
                     continue
                 if root.get_ssa_var_version(dest.var) == dest.version:
                     return dest
@@ -169,9 +170,30 @@ class MLILGraph:
         return key
 
     def _relink(self, e: Expr) -> Expr:
-        mapping = {leaf.name: Var(leaf.name, leaf.width, ref=self._key(leaf.ref))
-                   for leaf in variables(e) if isinstance(leaf.ref, SSAVariable)}
+        mapping = {leaf.name: Var(leaf.name, leaf.width, ref=self._key(ref))
+                   for leaf in variables(e) if (ref := self._whole(leaf)) is not None}
         return substitute(e, mapping) if mapping else e
+
+    def _whole(self, leaf: Var) -> Optional[SSAVariable]:
+        """The SSA variable a leaf reads in full: a variable, or the storage backing exactly one (a 64-bit state
+        tested through its low half reads its register's backing value). Versions count per storage, so the
+        backing's version is the variable's."""
+        if isinstance(leaf.ref, SSAVariable):
+            return leaf.ref
+        if isinstance(leaf.ref, Backing) and 8 * leaf.ref.size == self._bits(leaf.ref.var):
+            return SSAVariable(leaf.ref.var, leaf.ref.version)
+        return None
+
+    def _bits(self, var) -> int:
+        """A variable's width: its type's, or for one the function's analysis has not typed (copied in from a
+        spliced handler) the width its assignments write."""
+        found = _bits(var)
+        if found:
+            return found
+        if var.identifier not in self._widths:
+            sizes = {d.size for d in self.mlil.get_var_definitions(var) if d.operation == Op.MLIL_SET_VAR}
+            self._widths[var.identifier] = 8 * sizes.pop() if len(sizes) == 1 else 0
+        return self._widths[var.identifier]
 
     def _lift(self, e, root) -> Optional[Expr]:
         found = lift(e, root_instr=root, check_versions=False, max_nodes=self.max_nodes, definitions=self._defs,
@@ -219,7 +241,7 @@ class MLILGraph:
     def _value(self, ssa_var: SSAVariable) -> Optional[Expr]:
         """What a pure definition computes, its own definitions inlined; None when nothing but the value
         itself comes out."""
-        width = _bits(ssa_var.var)
+        width = self._bits(ssa_var.var)
         d = definition_of(self.ssa, ssa_var, self._defs)
         if not width or d is None:
             return None

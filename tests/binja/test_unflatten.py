@@ -3,16 +3,15 @@ on 8 builds."""
 
 import pytest
 from arch import IDS, MATRIX, sample
-from binaryninja import HighLevelILOperation, RegisterValueType, Settings
+from binaryninja import Settings
 from flowcases import has, text
-from helpers import function_named, open_sample, settle
+from helpers import function_named, marks, open_sample, settle
 from unflattencases import NEGATIVES, NOT_FLATTENED, ORDERS, SHAPES
 
 from binja_d810.binja import log, settings, unflatten, workflow
 from binja_d810.binja.unflatten import rewrite
 
 ONE = ("x86_64-elf", "O2")  # the build the single-build tests use
-_CONSTANT = (RegisterValueType.ConstantValue, RegisterValueType.ConstantPointerValue)
 
 
 @pytest.fixture(scope="module", params=MATRIX, ids=IDS)
@@ -30,23 +29,8 @@ def _states(hlil: str, name: str) -> list[str]:
     return [hex(c) for c in SHAPES[name] if has(hlil, hex(c))]
 
 
-def _marks(func) -> list[int]:
-    """The constant each call of mark passes, in HLIL order. An argument in a variable is read by its dataflow
-    value: on arm64 mark returns its argument in x0, so Binary Ninja writes x0 = 0xb; _mark(x0)."""
-    def passed(node):
-        if node.operation != HighLevelILOperation.HLIL_CALL or not node.params \
-                or node.dest.operation != HighLevelILOperation.HLIL_CONST_PTR:
-            return None
-        callee = func.view.get_function_at(node.dest.constant)
-        value = node.params[0].value
-        if callee is None or callee.name.lstrip("_") != "mark" or value.type not in _CONSTANT:
-            return None
-        return value.value
-    return [k for instr in func.hlil.instructions for k in instr.traverse(passed)]
-
-
-def _first(marks: list[int], k: int):
-    return marks.index(k) if k in marks else None
+def _first(found: list[int], k: int):
+    return found.index(k) if k in found else None
 
 
 def _lines(func) -> list[str]:
@@ -62,9 +46,9 @@ def test_a_flattened_function_is_unflattened(builds, name):
     func = function_named(on, name)
     hlil = text(func)
     assert not _states(hlil, name), hlil
-    marks = _marks(func)
+    found = marks(func)
     for earlier, later in ORDERS[name]:
-        a, b = _first(marks, earlier), _first(marks, later)
+        a, b = _first(found, earlier), _first(found, later)
         assert a is not None and b is not None and a < b, f"mark({earlier}) before mark({later}):\n{hlil}"
     assert _lines(func), workflow.debug_report_text(func)
 

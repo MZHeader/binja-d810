@@ -1,11 +1,11 @@
 """v4.3: outlined flattening (tests/samples/src/outlined.c), on 8 builds: the return stub resolves to the
 dispatcher; a dispatcher that calls itself in tail position is unflattened; a machine passing its own frame's
-address, and ordinary recursion, stay."""
+address, and ordinary recursion, stay; handlers a dispatcher tail-calls are spliced into it."""
 
 import pytest
 from arch import IDS, MATRIX, expect_miss, sample
 from flowcases import text
-from helpers import function_named, open_sample, settle
+from helpers import function_named, marks, open_sample, settle
 
 from binja_d810.binja import log
 
@@ -54,3 +54,21 @@ def test_recursion_through_the_frame_or_without_a_machine_stays(builds, name, po
     hlil = text(func)
     assert any(token in hlil for token in (f"{name}(", pointer, "jump(", "data_", "while (")), hlil
     assert not any("read as a loop" in line for line in _unflatten_lines(func)), _unflatten_lines(func)
+
+
+OL_STATES = ("0x7a3c19e5", "0x1b4d8c27", "0x5e91a3f0", "0x33c6d218", "0x6f2b9c41")
+
+
+def test_handlers_the_dispatcher_tail_calls_are_spliced_in(request, builds):
+    # ol_h1..ol_h4 and ol_shared return through ol_stub, a forwarder back to ol_dispatch: spliced in, each return
+    # is a self call. ol_shared is copied, so ol_other, which is no dispatcher, still calls it.
+    key, on, _ = builds
+    expect_miss(request, "ol_dispatch", key)
+    func = function_named(on, "ol_dispatch")
+    hlil = text(func)
+    assert set(marks(func)) >= {1, 2, 3, 4, 5, 6}, hlil
+    assert not any(f"{name}(" in hlil for name in ("ol_h1", "ol_h2", "ol_h3", "ol_h4", "ol_shared", "ol_stub")), hlil
+    assert all(hlil.count(s) <= 1 for s in OL_STATES), hlil
+    assert any("spliced" in line for line in _unflatten_lines(func)), _unflatten_lines(func)
+    other = text(function_named(on, "ol_other"))
+    assert "ol_shared(" in other and not _unflatten_lines(function_named(on, "ol_other")), other

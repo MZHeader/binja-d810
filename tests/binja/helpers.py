@@ -5,13 +5,14 @@ from pathlib import Path
 
 import binaryninja
 import pytest
-from binaryninja import MediumLevelILOperation, SSAVariable
+from binaryninja import HighLevelILOperation, MediumLevelILOperation, RegisterValueType, SSAVariable
 
 from binja_d810.binja import workflow
 from binja_d810.binja.mlil.lift import Backing, lift
 from binja_d810.ir.expr import Var, substitute, variables
 
 BUILD = Path(__file__).resolve().parents[1] / "samples" / "build"
+_CONSTANTS = (RegisterValueType.ConstantValue, RegisterValueType.ConstantPointerValue)
 
 
 def manifest() -> list[dict]:
@@ -103,3 +104,18 @@ def settle(bv, seconds: float = 120) -> None:
         if time.monotonic() > deadline:
             raise TimeoutError(f"the flow fixes were still busy after {seconds} s")
         time.sleep(0.05)
+
+
+def marks(func) -> list[int]:
+    """The constant each call of mark passes, in HLIL order. An argument in a variable is read by its dataflow
+    value: on arm64 mark returns its argument in x0, so Binary Ninja writes x0 = 0xb; _mark(x0)."""
+    def passed(node):
+        if node.operation != HighLevelILOperation.HLIL_CALL or not node.params \
+                or node.dest.operation != HighLevelILOperation.HLIL_CONST_PTR:
+            return None
+        callee = func.view.get_function_at(node.dest.constant)
+        value = node.params[0].value
+        if callee is None or callee.name.lstrip("_") != "mark" or value.type not in _CONSTANTS:
+            return None
+        return value.value
+    return [k for instr in func.hlil.instructions for k in instr.traverse(passed)]

@@ -2,8 +2,10 @@
 
 In a copy of the MLIL, a new entry jumps to the original first block, which becomes a loop head, and each self call
 in tail position becomes its parameters' new values and a goto there. A self call is a call, tail call or jump to
-the function's own start (a jump Binary Ninja resolved there too), or to a forwarder (a function whose whole MLIL
-is a tail call or jump to it): a dispatcher returning through code pointers that lead back to itself. In tail position: a tail call or jump, or a
+the function's own start (a jump Binary Ninja resolved there too), or to a forwarder (a function whose MLIL only
+copies its parameters and calls, tail-calls or jumps to it with them, returning the result unchanged; built
+without tail calls, a stub keeps a frame): a dispatcher returning through code pointers that lead back to itself.
+In tail position: a tail call or jump, or a
 call whose result reaches a return through copies and width changes only (a width change the function applies to
 its own result is idempotent, so applying it once instead of at every level returns the same value).
 
@@ -21,6 +23,7 @@ from binaryninja import (ILSourceLocation, MediumLevelILFunction, MediumLevelILL
                          VariableSourceType)
 
 from ...unflatten.copies import sequence
+from ..flow.apply import read_by
 
 _CALLS = frozenset({Op.MLIL_CALL, Op.MLIL_CALL_UNTYPED})
 _TAILS = frozenset({Op.MLIL_TAILCALL, Op.MLIL_TAILCALL_UNTYPED, Op.MLIL_JUMP, Op.MLIL_JUMP_TO})
@@ -31,7 +34,8 @@ _ADDRESSES = frozenset({Op.MLIL_ADDRESS_OF, Op.MLIL_ADDRESS_OF_FIELD})
 _SKIP = frozenset({Op.MLIL_NOP})
 MAX_TRACE = 32  # variables followed back from a call's arguments, looking for the frame's own address
 MAX_STEPS = 16  # instructions followed from a call to its return
-FORWARDER_BYTES = 32  # a forwarder is at most this long
+FORWARDER_BYTES = 64  # a forwarder is at most this long
+MAX_COPIES = 8  # copies followed from a forwarder's argument back to its parameter
 
 Move = tuple[object, frozenset, Callable]  # (parameter, variables the value reads, emit(new, loc) -> expression)
 
@@ -45,9 +49,9 @@ def loop(mlil, view) -> Optional[tuple[MediumLevelILFunction, int, int]]:
     forwards: dict[int, bool] = {}
     for block in mlil.basic_blocks:
         for i in range(block.start, block.end):
-            moves = _site(mlil, i, func, view, params, forwards)
-            if moves is not None:
-                sites[i] = moves
+            found = _site(mlil, i, func, view, params, forwards)
+            if found is not None:
+                sites[i] = found
                 break  # the rest of the block only returns the call's result
     if not sites:
         return None
@@ -89,28 +93,35 @@ def _site(mlil, i: int, func, view, params, forwards: dict[int, bool]) -> Option
         return None
     if instr.operation in _CALLS and not _returned(mlil, i):
         return None
+    return moves(mlil, i, params)
+
+
+def moves(mlil, i: int, params) -> Optional[list[Move]]:
+    """The ordered moves giving `params` the arguments of the call at instruction `i`, or None: the counts
+    differ, an argument is the frame's own address, or the values cannot be assigned one at a time."""
+    instr = mlil[i]
     args = list(getattr(instr, "params", []))
     if len(args) == len(params) and args:
-        moves = [(p, frozenset(a.vars_read), _copier(a, _size(p))) for p, a in zip(params, args)
-                 if not _same(a, p)]
+        found = [(p, frozenset(a.vars_read), _copier(a, _size(p))) for p, a in zip(params, args) if not _same(a, p)]
         seen: set = set()
         if any(_frame_address(mlil, a, seen) for a in args):
             return None
     elif not args:
-        moves, seen = [], set()
+        found, seen = [], set()
         for p in params:
             source = _held_at(instr, p)
             if source is None:
                 return None
-            if source == p:
+            if source.identifier == p.identifier:
                 continue
             if _defined_from_frame(mlil, source, seen):
                 return None
-            moves.append((p, frozenset({source}), _reader(source, _size(p))))
+            found.append((p, frozenset({source}), _reader(source, _size(p))))
     else:
         return None
-    order = sequence([(dest, reads) for dest, reads, _ in moves])
-    return None if order is None else [moves[k] for k in order]
+    # By identifier: a spliced handler's parameters are its own Variables, the same storage as the caller's.
+    order = sequence([(dest.identifier, frozenset(v.identifier for v in reads)) for dest, reads, _ in found])
+    return None if order is None else [found[k] for k in order]
 
 
 def _reaches_self(view, target: int, start: int) -> bool:
@@ -124,16 +135,41 @@ def _reaches_self(view, target: int, start: int) -> bool:
     if mlil is None:
         return False
     body = [i for i in mlil.instructions if i.operation not in _SKIP]
-    if len(body) != 1 or body[0].operation not in _TAILS or body[0].dest.operation not in _CONSTANTS:
+    calls = [k for k, i in enumerate(body) if i.operation in _CALLS | _TAILS]
+    if len(calls) != 1:
         return False
-    forwarded = list(getattr(body[0], "params", []))
+    call = body[calls[0]]
+    if call.dest.operation not in _CONSTANTS:
+        read_by(view, target, start)  # a flow fix may resolve it to the function
+        return False
+    if call.dest.constant != start:
+        return False
+    if call.operation in _CALLS and not _returned(mlil, call.instr_index, widths=False):
+        return False
+    if any(i.operation != Op.MLIL_SET_VAR or i.src.operation != Op.MLIL_VAR for i in body[:calls[0]]):
+        return False
+    forwarded = list(getattr(call, "params", []))
     own = list(callee.parameter_vars)
-    passes = not forwarded or (len(forwarded) == len(own) and all(_same(a, p) for a, p in zip(forwarded, own)))
-    return body[0].dest.constant == start and passes
+    return not forwarded or (len(forwarded) == len(own) and all(_copied(mlil, a, p) for a, p in zip(forwarded, own)))
 
 
-def _returned(mlil, i: int) -> bool:
-    """The call's result reaches a return through copies and width changes only, nothing else executed."""
+def _copied(mlil, expr, param) -> bool:
+    """`expr` reads `param` through copies only."""
+    for _ in range(MAX_COPIES):
+        if expr.operation != Op.MLIL_VAR:
+            return False
+        if expr.src.identifier == param.identifier:
+            return True
+        found = mlil.get_var_definitions(expr.src)
+        if len(found) != 1 or found[0].operation != Op.MLIL_SET_VAR:
+            return False
+        expr = found[0].src
+    return False
+
+
+def _returned(mlil, i: int, widths: bool = True) -> bool:
+    """The call's result reaches a return through copies and (with `widths`) width changes only, nothing else
+    executed."""
     tracked = set(mlil[i].output)
     j = i + 1
     for _ in range(MAX_STEPS):
@@ -145,27 +181,27 @@ def _returned(mlil, i: int) -> bool:
             j += 1
         elif op == Op.MLIL_GOTO:
             j = instr.dest
-        elif op == Op.MLIL_SET_VAR and _read_of(instr.src) in tracked:
+        elif op == Op.MLIL_SET_VAR and _read_of(instr.src, widths) in tracked:
             tracked.add(instr.dest)
             j += 1
         elif op == Op.MLIL_RET:
-            return all(_read_of(s) in tracked for s in instr.src) and (bool(instr.src) or not mlil[i].output)
+            return all(_read_of(s, widths) in tracked for s in instr.src) and (bool(instr.src) or not mlil[i].output)
         else:
             return False
     return False
 
 
-def _read_of(expr):
-    """The variable `expr` reads through width changes, or None."""
-    while expr.operation in _WIDTHS:
+def _read_of(expr, widths: bool = True):
+    """The variable `expr` reads, through width changes with `widths`, or None."""
+    while widths and expr.operation in _WIDTHS:
         expr = expr.src
-    if expr.operation == Op.MLIL_VAR_FIELD and expr.offset == 0:
+    if widths and expr.operation == Op.MLIL_VAR_FIELD and expr.offset == 0:
         return expr.src
     return expr.src if expr.operation == Op.MLIL_VAR else None
 
 
 def _same(expr, var) -> bool:
-    return expr.operation == Op.MLIL_VAR and expr.src == var
+    return expr.operation == Op.MLIL_VAR and expr.src.identifier == var.identifier
 
 
 def _held_at(instr, param):
@@ -204,7 +240,7 @@ def _defined_from_frame(mlil, var, seen: set) -> bool:
     for d in mlil.get_var_definitions(var):
         src = getattr(d, "src", None)
         if not hasattr(src, "operation"):
-            if d.operation not in _CALLS:  # a call's result is the callee's; anything else is unknown
+            if d.operation not in _CALLS | _TAILS:  # a call's result is the callee's; anything else is unknown
                 return True
             continue
         if _frame_address(mlil, src, seen):

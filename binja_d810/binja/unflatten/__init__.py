@@ -6,7 +6,7 @@ from typing import Sequence
 
 from ...deadline import Deadline
 from ...unflatten.thread import plan
-from . import rewrite, selfcall
+from . import rewrite, selfcall, splice
 from .graph import MLILGraph
 
 MAX_ROUNDS = 4
@@ -15,8 +15,20 @@ GROWTH_SLACK = 2048
 
 
 def _looped(mlil, view, ranges, deadline: Deadline):
-    """(graph, plan, self calls) over the MLIL with its self tail calls turned into back edges (selfcall), when the plan
-    threads a path through the loop head (one of them); else None, and the self calls stay calls."""
+    """(graph, plan, report lines) over the MLIL with its self tail calls turned into back edges (selfcall), when
+    the plan threads a path through the loop head (one of them); else the same with its handlers spliced in
+    first (splice); else None, and the calls stay calls."""
+    found = _loop(mlil, view, ranges, deadline)
+    if found is not None or deadline.expired():
+        return found
+    spliced = splice.handlers(mlil, view)
+    if spliced is None:
+        return None
+    found = _loop(spliced[0], view, ranges, deadline)
+    return None if found is None else (found[0], found[1], [f"{spliced[1]} handlers spliced in", *found[2]])
+
+
+def _loop(mlil, view, ranges, deadline: Deadline):
     found = selfcall.loop(mlil, view)
     if found is None:
         return None
@@ -26,7 +38,7 @@ def _looped(mlil, view, ranges, deadline: Deadline):
     paths = [o.path for t in planned.threads for o in ((t.outcome,) if t.split is None else t.split.outcomes.values())]
     if not any(head in path for path in paths):
         return None
-    return graph, planned, count
+    return graph, planned, [f"{count} self calls in tail position read as a loop"]
 
 
 def run(ctx, *, deadline: Deadline, ranges: Sequence[tuple[int, int]]) -> list[str]:
@@ -41,8 +53,8 @@ def run(ctx, *, deadline: Deadline, ranges: Sequence[tuple[int, int]]) -> list[s
         mlil = first[0].mlil
     for n in range(1, MAX_ROUNDS + 1):
         if n == 1 and first is not None:
-            graph, found, count = first
-            lines.append(f"{count} self calls in tail position read as a loop")
+            graph, found, report = first
+            lines.extend(report)
         else:
             graph = MLILGraph(mlil, view=ctx.function.view, ranges=ranges)
             found = plan(graph, evidenced=evidenced, deadline=deadline)

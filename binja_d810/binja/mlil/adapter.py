@@ -21,6 +21,7 @@ from .lower import lower
 
 _ARITH = frozenset({Op.MLIL_ADD, Op.MLIL_SUB, Op.MLIL_MUL, Op.MLIL_NEG, Op.MLIL_LSL})
 _BITWISE = frozenset({Op.MLIL_AND, Op.MLIL_OR, Op.MLIL_XOR, Op.MLIL_NOT})
+_COMBINING = frozenset({Op.MLIL_AND, Op.MLIL_OR, Op.MLIL_XOR})
 _COMPARES = frozenset({Op.MLIL_CMP_E, Op.MLIL_CMP_NE, Op.MLIL_CMP_ULT, Op.MLIL_CMP_ULE, Op.MLIL_CMP_UGT,
                        Op.MLIL_CMP_UGE, Op.MLIL_CMP_SLT, Op.MLIL_CMP_SLE, Op.MLIL_CMP_SGT, Op.MLIL_CMP_SGE})
 _SHARED_FACTOR = 4  # distinct nodes allowed for a shared-value lift, as a multiple of maxNodes
@@ -44,18 +45,20 @@ class MLILAdapter:
         self.fixed_loads = FixedLoads(mlil.source_function.view)
 
     def has_candidates(self) -> bool:
-        seen = set()
+        seen, combining = set(), 0
         for instr in self.mlil.instructions:
             if self.deadline.expired():
                 return False
             rejected: list = []
-            for root in candidate_roots(instr, rejected, divisions=False):  # operations seen either way
-                seen.update(_operations(root))
-            for expr, _ in rejected:
-                seen.update(_operations(expr))
-        # MBA, or a comparison over a bitwise operation or a product (opaque predicates)
+            found = [op for root in candidate_roots(instr, rejected, divisions=False)  # operations seen either way
+                     for op in _operations(root)]
+            found += [op for expr, _ in rejected for op in _operations(expr)]
+            seen.update(found)
+            combining += sum(1 for op in found if op in _COMBINING)
+        # MBA, a comparison over a bitwise operation or a product (opaque predicates), or bitwise
+        # operations enough for substitution junk ((x & y) | (x ^ y) across instructions)
         return (bool(seen & _ARITH) and bool(seen & _BITWISE)) or (
-            bool(seen & _COMPARES) and (bool(seen & _BITWISE) or Op.MLIL_MUL in seen))
+            bool(seen & _COMPARES) and (bool(seen & _BITWISE) or Op.MLIL_MUL in seen)) or combining >= 2
 
     def candidates(self, skip: Skip) -> Iterator[Candidate]:
         if self.mlil.ssa_form is None:

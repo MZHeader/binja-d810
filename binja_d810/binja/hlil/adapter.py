@@ -26,6 +26,7 @@ from .lower import lower
 
 _ARITH = frozenset({H.HLIL_ADD, H.HLIL_SUB, H.HLIL_MUL, H.HLIL_NEG, H.HLIL_LSL})
 _BITWISE = frozenset({H.HLIL_AND, H.HLIL_OR, H.HLIL_XOR, H.HLIL_NOT})
+_COMBINING = frozenset({H.HLIL_AND, H.HLIL_OR, H.HLIL_XOR})
 _PURE_LEAVES = frozenset({H.HLIL_VAR_SSA, H.HLIL_CONST, H.HLIL_CONST_PTR})
 _COMPARES = frozenset({H.HLIL_CMP_E, H.HLIL_CMP_NE, H.HLIL_CMP_ULT, H.HLIL_CMP_ULE, H.HLIL_CMP_UGT,
                        H.HLIL_CMP_UGE, H.HLIL_CMP_SLT, H.HLIL_CMP_SLE, H.HLIL_CMP_SGT, H.HLIL_CMP_SGE})
@@ -49,7 +50,7 @@ class HLILAdapter:
         self.fixed_loads = FixedLoads(hlil.source_function.view)
 
     def has_candidates(self) -> bool:
-        seen = set()
+        seen, combining = set(), 0
         for statement in expression_roots(self.hlil):
             if self.deadline.expired():
                 return False
@@ -57,10 +58,12 @@ class HLILAdapter:
             while stack:
                 node = stack.pop()
                 seen.add(node.operation)
+                combining += node.operation in _COMBINING
                 stack.extend(child for child in children(node) if child.operation not in _STRUCTURE)
-        # MBA, or a comparison over a bitwise operation or a product (opaque predicates)
+        # MBA, a comparison over a bitwise operation or a product (opaque predicates), or bitwise
+        # operations enough for substitution junk ((x & y) | (x ^ y) across statements)
         return (bool(seen & _ARITH) and bool(seen & _BITWISE)) or (
-            bool(seen & _COMPARES) and (bool(seen & _BITWISE) or H.HLIL_MUL in seen))
+            bool(seen & _COMPARES) and (bool(seen & _BITWISE) or H.HLIL_MUL in seen)) or combining >= 2
 
     def candidates(self, skip: Skip) -> Iterator[Candidate]:
         if self.hlil.ssa_form is None:

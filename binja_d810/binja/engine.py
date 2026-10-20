@@ -51,15 +51,17 @@ class RewriteRecord(NamedTuple):
     before: str
     after: str
     verdict: str  # "PROVEN" or "TESTED": the original -> replacement check
-    method: str  # "signature", "z3" or "sampling"
+    method: str  # "signature", "z3", "low bits" or "sampling"
     reason: str  # why a TESTED rewrite has no proof
     level: str = "mlil"
+    mechanism: str = "rules"  # what folded it, for the summary (mechanism())
 
 
 class SkipRecord(NamedTuple):
     address: int
     reason: str
     level: str = "mlil"
+    expression: str = ""  # what was left, in brief
 
 
 class ErrorRecord(NamedTuple):
@@ -98,6 +100,27 @@ class FunctionReport:
 
     def assurance(self) -> Counter:
         return Counter(r.verdict for r in self.rewrites)
+
+    def summary(self) -> dict:
+        """What was folded, by mechanism, and what was left, by reason: zero counts left out."""
+        folded = Counter(r.mechanism for r in self.rewrites)
+        folded.update({"constant uses": self.constant_uses, "flow": len(self.flow), "unflatten": len(self.unflatten)})
+        left = Counter(r.reason.split(":")[0] for r in self.skipped)
+        return {"folded": {k: n for k, n in folded.items() if n}, "left": dict(left)}
+
+
+def mechanism(rewrite: Rewrite) -> str:
+    """The mechanism a rewrite counts under in the summary."""
+    source = rewrite.source
+    if rewrite.original.width == 1 and isinstance(rewrite.replacement, Const):
+        return "predicates"
+    if "constancy" in source:
+        return "constants"
+    if "select" in source:
+        return "conditions"
+    if "tier2:bitwise" in source:
+        return "bitwise"
+    return "mba" if "tier2:" in source else "rules"
 
 
 def _grows_visible_code(candidate, replacement) -> bool:
@@ -263,11 +286,11 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     deferred.append(candidate)
                     continue
                 if outcome.skipped and rewrite is None:
-                    skip(candidate.address, outcome.skipped)
+                    skip(candidate.address, outcome.skipped, candidate.ir)
                 if outcome.rewrite is None and outcome.skipped != "budget exhausted" and not deadline.expired():
                     stuck[candidate.ir] = outcome
                 if grows:
-                    skip(candidate.address, "would make the visible code larger or newly mixed")
+                    skip(candidate.address, "would make the visible code larger or newly mixed", candidate.ir)
                 elif rewrite is not None:
                     order[id(chosen)] = order[id(candidate)]
                     planned.append((chosen, rewrite))
@@ -297,7 +320,8 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
             adapter.replace(candidate, rewrite.replacement)
             report.rewrites.append(RewriteRecord(
                 candidate.address, rewrite.source, brief(rewrite.original, 2000), brief(rewrite.replacement, 2000),
-                rewrite.verdict.name if rewrite.verdict else "UNCHECKED", rewrite.method, rewrite.reason, level))
+                rewrite.verdict.name if rewrite.verdict else "UNCHECKED", rewrite.method, rewrite.reason, level,
+                mechanism(rewrite)))
         adapter.finish()
         if hasattr(adapter, "propagate_constants"):
             # Definitions made constant: their other reads become the constant (v3.1), so plain uses
@@ -429,11 +453,11 @@ def _run_with_slot(adapter, rules, backends, config, deadline, report) -> None:
     shape = adapter.cfg_shape()
     dead = set(config.disabled_rules)
 
-    def skip(address: int, reason: str) -> None:
-        record = SkipRecord(address, reason, level)
-        if record not in seen_skips:  # each pass meets the same candidates again
-            seen_skips.add(record)
-            report.skipped.append(record)
+    def skip(address: int, reason: str, expression=None) -> None:
+        key = (address, reason, level)
+        if key not in seen_skips:  # each pass meets the same candidates again
+            seen_skips.add(key)
+            report.skipped.append(SkipRecord(address, reason, level, "" if expression is None else brief(expression, 400)))
 
     seen_skips: set = set()
     try:

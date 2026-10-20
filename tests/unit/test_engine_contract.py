@@ -715,3 +715,16 @@ def test_an_inconclusive_constant_is_proven_once_per_run_by_shape(monkeypatch):
 
     report = simplify_function(Constants({"a": a, "b": b}), [], [LinearMBABackend()], EngineConfig())
     assert not report.rewrites and len(calls) == 1
+
+
+def test_skips_carry_the_expression():
+    adapter = FakeAdapter({"r": p("(a * b) + (c ^ d) * (e & a)")})  # nonlinear over 5 variables: skipped
+    report = simplify_function(adapter, [], [LinearMBABackend()], EngineConfig())
+    engine_skips = [s for s in report.skipped if s.address == 0x1000]
+    assert engine_skips and all("e" in s.expression for s in engine_skips)
+
+
+def test_summary_counts_by_mechanism_and_reason():
+    adapter = FakeAdapter({"r": p("(x ^ y) + 2 * (x & y)")})
+    report = simplify_function(adapter, [], [LinearMBABackend()], EngineConfig())
+    assert report.summary() == {"folded": {"mba": 1}, "left": {"effect": 1}}

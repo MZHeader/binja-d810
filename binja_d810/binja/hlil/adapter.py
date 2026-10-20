@@ -76,7 +76,7 @@ class HLILAdapter:
                 seen = lift(expr.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, effect_leaves=True,
                             definitions=definitions)
                 if seen is not None and is_candidate(seen):
-                    skip(expr.address, reason)
+                    skip(expr.address, reason, seen)
             for root in reversed(roots):
                 inlined: dict = {}
                 ir = lift(root.ssa_form, aliased=self.aliased, max_nodes=self.max_nodes, inlined=inlined,

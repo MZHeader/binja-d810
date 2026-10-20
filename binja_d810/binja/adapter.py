@@ -47,7 +47,7 @@ class Candidate:
     paths: Optional[tuple] = None
 
 
-Skip = Callable[[int, str], None]
+Skip = Callable[..., None]  # skip(address, reason, expression=None): a root left as it is, and why
 
 
 class ILAdapter(Protocol):

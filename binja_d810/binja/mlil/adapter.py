@@ -70,7 +70,7 @@ class MLILAdapter:
                 seen = lift(expr.ssa_form, root_instr=instr, max_nodes=self.max_nodes, effect_leaves=True,
                             definitions=definitions)
                 if seen is not None and is_candidate(seen):
-                    skip(expr.address, reason)
+                    skip(expr.address, reason, seen)
             for root in reversed(roots):
                 inlined: dict = {}
                 stats: dict = {}

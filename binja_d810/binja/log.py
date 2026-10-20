@@ -62,6 +62,8 @@ def render(report: FunctionReport) -> str:
     assurance = report.assurance()
     lines = [f"rewrites: {len(report.rewrites)} (proven {assurance['PROVEN']}, tested only {assurance['TESTED']})"
              f"  refuted: {report.refuted}  skipped: {len(report.skipped)}  errors: {len(report.errors)}"]
+    summary = report.summary()
+    lines.append(f"summary: folded {summary['folded']}; left {summary['left']}")
     if getattr(report, "constant_uses", 0):
         lines.append(f"constants into their uses: {report.constant_uses} reads")
     lines += [f"flow: {line}" for line in getattr(report, "flow", [])]
@@ -69,7 +71,8 @@ def render(report: FunctionReport) -> str:
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")
-    lines += [f"{r.address:#x} [{r.level}] skipped: {r.reason}" for r in report.skipped]
+    lines += [f"{r.address:#x} [{r.level}] skipped: {r.reason}" + (f"\n    {r.expression}" if r.expression else "")
+              for r in report.skipped]
     lines += [f"error [{r.level} {r.source}]: {r.message}" for r in report.errors]
     if report.capped:
         lines.append(f"iteration cap reached; still firing: {report.still_firing}")

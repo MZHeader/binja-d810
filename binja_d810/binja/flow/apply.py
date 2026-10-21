@@ -2,8 +2,9 @@
 
 Sites wait in the view's queue. Once analysis is idle (a completion event), a round decides at most
 SITES_PER_ROUND of them within ROUND_SECONDS, saves the record in the view's metadata and reanalyzes what
-changed. Their MLIL activity collects again; a decided site is not queued again, so rounds stop when nothing
-new is found. Binary Ninja is never called with a state's lock held.
+changed. Batches that change nothing continue in the worker without regenerating native IL. Their MLIL
+activity collects again; a decided site is not queued again, so rounds stop when nothing new is found.
+Binary Ninja is never called with a state's lock held.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import Optional
 
-from binaryninja import ILSourceLocation, MediumLevelILOperation as Op
+from binaryninja import AnalysisState, ILSourceLocation, MediumLevelILOperation as Op
 
 from ...deadline import Deadline
 from ...flow.codecheck import call_problem, is_self_call, is_tail_call, jump_problem, split_starts
@@ -48,7 +49,7 @@ class State:
     events: list = field(default_factory=list)  # completion events, kept alive
     armed: bool = False
     running: bool = False
-    again: bool = False  # an armed completion arrived while the background worker was still running
+    again: bool = False  # more work arrived, or remains, while the background worker was running
 
     def recount(self) -> None:
         """Who claims what, after the record changed (the caller holds the lock)."""
@@ -106,6 +107,9 @@ def _store(view, text: Optional[str]) -> None:
 def _arm(view, state: State) -> None:
     """Run a round once analysis is idle (called without the lock)."""
     with state.lock:
+        if state.running:
+            state.again = True  # the worker waits for any analysis it requests before its next batch
+            return
         if state.armed:
             return
         state.armed = True
@@ -129,6 +133,10 @@ def _completed(view, state: State) -> None:
 def _run_completed(view, state: State) -> None:
     try:
         while True:
+            # Other work (including a user's edits) can restart native analysis while
+            # this worker drains rejected batches. Read the next batch only after it settles.
+            if view.analysis_info.state != AnalysisState.IdleState:
+                view.update_analysis_and_wait()
             if run_round(view):
                 view.update_analysis_and_wait()
             with state.lock:
@@ -483,17 +491,14 @@ def run_round(view) -> bool:
         # read it now. Readers of what this round changes wait for the next.
         ready = state.waiting
         state.waiting = {r for start in work.touched for r in state.readers.pop(start, ())}
-        another_round = left is not None or defer_signatures or needs_undo or bool(state.waiting)
-    if another_round:
-        _arm(view, state)
-        if not work.touched and left is not None:
-            work.touched.add(left.function)  # analysis must run for the next round to start
+        if left is not None or defer_signatures or needs_undo or state.waiting:
+            state.again = True
     work.touched |= ready
     for start in sorted(work.touched):
         func = view.get_function_at(start)
         if func is not None:
             func.reanalyze()
-    if work.touched or another_round:
+    if work.touched:
         view.update_analysis()
         return True
     return False

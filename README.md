@@ -34,7 +34,8 @@ And after (4 lines):
 * Control-flow flattening: state machines driven by compare trees or jump tables, including
   nested loops, and machines split across functions, where the dispatcher calls itself for the
   next state or calls a small function per state that returns through a stub back to it. Large
-  handlers and their loops stay in place while the dispatcher is removed
+  handlers and their loops stay in place while the dispatcher is removed. Self-calls and outlined
+  handlers can be recovered together, including dispatchers with large argument lists
 * Junk loops that only count a variable up to some value and then throw it away
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 

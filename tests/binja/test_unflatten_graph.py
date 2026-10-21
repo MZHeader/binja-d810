@@ -95,6 +95,13 @@ def test_a_negative_has_no_plan(off, name):
     assert not found.threads, f"{key} {name}: {found}"
 
 
+def test_the_growth_bound_covers_the_emitted_paths_and_splits(off):
+    _, bv = off
+    graph, found = _plan(bv, "fl_tree")
+    assert found.threads
+    assert rewrite.size_bound(graph, found) >= len(rewrite.rewrite(graph, found))
+
+
 def _gotos_as_resolved_jumps(func, mode="constant"):
     """A copy with the form BN uses after resolving an indirect jump to one internal block."""
     old = func.mlil

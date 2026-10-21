@@ -26,6 +26,20 @@ from .graph import MLILGraph
 _LOADS = (Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA)
 
 
+def size_bound(graph: MLILGraph, plan: Plan) -> int:
+    """Instructions before cleanup: the original body plus each emitted trampoline."""
+    size = len(graph.mlil)
+    for thread in plan.threads:
+        if not _emittable(graph, thread):
+            continue
+        outcomes = (thread.outcome,) if thread.split is None else tuple(thread.split.outcomes.values())
+        if thread.split is not None:
+            size += 1 if thread.split.condition is not None else len(outcomes)
+        for outcome in outcomes:
+            size += 1 + sum(graph.il_block(b).end - graph.il_block(b).start - 1 for b in outcome.path)
+    return size
+
+
 def rewrite(graph: MLILGraph, plan: Plan) -> MediumLevelILFunction:
     mlil = graph.mlil
     new = MediumLevelILFunction(mlil.arch, low_level_il=mlil.llil)

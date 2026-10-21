@@ -49,17 +49,22 @@ def has_table_dispatcher(mlil, view, *, deadline: Deadline, ranges=()) -> bool:
 
 
 def _looped(mlil, view, ranges, deadline: Deadline):
-    """(graph, plan, report lines) over the MLIL with its self tail calls turned into back edges (selfcall), when
-    the plan threads a path through the loop head (one of them); else the same with its handlers spliced in
-    first (splice); else None, and the calls stay calls."""
+    """Prefer a plan combining self calls and outlined handlers. Keep a proven self-call-only plan
+    when expansion fails, runs out of time or would exceed the growth bound."""
     found = _loop(mlil, view, ranges, deadline)
-    if found is not None or deadline.expired():
+    if deadline.expired():
         return found
     spliced = splice.handlers(mlil, view)
     if spliced is None:
-        return None
-    found = _loop(spliced[0], view, ranges, deadline)
-    return None if found is None else (found[0], found[1], [f"{spliced[1]} handlers spliced in", *found[2]])
+        return found
+    expanded = _loop(spliced[0], view, ranges, deadline)
+    if expanded is None:
+        return found
+    # Keep an already proven self-call recovery when adding handlers would exceed the growth bound.
+    cap = max(GROWTH * len(mlil), len(mlil) + GROWTH_SLACK)
+    if found is not None and rewrite.size_bound(expanded[0], expanded[1]) > cap:
+        return found
+    return expanded[0], expanded[1], [f"{spliced[1]} handlers spliced in", *expanded[2]]
 
 
 def _loop(mlil, view, ranges, deadline: Deadline):

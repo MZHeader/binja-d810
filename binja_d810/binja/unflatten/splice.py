@@ -34,9 +34,11 @@ _TARGETED = frozenset({Op.MLIL_JUMP_TO})  # instructions naming blocks other tha
 def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
     """(the copy, the number of distinct handlers spliced into it), or None when the function has none."""
     func = mlil.source_function
+    checked_entry = False
     found: dict[int, object] = {}
     forwards: dict[int, bool] = {}
     sites: dict[int, tuple[object, list]] = {}
+    frame = None
     for instr in mlil.instructions:
         i = instr.instr_index
         if instr.operation not in selfcall._TAILS | selfcall._CALLS or instr.dest.operation not in selfcall._CONSTANTS:
@@ -44,16 +46,23 @@ def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
         if instr.operation in selfcall._CALLS and not selfcall._returned(mlil, i, widths=False):
             continue
         target = instr.dest.constant
+        if target == func.start:
+            continue  # selfcall handles these; they are not separate handlers
+        if not checked_entry:
+            if _reads_entry(mlil, func.parameter_vars):
+                return None  # no handler can be copied safely over this unmodeled caller context
+            checked_entry = True
         if target not in found:
             found[target] = _handler(view, target, func, forwards)
         callee = found[target]
         if callee is None:
             continue
-        moves = selfcall.moves(mlil, i, list(callee.parameter_vars))
+        frame = frame or selfcall.Arguments(mlil, selfcall.MAX_TRACE)
+        moves = selfcall.moves(mlil, i, list(callee.parameter_vars), frame)
         if moves is not None:
             sites[i] = (callee, moves)
     count = len({callee.start for callee, _ in sites.values()})
-    if not sites or count > MAX_HANDLERS or _reads_entry(mlil, func.parameter_vars):
+    if not sites or count > MAX_HANDLERS:
         return None
     new = MediumLevelILFunction(mlil.arch, low_level_il=mlil.llil)
     new.prepare_to_copy_function(mlil)

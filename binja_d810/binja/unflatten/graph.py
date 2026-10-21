@@ -50,6 +50,7 @@ class MLILGraph:
         self._terms: dict[int, object] = {}
         self._definitions: dict[Key, Definition] = {}
         self._widths: dict[int, int] = {}
+        self._value_widths: dict[SSAVariable, int] = {}
         self._preds: dict[int, list[Edge]] = {b: [] for b in self._blocks}
         for b, block in self._blocks.items():
             for target, slot in self._edges(block):
@@ -102,7 +103,7 @@ class MLILGraph:
         return self._from_ssa.get(ssa_instr.il_basic_block.start)
 
     def width(self, key: Key) -> int:
-        return self._bits(self._vars[key].var)
+        return self._value_bits(self._vars[key])
 
     def read(self, address: int, width: int) -> Optional[int]:
         """Constant memory: a load fixed_load_is_safe allows, in a segment that is not writable or inside one
@@ -181,6 +182,8 @@ class MLILGraph:
         tested through its low half reads its register's backing value). Versions count per storage, so the
         backing's version is the variable's."""
         if isinstance(leaf.ref, SSAVariable):
+            if not self._bits(leaf.ref.var) and leaf.width > self._value_bits(leaf.ref):
+                return None  # an inferred narrow write says nothing about the additional bits of a wider read
             return leaf.ref
         if isinstance(leaf.ref, Backing) and 8 * leaf.ref.size == self._bits(leaf.ref.var):
             return SSAVariable(leaf.ref.var, leaf.ref.version)
@@ -196,6 +199,45 @@ class MLILGraph:
             sizes = {d.size for d in self.mlil.get_var_definitions(var) if d.operation == Op.MLIL_SET_VAR}
             self._widths[var.identifier] = 8 * sizes.pop() if len(sizes) == 1 else 0
         return self._widths[var.identifier]
+
+    def _value_bits(self, ssa_var: SSAVariable) -> int:
+        """An untyped variable may have unrelated writes at different widths after handler copying.
+        Infer this version from full assignments and uniform phi sources, within the lift budget.
+        Partial writes, missing definitions and mixed-width merges remain unknown.
+        """
+        fixed = self._bits(ssa_var.var)
+        if fixed:
+            return fixed
+        if ssa_var in self._value_widths:
+            return self._value_widths[ssa_var]
+        work, seen, sizes = [ssa_var], set(), set()
+        while work:
+            current = work.pop()
+            if current in seen:
+                continue
+            if len(seen) >= self.max_nodes:
+                break
+            seen.add(current)
+            known = self._value_widths.get(current)
+            if known is not None:
+                sizes.add(known)
+            else:
+                d = definition_of(self.ssa, current, self._defs)
+                if d is not None and d.operation == Op.MLIL_SET_VAR_SSA:
+                    sizes.add(8 * d.size)
+                elif d is not None and d.operation == Op.MLIL_VAR_PHI:
+                    work.extend(d.src)
+                else:
+                    break
+            if len(sizes) > 1 or 0 in sizes:
+                break
+        else:
+            if len(sizes) == 1:
+                width = sizes.pop()
+                self._value_widths.update((var, width) for var in seen)
+                return width
+        self._value_widths[ssa_var] = 0
+        return 0
 
     def _lift(self, e, root) -> Optional[Expr]:
         found = lift(e, root_instr=root, check_versions=False, max_nodes=self.max_nodes, definitions=self._defs,
@@ -254,7 +296,7 @@ class MLILGraph:
     def _value(self, ssa_var: SSAVariable) -> Optional[Expr]:
         """What a pure definition computes, its own definitions inlined; None when nothing but the value
         itself comes out."""
-        width = self._bits(ssa_var.var)
+        width = self._value_bits(ssa_var)
         d = definition_of(self.ssa, ssa_var, self._defs)
         if not width or d is None:
             return None
@@ -280,7 +322,7 @@ class MLILGraph:
         if d is None:
             return Undefined() if self._local(ssa_var) else Unknown()
         if d.operation == Op.MLIL_VAR_PHI:
-            return Phi(tuple(self._key(s) for s in d.src))
+            return Phi(tuple(self._key(s) for s in d.src)) if self._value_bits(ssa_var) else Unknown()
         if d.operation in _ASSIGNS and mlil_effect(d.src) is None:
             e = self._value(ssa_var)
             if e is not None:

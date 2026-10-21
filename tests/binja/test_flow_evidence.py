@@ -52,6 +52,39 @@ def test_the_use_graph_follows_a_table_address_to_its_load(bv):
     assert starts and classify(starts, uses) == (READ, None)
 
 
+def test_missing_reference_lookups_scan_each_ssa_statement_once(bv):
+    """Several folded-away references must not each traverse the same function's entire SSA again."""
+    from binaryninja import MediumLevelILOperation as Op
+
+    func = function_named(bv, "tbl_call_const")
+    ssa = func.mlil.ssa_form
+
+    class CountingSSA:
+        def __init__(self):
+            self.visited = 0
+
+        def __getattr__(self, name):
+            return getattr(ssa, name)
+
+        @property
+        def instructions(self):
+            for statement in ssa.instructions:
+                self.visited += 1
+                yield statement
+
+    constants = {node.expr_index: node.constant for statement in ssa.instructions
+                 for node in statement.traverse(lambda n: n if n.operation in (Op.MLIL_CONST, Op.MLIL_CONST_PTR)
+                                                else None)}
+    assert constants
+    counted = CountingSSA()
+    uses = evidence.Uses(counted)
+    for value in sorted(set(constants.values())):
+        expected = {node for node, constant in constants.items() if value <= constant < value + 1}
+        assert set(uses.constants_in(value, value + 1, at=bv.end + 0x1000)) == expected
+    assert uses.constants_in(bv.end + 0x1000, bv.end + 0x1001, at=bv.end + 0x1000) == []
+    assert counted.visited == len(list(ssa.instructions))
+
+
 def test_the_code_view(bv):
     f_b = function_named(bv, "f_b")
     code = evidence.BinaryCode(bv, f_b.arch)

@@ -60,6 +60,8 @@ class Uses:
         self.reads: dict[tuple[int, int], list[int]] = {}  # (identifier, version) -> the nodes reading it
         self.children: dict[int, list[tuple[str, int]]] = {}
         self.indexed: set[int] = set()
+        self._literals: dict[int, list[tuple[int, int]]] = {}  # statement -> (constant node, value)
+        self._all_literals: Optional[tuple[tuple[int, int], ...]] = None
         self._lowlevel = None
 
     def reference_read_only(self, address: int, start: int, end: int) -> bool:
@@ -75,12 +77,15 @@ class Uses:
         if statement.expr_index in self.indexed:
             return
         self.indexed.add(statement.expr_index)
+        literals = self._literals[statement.expr_index] = []
         stack = [(statement, None)]
         while stack:
             node, up = stack.pop()
             at, op = node.expr_index, node.operation
             self.kinds[at] = "field" if op in _FIELD_READS else _KINDS.get(op, op.name.lower())
             self.addresses[at] = node.address
+            if op in _CONSTANTS:
+                literals.append((at, node.constant))
             if op in _STRUCT:
                 self.offsets[at] = node.offset
             if up is not None:
@@ -120,18 +125,20 @@ class Uses:
         else every one in the function."""
         found = [n for s in self._statements_at(at) for n in self._constants(s, start, end)] if at is not None else []
         if not found:
-            found = [n for s in self.ssa.instructions for n in self._constants(s, start, end)]
+            # Folded-away references can all fall back to this scan. The SSA object held by Uses stays
+            # the same, so index it once and filter its literals for each range without retraversing IL.
+            if self._all_literals is None:
+                literals = []
+                for statement in self.ssa.instructions:
+                    self.index(statement)
+                    literals.extend(self._literals[statement.expr_index])
+                self._all_literals = tuple(literals)
+            found = [node for node, value in self._all_literals if start <= value < end]
         return found
 
     def _constants(self, statement, start: int, end: int) -> list[int]:
         self.index(statement)
-        found, stack = [], [statement]
-        while stack:
-            node = stack.pop()
-            if node.operation in _CONSTANTS and start <= node.constant < end:
-                found.append(node.expr_index)
-            stack.extend(item for _, item in _operands(node) if hasattr(item, "operation"))
-        return found
+        return [node for node, value in self._literals[statement.expr_index] if start <= value < end]
 
     def _statements_at(self, address: int) -> list:
         """The SSA statements of the instruction at `address` (through LLIL: Function has no MLIL-at lookup)."""

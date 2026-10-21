@@ -24,6 +24,7 @@ from binaryninja import (ILSourceLocation, MediumLevelILFunction, MediumLevelILL
 
 from ...unflatten.copies import sequence
 from ..flow.apply import read_by
+from .frame import Arguments
 
 _CALLS = frozenset({Op.MLIL_CALL, Op.MLIL_CALL_UNTYPED})
 _TAILS = frozenset({Op.MLIL_TAILCALL, Op.MLIL_TAILCALL_UNTYPED, Op.MLIL_JUMP, Op.MLIL_JUMP_TO})
@@ -32,7 +33,7 @@ _WIDTHS = frozenset({Op.MLIL_ZX, Op.MLIL_SX, Op.MLIL_LOW_PART})
 _READS = frozenset({Op.MLIL_VAR, Op.MLIL_VAR_FIELD})
 _ADDRESSES = frozenset({Op.MLIL_ADDRESS_OF, Op.MLIL_ADDRESS_OF_FIELD})
 _SKIP = frozenset({Op.MLIL_NOP})
-MAX_TRACE = 32  # variables followed back from a call's arguments, looking for the frame's own address
+MAX_TRACE = 32  # definition trace bound; each typed argument gets its own quota
 MAX_STEPS = 16  # instructions followed from a call to its return
 FORWARDER_BYTES = 64  # a forwarder is at most this long
 MAX_COPIES = 8  # copies followed from a forwarder's argument back to its parameter
@@ -47,9 +48,10 @@ def loop(mlil, view) -> Optional[tuple[MediumLevelILFunction, int, int]]:
     params = list(func.parameter_vars)
     sites: dict[int, list[Move]] = {}
     forwards: dict[int, bool] = {}
+    frame = Arguments(mlil, MAX_TRACE)
     for block in mlil.basic_blocks:
         for i in range(block.start, block.end):
-            found = _site(mlil, i, func, view, params, forwards)
+            found = _site(mlil, i, func, view, params, forwards, frame)
             if found is not None:
                 sites[i] = found
                 break  # the rest of the block only returns the call's result
@@ -81,7 +83,7 @@ def loop(mlil, view) -> Optional[tuple[MediumLevelILFunction, int, int]]:
     return new, entry.outgoing_edges[0].target.index, len(sites)
 
 
-def _site(mlil, i: int, func, view, params, forwards: dict[int, bool]) -> Optional[list[Move]]:
+def _site(mlil, i: int, func, view, params, forwards: dict[int, bool], frame: Arguments) -> Optional[list[Move]]:
     """The ordered parameter moves replacing the self call at instruction `i`, or None."""
     instr = mlil[i]
     if instr.operation not in _CALLS | _TAILS or instr.dest.operation not in _CONSTANTS:
@@ -93,18 +95,21 @@ def _site(mlil, i: int, func, view, params, forwards: dict[int, bool]) -> Option
         return None
     if instr.operation in _CALLS and not _returned(mlil, i):
         return None
-    return moves(mlil, i, params)
+    return moves(mlil, i, params, frame)
 
 
-def moves(mlil, i: int, params) -> Optional[list[Move]]:
+def moves(mlil, i: int, params, frame: Optional[Arguments] = None) -> Optional[list[Move]]:
     """The ordered moves giving `params` the arguments of the call at instruction `i`, or None: the counts
     differ, an argument is the frame's own address, or the values cannot be assigned one at a time."""
     instr = mlil[i]
     args = list(getattr(instr, "params", []))
     if len(args) == len(params) and args:
         found = [(p, frozenset(a.vars_read), _copier(a, _size(p))) for p, a in zip(params, args) if not _same(a, p)]
-        seen: set = set()
-        if any(_frame_address(mlil, a, seen) for a in args):
+        frame = frame or Arguments(mlil, MAX_TRACE)
+        # One expression can be shared by calls on different SSA versions. Get arguments from
+        # this call's SSA instruction, rather than mapping each child without its use context.
+        ssa_args = list(instr.ssa_form.params)
+        if len(ssa_args) != len(args) or any(frame.may_name_frame(a) for a in ssa_args):
             return None
     elif not args:
         found, seen = [], set()

@@ -6,7 +6,7 @@
 A Binary Ninja plugin that cleans up mixed boolean-arithmetic (MBA) obfuscation, opaque
 predicates and control-flow flattening. It turns junk like `(x ^ y) + 2 * (x & y)` back into
 `x + y`, folds conditions that always go the same way (OLLVM-style bogus control flow) so Binary
-Ninja drops the dead branches, and gives flattened state machines back their straight-line flow.
+Ninja drops the dead branches, and turns flattened state machines back into branches and loops.
 Nothing is written to the binary.
 
 Here's an export from an OLLVM-obfuscated DLL before (399 lines of HLIL):
@@ -33,7 +33,8 @@ And after (4 lines):
   `x ^ key ^ 0x3c1d`
 * Control-flow flattening: state machines driven by compare trees or jump tables, including
   nested loops, and machines split across functions, where the dispatcher calls itself for the
-  next state or calls a small function per state that returns through a stub back to it
+  next state or calls a small function per state that returns through a stub back to it. Large
+  handlers and their loops stay in place while the dispatcher is removed
 * Junk loops that only count a variable up to some value and then throw it away
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 
@@ -98,8 +99,8 @@ itself lives in a separate **extension** group that Binary Ninja creates.
 
 * **Time budget per function**: 20 s by default. Binary Ninja gives up on a function that takes
   too long to analyze, so when a binary is opened with D-810 on, its per-function limit is raised
-  to twice the budget. The passes share that allowance; jump-table dispatchers keep some time
-  for control-flow recovery. Table and type changes can trigger another analysis run, so total
+  to twice the budget. The passes share that allowance; jump-table dispatchers keep up to half
+  for control-flow recovery and HLIL cleanup. Table and type changes can trigger another run, so total
   time can exceed the budget.
 * **Generic MBA simplifier (Tier 2)**: the linear simplifier and CoBRA. Turn it off to use the
   rules only.

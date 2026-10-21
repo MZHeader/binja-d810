@@ -38,7 +38,7 @@ UNFLATTEN_ACTIVITY_NAME = "extension.binja_d810.unflatten"
 # analysis then never settles (v4.2, measured). Without it, unflattening follows the MLIL pass.
 UNFLATTEN_AFTER = "core.function.analyzeIndirectBranches"
 BASE_WORKFLOWS = ("core.function.metaAnalysis", "core.function.objectiveC")
-DISPATCH_RESERVE_SECONDS = 5.0
+DISPATCH_RESERVE_SECONDS = 10.0
 
 _ACTIVITIES: list[Activity] = []  # keep callbacks alive
 _rules_override: Optional[list] = None
@@ -136,7 +136,9 @@ def _run(ctx, level: str) -> None:
         ranges, _ = parse_ranges(ctx.get_setting_string_list(settings.READ_ONLY_RANGES))
         probe_deadline = allowance.deadline.earlier(Deadline.after(min(1.0, remaining / 20)))
         if unflatten.has_table_dispatcher(il, func.view, deadline=probe_deadline, ranges=ranges):
-            reserved = min(DISPATCH_RESERVE_SECONDS, remaining / 4)
+            # Recovery and the resulting HLIL both need a turn. One slow backend call can overrun
+            # the MLIL deadline, so a small tail allowance alone can still starve both later passes.
+            reserved = min(DISPATCH_RESERVE_SECONDS, remaining / 2)
         probe_seconds, probe_cpu = time.monotonic() - started, time.thread_time() - cpu
     deadline = Deadline(allowance.deadline.at - reserved)
     make = MLILAdapter if level == "mlil" else HLILAdapter

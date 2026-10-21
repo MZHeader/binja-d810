@@ -88,7 +88,9 @@ def test_a_dispatcher_gets_time_after_mlil_uses_its_allowance(monkeypatch, unfla
         assert report is not None
         if unflatten_enabled:
             assert report.unflatten, log.render(report)
-            assert report.allowance_seconds < 3.1
+            assert report.allowance_seconds < 2.1
+            assert 1.9 < report.reserved_seconds <= 2
+            assert log.latest_report(func, "hlil").allowance_seconds > 0.5
             assert "switch" not in "\n".join(map(str, func.hlil.instructions))
         else:
             assert not report.unflatten and report.allowance_seconds > 3.9, log.render(report)

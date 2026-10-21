@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 from binaryninja import Settings
-from helpers import function_named, manifest, open_sample, set_types, signature
+from helpers import function_named, manifest, open_sample, set_types, signature, settle
 
 from binja_d810.binja import log, settings, workflow
+from binja_d810.binja.engine import FunctionReport
 
 from binja_d810.semantic import cobra_shim
 from binja_d810.semantic.cobra_backend import CobraBackend
@@ -57,6 +58,40 @@ def test_both_passes_share_one_allowance():
         mlil, hlil = reports["mlil"], reports["hlil"]
         assert 19.9 < mlil.allowance_seconds <= 20.0  # the default budget (room made in the binary's limit)
         assert abs(hlil.allowance_seconds - (mlil.allowance_seconds - mlil.total_seconds)) < 0.05
+    finally:
+        bv.file.close()
+
+
+@pytest.mark.parametrize("unflatten_enabled", [True, False])
+def test_a_dispatcher_gets_time_after_mlil_uses_its_allowance(monkeypatch, unflatten_enabled):
+    bv = open_sample("flatten_x86_64-elf_O2.so", d810=False,
+                     options={settings.FUNCTION_SECONDS: 4, settings.UNFLATTEN: unflatten_enabled})
+    original = workflow.simplify_function
+    func = function_named(bv, "fl_dense")
+
+    def consume(adapter, rules, backends, config, deadline):
+        if adapter.level == "mlil" and adapter.mlil.source_function.start == func.start:
+            allowed = deadline.remaining()
+            started = time.monotonic()
+            time.sleep(allowed + 0.01)  # stand in for an unsuccessful, budget-consuming MBA pass
+            elapsed = time.monotonic() - started
+            return FunctionReport(allowance_seconds=allowed, total_seconds=elapsed,
+                                  plan_seconds=elapsed, budget_exhausted=True)
+        return original(adapter, rules, backends, config, deadline)
+
+    monkeypatch.setattr(workflow, "simplify_function", consume)
+    try:
+        Settings().set_bool(workflow.ACTIVITY_SETTING, True, func)
+        func.reanalyze()
+        settle(bv)
+        report = log.latest_report(func, "mlil")
+        assert report is not None
+        if unflatten_enabled:
+            assert report.unflatten, log.render(report)
+            assert report.allowance_seconds < 3.1
+            assert "switch" not in "\n".join(map(str, func.hlil.instructions))
+        else:
+            assert not report.unflatten and report.allowance_seconds > 3.9, log.render(report)
     finally:
         bv.file.close()
 

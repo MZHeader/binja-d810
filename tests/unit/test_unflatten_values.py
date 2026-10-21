@@ -96,6 +96,54 @@ def test_no_value_set_beyond_sixteen_values():
     assert v.value_set(g.key("s#20")) is None
 
 
+def test_large_dispatcher_can_hold_many_proven_constants():
+    g = toy({0: {"do": [f"s#{i} = {i}" for i in range(1, 321)], "goto": 1},
+             1: {"phi": {"s#400": {i: f"s#{i}" for i in range(1, 321)}}, "stop": True}})
+    v = Values(g)
+    assert v.only_constants(g.key("s#400"))
+    assert v.value_set(g.key("s#400")) is None  # the separate split-expansion limit still applies
+
+
+def test_large_dispatcher_with_one_unknown_source_is_not_constant_only():
+    # The unknown source is visited after the constants by the value-set worklist.
+    g = toy({0: {"do": ["s#1 = ?", *[f"s#{i} = {i}" for i in range(2, 321)]], "goto": 1},
+             1: {"phi": {"s#400": {i: f"s#{i}" for i in range(1, 321)}}, "stop": True}})
+    assert not Values(g).only_constants(g.key("s#400"))
+
+
+def test_nonconstant_definition_web_is_still_bounded():
+    phis = {"s#1": {0: "a#1", 1: "b#1"}}
+    phis.update({f"s#{i}": {0: "a#1", 1: f"s#{i-1}"} for i in range(2, 301)})
+    g = toy({0: {"do": ["a#1 = 1", "b#1 = 2"], "goto": 1}, 1: {"phi": phis, "stop": True}})
+    assert not Values(g).only_constants(g.key("s#300"))
+
+
+def test_constant_phi_proof_stops_when_its_budget_expires():
+    g = toy({0: {"do": [f"s#{i} = 1" for i in range(1, 321)], "goto": 1},
+             1: {"phi": {"s#400": {i: f"s#{i}" for i in range(1, 321)}}, "stop": True}})
+
+    class Budget:
+        exhausted = False
+
+        def expired(self):
+            return self.exhausted
+
+    budget = Budget()
+
+    class ExpiringGraph:
+        reads = 0
+
+        def __getattr__(self, name):
+            return getattr(g, name)
+
+        def definition(self, key):
+            self.reads += 1
+            budget.exhausted = self.reads >= 16
+            return g.definition(key)
+
+    assert not Values(ExpiringGraph(), budget).only_constants(g.key("s#400"))
+
+
 def test_eval_reads_the_environment_before_static_values():
     g = toy({0: {"do": ["s#1 = 0x10", "t#1 = s#1 + 1"], "stop": True}})
     v = Values(g)

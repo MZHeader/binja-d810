@@ -16,6 +16,7 @@ from typing import Optional
 from binaryninja import Activity, AnalysisContext, Workflow, log_info
 from binaryninja.interaction import show_plain_text_report
 
+from ..deadline import Deadline
 from ..flow.ranges import parse as parse_ranges
 from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
@@ -37,6 +38,7 @@ UNFLATTEN_ACTIVITY_NAME = "extension.binja_d810.unflatten"
 # analysis then never settles (v4.2, measured). Without it, unflattening follows the MLIL pass.
 UNFLATTEN_AFTER = "core.function.analyzeIndirectBranches"
 BASE_WORKFLOWS = ("core.function.metaAnalysis", "core.function.objectiveC")
+DISPATCH_RESERVE_SECONDS = 5.0
 
 _ACTIVITIES: list[Activity] = []  # keep callbacks alive
 _rules_override: Optional[list] = None
@@ -127,10 +129,26 @@ def _run(ctx, level: str) -> None:
     config = settings.engine_config(ctx)
     rules = _rules_override if _rules_override is not None else _rules(config.disabled_rules)
     allowance = _begin(ctx, config, level, il)
+    reserved = probe_seconds = probe_cpu = 0.0
+    if level == "mlil" and ctx.get_setting_bool(settings.UNFLATTEN) and allowance.remaining() >= 2:
+        started, cpu = time.monotonic(), time.thread_time()
+        remaining = allowance.remaining()
+        ranges, _ = parse_ranges(ctx.get_setting_string_list(settings.READ_ONLY_RANGES))
+        probe_deadline = allowance.deadline.earlier(Deadline.after(min(1.0, remaining / 20)))
+        if unflatten.has_table_dispatcher(il, func.view, deadline=probe_deadline, ranges=ranges):
+            reserved = min(DISPATCH_RESERVE_SECONDS, remaining / 4)
+        probe_seconds, probe_cpu = time.monotonic() - started, time.thread_time() - cpu
+    deadline = Deadline(allowance.deadline.at - reserved)
     make = MLILAdapter if level == "mlil" else HLILAdapter
-    adapter = make(il, config.limits.max_nodes, allowance.deadline)
+    adapter = make(il, config.limits.max_nodes, deadline)
     backends = _backends_override if _backends_override is not None else _backends()
-    report = simplify_function(adapter, rules, backends if config.tier2 else (), config, allowance.deadline)
+    report = simplify_function(adapter, rules, backends if config.tier2 else (), config, deadline)
+    report.reserved_seconds = reserved
+    report.dispatch_probe_seconds = probe_seconds
+    report.allowance_seconds += probe_seconds
+    report.total_seconds += probe_seconds
+    report.plan_seconds += probe_seconds
+    report.plan_cpu_seconds += probe_cpu
     changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
     allowance.charge(report.total_seconds)
     log.record(func, report, level)

@@ -27,7 +27,8 @@ And after (4 lines):
   number-theoretic ones like `7 * y * y - 1 != x * x`
 * Divisions that can never trap, like `2 / (x * x + 1)`
 * Jumps and calls through encoded tables of code pointers (Hikari-style indirect branches and
-  calls), and identity wrappers around them, when no visible code writes the table
+  calls), including jumps back into the same function, and identity wrappers around them,
+  when no visible code writes the table
 * Constants encoded against a global key that nothing in the binary writes, like
   `x ^ key ^ 0x3c1d`
 * Control-flow flattening: state machines driven by compare trees or jump tables, including
@@ -97,7 +98,9 @@ itself lives in a separate **extension** group that Binary Ninja creates.
 
 * **Time budget per function**: 20 s by default. Binary Ninja gives up on a function that takes
   too long to analyze, so when a binary is opened with D-810 on, its per-function limit is raised
-  to twice the budget.
+  to twice the budget. The passes share that allowance; jump-table dispatchers keep some time
+  for control-flow recovery. Table and type changes can trigger another analysis run, so total
+  time can exceed the budget.
 * **Generic MBA simplifier (Tier 2)**: the linear simplifier and CoBRA. Turn it off to use the
   rules only.
 * **Skipped functions** and **Disabled rules**: addresses and rule names to leave alone.

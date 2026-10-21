@@ -16,7 +16,7 @@ from binaryninja import ILSourceLocation, MediumLevelILFunction, MediumLevelILLa
 
 from ...ir.evaluate import evaluate
 from ...ir.expr import variables
-from ...unflatten.graph import Branch
+from ...unflatten.graph import Branch, Goto
 from ...unflatten.thread import Outcome, Plan, Thread
 from ..mlil.adapter import MLILAdapter
 from ..mlil.lift import lift
@@ -41,7 +41,7 @@ def rewrite(graph: MLILGraph, plan: Plan) -> MediumLevelILFunction:
             new.set_current_address(instr.address, block.arch)
             loc = ILSourceLocation.from_instruction(instr)
             last = i == block.end - 1
-            if last and instr.operation == Op.MLIL_GOTO and (b, "goto") in labels:
+            if last and (b, "goto") in labels and isinstance(graph.terminator(b), Goto):
                 new.append(new.goto(labels[(b, "goto")], loc), loc)
             elif last and instr.operation == Op.MLIL_IF and ((b, "true") in labels or (b, "false") in labels):
                 true = labels.get((b, "true")) or new.get_label_for_source_instruction(instr.true)

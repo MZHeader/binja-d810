@@ -66,6 +66,9 @@ def render(report: FunctionReport) -> str:
     lines.append(f"summary: folded {summary['folded']}; left {summary['left']}")
     if getattr(report, "constant_uses", 0):
         lines.append(f"constants into their uses: {report.constant_uses} reads")
+    if report.reserved_seconds:
+        lines.append(f"reserved {report.reserved_seconds:.3f} s for control-flow recovery and HLIL "
+                     f"(dispatcher check {report.dispatch_probe_seconds:.3f} s)")
     lines += [f"flow: {line}" for line in getattr(report, "flow", [])]
     lines += [f"unflatten: {line}" for line in getattr(report, "unflatten", [])]
     for r in report.rewrites:

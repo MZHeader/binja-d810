@@ -14,7 +14,7 @@ from ..semantic.verify import Verdict
 from .graph import Assign, Graph, Key, Phi, Undefined, key_of
 
 MAX_VALUES = 16
-MAX_WEB = 256
+MAX_WEB = 256  # nonconstant definitions explored; proven constants do not expand the search
 MAX_BOOLEANS = 3
 
 
@@ -33,16 +33,16 @@ class Values:
         sources all have the same static value. None inside a cycle."""
         if key in self._static:
             return self._static[key]
-        if key in self._active:
+        if key in self._active or self.deadline.expired():
             return None
         self._active.add(key)
         try:
             d = self.graph.definition(key)
             value = None
             if isinstance(d, Phi) and d.sources:
-                found = {self.static(s) for s in d.sources}
-                if len(found) == 1:
-                    value = found.pop()
+                first = self.static(d.sources[0])
+                if first is not None and all(self.static(s) == first for s in d.sources[1:]):
+                    value = first
             elif isinstance(d, Assign):
                 value = self.eval(d.expr, {})
         finally:
@@ -88,17 +88,21 @@ class Values:
 
     def _value_set(self, key: Key, cap: Optional[int], *, undefined: bool = False) -> Optional[frozenset[int]]:
         work, seen, out = [key], set(), set()
+        expanded = 0
         while work:
             k = work.pop()
             if k in seen:
                 continue
             seen.add(k)
-            if len(seen) > MAX_WEB or self.deadline.expired():
+            if self.deadline.expired():
                 return None
             value = self.static(k)
             if value is not None:
                 out.add(value)
             else:
+                expanded += 1
+                if expanded > MAX_WEB:
+                    return None
                 d = self.graph.definition(k)
                 if isinstance(d, Phi):
                     work.extend(d.sources)

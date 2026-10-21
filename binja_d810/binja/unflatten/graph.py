@@ -227,9 +227,20 @@ class MLILGraph:
         if last.operation == Op.MLIL_IF:
             return [(self._at[last.true], "true"), (self._at[last.false], "false")]
         if last.operation == Op.MLIL_JUMP_TO:
+            target = self._constant_jump(last)
+            if target is not None:
+                return [(target, "goto")]
             return [(b, "jump") for b in dict.fromkeys(self._at[i] for i in last.targets.values())]
         # Anything else that still has successors (a fall-through): an undecided jump, never rewritten.
         return [(b, "jump") for b in dict.fromkeys(e.target.index for e in block.outgoing_edges)]
+
+    def _constant_jump(self, instr) -> Optional[int]:
+        """A resolved jump with a literal destination matching its sole target is an ordinary goto.
+        A target annotation alone does not establish the destination or make evaluating it effect-free."""
+        if instr.dest.operation not in (Op.MLIL_CONST, Op.MLIL_CONST_PTR) or len(instr.targets) != 1:
+            return None
+        target = instr.targets.get(instr.dest.constant)
+        return None if target is None else self._at.get(target)
 
     def _step(self, si) -> Step:
         if si.operation == Op.MLIL_NOP:
@@ -284,6 +295,9 @@ class MLILGraph:
         if last.operation == Op.MLIL_IF:
             return Branch(self._condition(si), self._at[last.true], self._at[last.false])
         if last.operation == Op.MLIL_JUMP_TO:
+            target = self._constant_jump(last)
+            if target is not None:
+                return Goto(target)
             return self._jump(si, {address: self._at[i] for address, i in last.targets.items()})
         edges = self._edges(block)
         return Jump(None, {}, {i: b for i, (b, _) in enumerate(edges)}) if edges else Stop()

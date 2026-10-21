@@ -97,6 +97,8 @@ class FunctionReport:
     slowest: list = field(default_factory=list)  # [(address, seconds, nodes, outcome)], at most 5, slowest first
     overrun_seconds: float = 0.0
     total_seconds: float = 0.0
+    reserved_seconds: float = 0.0  # MLIL allowance held for the later control-flow and HLIL passes
+    dispatch_probe_seconds: float = 0.0  # included in planning/total: checking for a table dispatcher
 
     def assurance(self) -> Counter:
         return Counter(r.verdict for r in self.rewrites)

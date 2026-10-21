@@ -4,14 +4,48 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from binaryninja import MediumLevelILOperation as Op
+
 from ...deadline import Deadline
-from ...unflatten.thread import plan
+from ...unflatten.thread import MIN_STATES, _terminator_keys, plan
+from ...unflatten.values import Values
 from . import junk, rewrite, selfcall, splice
 from .graph import MLILGraph
 
 MAX_ROUNDS = 4
 GROWTH = 4  # a round is not applied when the function would grow past max(GROWTH x original, original + slack)
 GROWTH_SLACK = 2048
+
+
+def has_table_dispatcher(mlil, view, *, deadline: Deadline, ranges=()) -> bool:
+    """A bounded preflight for reserving time after MBA: a jump table on a cycle reads constant-only state.
+    This does not change the IL or accept a rewrite; the ordinary planner must still prove its threads.
+    """
+    blocks = []
+    for block in mlil.basic_blocks:
+        if deadline.expired():
+            return False
+        last = mlil[block.end - 1]
+        if last.operation == Op.MLIL_JUMP_TO and len(last.targets) >= MIN_STATES:
+            blocks.append(block.index)
+    if not blocks:
+        return False
+    graph = MLILGraph(mlil, view=view, ranges=ranges)
+    values = Values(graph, deadline)
+    for block in blocks:
+        if deadline.expired():
+            return False
+        if not any(values.only_constants(k) for k in _terminator_keys(graph.terminator(block))):
+            continue
+        work, seen = [e.source for e in graph.preds(block)], set()
+        while work and not deadline.expired():
+            pred = work.pop()
+            if pred == block:
+                return True
+            if pred not in seen:
+                seen.add(pred)
+                work.extend(e.source for e in graph.preds(pred))
+    return False
 
 
 def _looped(mlil, view, ranges, deadline: Deadline):

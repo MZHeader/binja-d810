@@ -31,5 +31,16 @@ done
 clang -target i686-linux-gnu -c "$HERE/src/partial_i686.S" -o "$OUT/partial_i686.o"
 ld.lld -shared -o "$OUT/partial_i686.so" "$OUT/partial_i686.o"
 clang -arch arm64 -shared -o "$OUT/shifts_arm64.dylib" "$HERE/src/shifts_arm64.S"
+# Internal branches misclassified as tail calls, plus actual-call and writable-table controls.
+clang -arch arm64 -shared -o "$OUT/internal_branches.dylib" "$HERE/src/internal_branches.S"
+clang -target x86_64-linux-gnu -fPIC -c "$HERE/src/internal_branches.S" -o "$OUT/internal_branches_x86_64.o"
+ld.lld -shared -o "$OUT/internal_branches_x86_64.so" "$OUT/internal_branches_x86_64.o"
+for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
+  id="$([ "$target" = x86_64-pc-windows-msvc ] && echo x86_64-pe || echo i686-pe)"
+  clang -target "$target" -c "$HERE/src/internal_branches.S" -o "$OUT/internal_branches_$id.obj"
+  lld-link /dll /noentry /nodefaultlib /safeseh:no /export:internal_branch /export:internal_call \
+    /export:written_internal_branch /export:set_internal_pointer \
+    /out:"$OUT/internal_branches_$id.dll" "$OUT/internal_branches_$id.obj" >/dev/null
+done
 rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
 ls "$OUT"

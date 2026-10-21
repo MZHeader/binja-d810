@@ -252,6 +252,11 @@ def after_pass(view, func, adapter, report) -> bool:
     for site, instr in collect.scan(adapter.mlil, Deadline.after(collect.SCAN_SECONDS), read):
         if site.target is not None:
             site = replace(site, trusted=trusted(view, site))
+            if site.internal_jump:
+                # Restore the native branch's CFG edge while its table reads still provide provenance.
+                # Replacing a tail call's target expression would leave its incorrect call semantics.
+                enqueue(view, site)
+                continue
             if site.trusted:
                 target = _direct(site, instr, read, code)
                 if target is not None:
@@ -309,10 +314,31 @@ def _rewrite(adapter, rewrites) -> None:
 
 
 def branches_for(view, function: int) -> list[tuple[int, list[int]]]:
-    """(jump address, targets) for each jump of `function` with recorded targets."""
+    """Recorded targets, dropping internal edges whose supporting memory facts have changed."""
     state = state_of(view)
     with state.lock:
-        return state.record.branches_of(function)
+        changes = [c for c in state.record.changes() if c.kind == "branches" and c.detail["function"] == function]
+    if not changes:
+        return []
+    read, expired = evidence.reader(view), False
+    func = view.get_function_at(function)
+    for change in changes:
+        instruction = change.detail.get("instruction")
+        same_code = instruction is None or (func is not None and func.arch.name == instruction["arch"]
+            and view.read(change.key, len(instruction["bytes"])) == bytes(instruction["bytes"]))
+        if same_code and all(evidence.constant_data(view, address, address + size) and read(address, size) == value
+                             for address, size, value in change.detail.get("reads", [])):
+            continue
+        with state.lock:
+            if state.record.get("branches", change.key) is change:
+                state.record.drop("branches", change.key)
+                state.decided.pop(function, None)
+                state.recount()
+                expired = True
+    if expired:
+        _arm(view, state)  # persist the record and release signatures no longer claimed by an edge
+    with state.lock:
+        return [(c.key, list(c.detail["targets"])) for c in changes if state.record.get("branches", c.key) is c]
 
 
 def restore_inline(func) -> None:
@@ -500,6 +526,9 @@ def decide(work: Round, site) -> None:
         work.note(site.function, f"{site.address:#x}: skipped: {why}")
         return
     code = work.code(func)
+    if site.internal_jump and not collect.internal_jump(func, site.address, decoded.targets):
+        work.note(site.function, f"{site.address:#x}: skipped: no longer an internal machine jump")
+        return
     if site.kind == "jump":
         problem = jump_problem(decoded.targets, site.function, code)
     else:
@@ -515,7 +544,8 @@ def decide(work: Round, site) -> None:
                 return
         for load, span in zip(site.target.loads, decoded.spans):
             _type_table(work, site, load, span, decoded.targets)
-    if site.kind == "jump" and site.trusted and not is_tail_call(decoded.targets, site.function, code) \
+    resolved = site.trusted or (site.internal_jump and trusted(work.view, site))
+    if site.kind == "jump" and resolved and not is_tail_call(decoded.targets, site.function, code) \
             and not is_self_call(decoded.targets, site.function):
         _record_branches(work, site, decoded.targets)
     if site.kind == "call":
@@ -638,6 +668,21 @@ def _record_branches(work: Round, site, targets) -> None:
         work.add(Change("branches", site.address, claims={site.function}))
         return
     targets = sorted(set(targets))
-    work.add(Change("branches", site.address, {"function": site.function, "targets": targets}, [], {site.function}))
+    detail = {"function": site.function, "targets": targets}
+    if site.internal_jump:
+        func = work.view.get_function_at(site.function)
+        code = None if func is None else collect.branch_instruction(func, site.address)
+        if code is None:
+            work.note(site.function, f"{site.address:#x}: skipped: no longer a machine jump")
+            return
+        reads = {(address, load.size): work.read(address, load.size)
+                 for load in site.target.loads for address in load.addresses}
+        checked, _ = decode(site.target.expr, site.target.loads, lambda address, size: reads.get((address, size)))
+        if checked is None or sorted(set(checked.targets)) != targets:
+            work.note(site.function, f"{site.address:#x}: skipped: supporting data changed")
+            return
+        detail["reads"] = [[address, size, value] for (address, size), value in sorted(reads.items())]
+        detail["instruction"] = {"arch": func.arch.name, "bytes": list(code)}
+    work.add(Change("branches", site.address, detail, [], {site.function}))
     work.touched.add(site.function)
     work.note(site.function, f"{site.address:#x}: jump targets " + ", ".join(f"{t:#x}" for t in targets))

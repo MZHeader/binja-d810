@@ -7,10 +7,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
-from binaryninja import MediumLevelILOperation as Op
+from binaryninja import LowLevelILFunction, LowLevelILOperation as LowOp, MediumLevelILOperation as Op
 
 from ...deadline import Deadline
-from ...flow.tables import Load, Read, addresses_from
+from ...flow.tables import Load, Read, addresses_from, decode
 from ...flow.uses import encodes, reaches_target
 from ...ir.evaluate import evaluate
 from ...ir.expr import BinOp, Const, Expr, Var, variables
@@ -22,6 +22,7 @@ from . import evidence
 JUMPS = frozenset({Op.MLIL_JUMP, Op.MLIL_JUMP_TO})
 CALLS = frozenset({Op.MLIL_CALL_SSA, Op.MLIL_TAILCALL_SSA, Op.MLIL_CALL_UNTYPED_SSA, Op.MLIL_TAILCALL_UNTYPED_SSA})
 _DIRECT_CALLS = frozenset({Op.MLIL_CALL_SSA, Op.MLIL_CALL_UNTYPED_SSA})
+_TAIL_CALLS = CALLS - _DIRECT_CALLS
 _CONSTANTS = frozenset({Op.MLIL_CONST, Op.MLIL_CONST_PTR})
 _LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
 KEY_BYTES = 8  # v4.3 spec 3.2: a key is at most this wide
@@ -48,10 +49,11 @@ class Site:
     trusted: bool = False  # every table const or read-only when collected (set by apply.after_pass)
     data: Optional[int] = None  # a key's address
     size: int = 0  # a key's width in bytes
+    internal_jump: bool = False  # a machine jump into this function that MLIL represents as a tail call
 
     @property
     def key(self) -> tuple:
-        return self.function, self.address, self.kind, self.trusted, self.data
+        return self.function, self.address, self.kind, self.trusted, self.data, self.internal_jump
 
 
 def _is_load(leaf: Var) -> bool:
@@ -207,6 +209,37 @@ def _wrapper(view, call, uses: evidence.Uses) -> Optional[int]:
     return callee.start if reaches_target(readers, uses) else None
 
 
+def branch_instruction(func, address: int) -> Optional[bytes]:
+    """The bytes of an indirect machine jump, lifted afresh without analysis rewriting its control flow."""
+    try:
+        data = func.view.read(address, func.arch.max_instr_length)
+        info = func.arch.get_instruction_info(data, address)
+        if info is None or not 0 < info.length <= len(data):
+            return None
+        il = LowLevelILFunction(func.arch)
+        # This API can return None for a block-ending jump while still emitting its IL.
+        func.arch.get_instruction_low_level_il(data, address, il)
+        ops = {il[i].operation for i in range(len(il))}
+        if LowOp.LLIL_JUMP in ops and not ops & {LowOp.LLIL_CALL, LowOp.LLIL_CALL_STACK_ADJUST}:
+            return data[:info.length]
+    except Exception:  # no machine-level branch evidence
+        pass
+    return None
+
+
+def internal_jump(func, address: int, targets) -> bool:
+    """A machine jump whose targets are internal to this function, not function entries.
+
+    MLIL may call an unresolved BR/JMP a tail call. Only the machine instruction can establish that no
+    call instruction executes here; a call followed by a return must retain its call semantics.
+    """
+    if not targets or any(func.view.get_function_at(t) is not None
+                          or func.start not in {f.start for f in func.view.get_functions_containing(t)}
+                          for t in targets):
+        return False
+    return branch_instruction(func, address) is not None
+
+
 def scan(mlil, deadline: Deadline, read: Read) -> Iterator[tuple[Site, object]]:
     """Each site in a function's MLIL, with its SSA instruction: an unresolved jump, a jump resolved to one target,
     or a call, whose target reads tables; and a call to a possible identity wrapper."""
@@ -226,7 +259,12 @@ def scan(mlil, deadline: Deadline, read: Read) -> Iterator[tuple[Site, object]]:
             continue
         target, _ = target_of(instr, deadline, read)
         if target is not None:
-            yield Site(func.start, instr.address, "jump" if op in JUMPS else "call", target), instr
+            internal = False
+            if op in _TAIL_CALLS:
+                decoded, _ = decode(target.expr, target.loads, read)
+                internal = decoded is not None and internal_jump(func, instr.address, decoded.targets)
+            yield Site(func.start, instr.address, "jump" if op in JUMPS or internal else "call", target,
+                       internal_jump=internal), instr
 
 
 def _loads_in(instr) -> Iterator:

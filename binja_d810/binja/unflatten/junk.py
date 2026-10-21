@@ -3,10 +3,11 @@
 Over the graph model (MLILGraph), a loop is junk when its body only computes values (no load, store or call),
 exactly one value is carried round it (one phi at its header that the body reads), each iteration adds an odd
 constant to that value, and its only exit is an equality test of the value plus a constant (or of its low bits)
-against something the loop does not write. Adding an odd constant meets every value of the counter's width
-within that many steps, so the loop ends; nothing it computes is read after it, and no variable it writes has
-its address taken, so ending it at once changes nothing but time. In a copy of the MLIL, its header becomes a
-goto to its exit. A loop is at most MAX_BLOCKS blocks of MAX_INSTRUCTIONS instructions.
+against something the loop does not write. No loop lies inside it and the test's block dominates its back
+edge, so each iteration ends having stepped and tested once. Adding an odd constant meets every value of the
+counter's width within that many steps, so the loop ends; nothing it computes is read after it, and no variable
+it writes has its address taken, so ending it at once changes nothing but time. In a copy of the MLIL, its header
+becomes a goto to its exit. A loop is at most MAX_BLOCKS blocks of MAX_INSTRUCTIONS instructions.
 """
 
 from __future__ import annotations
@@ -26,8 +27,9 @@ _ADDRESSES = frozenset({Op.MLIL_ADDRESS_OF, Op.MLIL_ADDRESS_OF_FIELD})
 
 def loops(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
     """(the copy with each junk loop's header turned into a goto to its exit, how many), or None."""
-    back = [(e.source.index, e.target.index) for block in mlil.basic_blocks for e in block.outgoing_edges
-            if e.back_edge and e.target in e.source.dominators]
+    cycles = [(e.source.index, e.target.index, e.target in e.source.dominators) for block in mlil.basic_blocks
+              for e in block.outgoing_edges if e.back_edge]
+    back = [(latch, header) for latch, header, natural in cycles if natural]
     if not back:
         return None
     graph = MLILGraph(mlil, view=view, ranges=())
@@ -36,6 +38,8 @@ def loops(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
         if header in exits:
             continue
         body = _body(graph, header, latch)
+        if body is not None and any(s in body and (s, t) != (latch, header) for s, t, _ in cycles):
+            continue  # a loop inside it: an iteration need not end
         exit = None if body is None else _junk(graph, mlil, header, latch, body)
         if exit is not None:
             exits[header] = exit
@@ -93,11 +97,14 @@ def _junk(graph: MLILGraph, mlil, header: int, latch: int, body: set[int]) -> Op
             outside = [t for t in (term.true, term.false) if t not in body]
             exits += outside
             if outside:
-                test = (term, outside[0])
+                test = (term, outside[0], b)
         elif not isinstance(term, Goto):
             return None
     if len(exits) != 1 or test is None:
         return None
+    branch, exit, at = test
+    if graph.il_block(at) not in graph.il_block(latch).dominators:
+        return None  # an iteration may not test
     carried = [k for k in graph.phis(header) if _read_in(graph, k, body)]
     if len(carried) != 1:
         return None
@@ -106,7 +113,6 @@ def _junk(graph: MLILGraph, mlil, header: int, latch: int, body: set[int]) -> Op
     step = None if source is None else graph.definition(source)
     if not isinstance(step, Assign) or not _stepped(step.expr, counter, graph.width(counter)):
         return None
-    branch, exit = test
     if not _meets(branch, exit, counter, graph, body):
         return None
     written = _written(graph, header, body)

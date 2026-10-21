@@ -37,3 +37,29 @@ EXPORT int junk_even(int x) {
     do { i += 0x2f1au; B(i); } while (i != 0x5d3a71c4u);
     return mark(6);
 }
+
+// The exit test runs only on the iterations an opaque copy of the counter lets it; the body holds a loop of its
+// own. An odd step alone does not end either.
+EXPORT int junk_skip(int x) {
+    mark(7);
+    uint32_t i = (uint32_t)x;
+    for (;;) {
+        i += 0x2f1bu;
+        uint32_t j = i;
+        B(j);
+        if (!(j & 0x100u) && i == 0x5d3a70c4u) break;
+        B(i);
+    }
+    return mark(8);
+}
+
+EXPORT int junk_inner(int x) {
+    mark(9);
+    uint32_t i = (uint32_t)x;
+    do {
+        i += 0x2f1bu;
+        uint32_t k = i;
+        do { k += 0x2u; B(k); } while (k != 0x11u);
+    } while (i != 0x5d3a71c4u);
+    return mark(10);
+}

@@ -1,6 +1,6 @@
 """v4.3: junk loops (tests/samples/src/loops.c), on 8 builds: a loop that only steps its own counter by an odd
 amount until it meets a value, with the counter unread after it, is removed; one whose counter is read after it,
-or whose step is even, stays."""
+whose step is even, whose exit test is skipped on some iterations, or whose body holds a loop, stays."""
 
 import pytest
 from arch import IDS, MATRIX, sample
@@ -9,7 +9,8 @@ from helpers import function_named, marks, open_sample, settle
 
 from binja_d810.binja import log
 
-STEPS = {"junk_loop": "0x2f1b", "junk_read": "0x2f1b", "junk_even": "0x2f1a"}  # what each fixture loop adds
+STEPS = {"junk_loop": "0x2f1b", "junk_read": "0x2f1b", "junk_even": "0x2f1a", "junk_skip": "0x2f1b",
+         "junk_inner": "0x2f1b"}  # what each fixture loop adds
 
 
 @pytest.fixture(scope="module", params=MATRIX, ids=IDS)
@@ -36,7 +37,7 @@ def test_a_loop_that_only_steps_its_counter_is_removed(builds):
     assert any("junk loop" in line for line in _lines(func)), _lines(func)
 
 
-@pytest.mark.parametrize("name", ["junk_read", "junk_even"])
+@pytest.mark.parametrize("name", ["junk_read", "junk_even", "junk_skip", "junk_inner"])
 def test_a_loop_whose_counter_is_read_or_may_not_end_stays(builds, name):
     _, on, _ = builds
     func = function_named(on, name)

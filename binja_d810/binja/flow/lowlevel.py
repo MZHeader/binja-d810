@@ -34,8 +34,15 @@ class Uses:
         cc = func.calling_convention
         if cc is not None:
             self.return_regs.update(r for r in (cc.int_return_reg, cc.high_int_return_reg) if r is not None)
-        self.has_return = any(i.operation == Op.LLIL_RET for i in self.ssa.instructions)
+        self._has_return = None
         self.object = None  # (start, end) while read_only asks about it
+        self.only_outside = False
+
+    @property
+    def has_return(self):
+        if self._has_return is None:
+            self._has_return = any(i.operation == Op.LLIL_RET for i in self.ssa.instructions)
+        return self._has_return
 
     def index(self, statement):
         if statement.expr_index in self.indexed:
@@ -68,6 +75,8 @@ class Uses:
                 return kind + "_outside"
             if kind in _ARITHMETIC and self._past(instr):
                 return "address_outside"
+        if self.only_outside and kind == "load":
+            return "unknown"  # a possible read of the changed bytes must still be reanalyzed
         return kind
 
     def _misses(self, instr, kind) -> bool:
@@ -113,7 +122,7 @@ class Uses:
         for reg in self.definitions.get(node, []):
             # LLIL RET does not list the function's returned registers as explicit operands. Do not
             # mistake a returned address for a dead value, even if it also fed a load along the way.
-            if self.has_return and (not self.return_regs or reg.reg.name in self.return_regs):
+            if (not self.return_regs or reg.reg.name in self.return_regs) and self.has_return:
                 return [-1]
             for use in self.ssa.get_ssa_reg_uses(reg):
                 self.index(use)
@@ -126,6 +135,17 @@ class Uses:
             return self._read_only(address, start, end)
         finally:
             self.object = None
+
+    def outside(self, address: int, first: int, start: int, end: int) -> bool:
+        """Every use of this reference stays outside the changed bytes. Unknown addresses, escapes,
+        missing uses and overlapping reads all fail this proof, so their functions remain affected.
+        `first` includes references to a containing object's base, before the changed span.
+        """
+        self.object, self.only_outside = (start, end), True
+        try:
+            return self._read_only(address, first, end)
+        finally:
+            self.object, self.only_outside = None, False
 
     def _read_only(self, address: int, start: int, end: int) -> bool:
         starts = set()

@@ -73,6 +73,14 @@ class Uses:
         except Exception:  # no usable LLIL evidence
             return False
 
+    def reference_outside(self, address: int, first: int, start: int, end: int) -> bool:
+        try:
+            if self._lowlevel is None:
+                self._lowlevel = lowlevel.Uses(self.ssa.source_function)
+            return self._lowlevel.outside(address, first, start, end)
+        except Exception:
+            return False
+
     def index(self, statement) -> None:
         if statement.expr_index in self.indexed:
             return
@@ -315,6 +323,26 @@ def pointer_use(view, address: int, uses_of: Callable) -> bool:
 def referencing(view, start: int, end: int) -> set[int]:
     """The starts of the functions with a code reference into [start, end): reanalyzed after a retype."""
     return {ref.function.start for ref in view.get_code_refs(start, end - start) if ref.function is not None}
+
+
+def affected_readers(view, first: int, start: int, end: int, uses_of: Callable,
+                     deadline: Deadline) -> set[int]:
+    """Readers to refresh after typing [start, end). A containing object's references are candidates,
+    but a proven access to other bytes needs no refresh. Uncertainty or an expired budget keeps the reader.
+    The wider range is still used by the independent write/escape proof.
+    """
+    affected = set()
+    for ref in view.get_code_refs(first, end - first):
+        func = ref.function
+        if func is None or func.start in affected:
+            continue
+        if deadline.expired():
+            affected.add(func.start)
+            continue
+        uses = uses_of(func)
+        if uses is None or not uses.reference_outside(ref.address, first, start, end):
+            affected.add(func.start)
+    return affected
 
 
 def data_vars(view, start: int, end: int) -> list:

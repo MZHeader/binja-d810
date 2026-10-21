@@ -5,6 +5,7 @@ from flowcases import KEY
 from helpers import data_pointers, function_named, open_sample
 
 from binja_d810.binja.flow import evidence, lowlevel
+from binja_d810.deadline import Deadline
 from binja_d810.flow.uses import READ, classify
 
 
@@ -142,6 +143,39 @@ def test_an_unused_load_has_read_only_lowlevel_evidence(bv):
     assert all(uses.reference_read_only(r.address, key, key + 8) for r in refs)
 
 
+def test_lowlevel_reference_setup_does_not_scan_the_whole_function(bv):
+    from types import SimpleNamespace
+
+    func = function_named(bv, "escaped_offset")
+    ssa = func.llil.ssa_form
+
+    class CountingSSA:
+        visited = 0
+
+        def __getattr__(self, name):
+            return getattr(ssa, name)
+
+        @property
+        def instructions(self):
+            for statement in ssa.instructions:
+                self.visited += 1
+                yield statement
+
+    counted = CountingSSA()
+
+    class Function:
+        llil = SimpleNamespace(ssa_form=counted)
+
+        def __getattr__(self, name):
+            return getattr(func, name)
+
+    uses = lowlevel.Uses(Function())
+    assert counted.visited == 0
+    assert uses.has_return
+    visited = counted.visited
+    assert visited > 0 and uses.has_return and counted.visited == visited
+
+
 def test_an_address_folded_to_a_later_entry_has_lowlevel_evidence(bv):
     func = function_named(bv, "tbl_call_const")
     target = function_named(bv, "f_b").start
@@ -153,6 +187,33 @@ def test_an_address_folded_to_a_later_entry_has_lowlevel_evidence(bv):
     uses = evidence.Uses(func.mlil.ssa_form)
     assert not uses.constants_in(base, base + 8)
     assert all(uses.reference_read_only(r.address, base, base + 8) for r in refs)
+
+
+def test_retyping_one_entry_does_not_refresh_readers_of_a_different_entry(bv):
+    func = function_named(bv, "tbl_call_const")
+    target = function_named(bv, "f_b").start
+    entry = next(a for a in data_pointers(bv, func) if bv.read_int(a, 8, False) - KEY == target)
+    base = entry - 8
+    uses = {}
+
+    def uses_of(f):
+        if f.start not in uses:
+            uses[f.start] = evidence.Uses(f.mlil.ssa_form)
+        return uses[f.start]
+
+    assert func.start in evidence.referencing(bv, base, base + 8)
+    assert func.start not in evidence.affected_readers(bv, base, base, base + 8, uses_of, Deadline.after(5))
+    assert func.start in evidence.affected_readers(bv, base, entry, entry + 8, uses_of, Deadline.after(5))
+    assert func.start in evidence.affected_readers(bv, base, base, base + 8, uses_of, Deadline.after(0))
+
+
+@pytest.mark.parametrize("name, owner", [("written_call", "written_store"), ("escaped_call", "escaped_call"),
+                                        ("tbl_jump_var", "tbl_jump_var")])
+def test_uncertain_or_overlapping_uses_still_need_refresh(bv, name, owner):
+    first = _table(bv, name)
+    func = function_named(bv, owner)
+    uses = lambda f: evidence.Uses(f.mlil.ssa_form)
+    assert func.start in evidence.affected_readers(bv, first, first, first + 16, uses, Deadline.after(5))
 
 
 @pytest.mark.parametrize("name, owner", [("written_call", "written_store"), ("escaped_call", "escaped_call")])

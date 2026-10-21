@@ -615,7 +615,8 @@ def _type_table(work: Round, site, load, span, targets) -> None:
         return
     first = evidence.object_start(view, span.start, load.base, work.uses_of)
     previous = [[v.address, evidence.type_text(v.type)] for v in evidence.data_vars(view, span.start, span.end)]
-    readers = evidence.referencing(view, first, span.end) | {site.function}
+    readers = evidence.affected_readers(view, first, span.start, span.end, work.uses_of,
+                                       Deadline.after(1.0)) | {site.function}
     symbols = [[s.address, s.raw_name] for s in view.get_symbols(span.start, span.end - span.start)]
     evidence.define_type(view, span.start, t)
     targets = sorted(set(targets))

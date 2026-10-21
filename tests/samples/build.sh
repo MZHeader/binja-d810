@@ -42,5 +42,18 @@ for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
     /export:written_internal_branch /export:set_internal_pointer \
     /out:"$OUT/internal_branches_$id.dll" "$OUT/internal_branches_$id.obj" >/dev/null
 done
+# Outlined dispatchers carrying a callback in an undeclared register.
+clang -arch arm64 -shared -o "$OUT/entry_outlined.dylib" "$HERE/src/entry_outlined.S"
+clang -target x86_64-linux-gnu -fPIC -c "$HERE/src/entry_outlined.S" -o "$OUT/entry_outlined_x86_64.o"
+ld.lld -shared -Bsymbolic -o "$OUT/entry_outlined_x86_64.so" "$OUT/entry_outlined_x86_64.o"
+for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
+  id="$([ "$target" = x86_64-pc-windows-msvc ] && echo x86_64-pe || echo i686-pe)"
+  clang -target "$target" -c "$HERE/src/entry_outlined.S" -o "$OUT/entry_outlined_$id.obj"
+  lld-link /dll /noentry /nodefaultlib /safeseh:no \
+    /export:entry_dispatch /export:entry_h1 /export:entry_h2 /export:entry_h3 /export:entry_forward \
+    /export:volatile_dispatch /export:volatile_h1 /export:volatile_h2 /export:volatile_h3 \
+    /export:clobber_dispatch /export:clobber_h1 /export:clobber_h2 /export:clobber_h3 \
+    /out:"$OUT/entry_outlined_$id.dll" "$OUT/entry_outlined_$id.obj" >/dev/null
+done
 rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
 ls "$OUT"

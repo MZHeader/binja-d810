@@ -6,9 +6,9 @@ In a copy of the MLIL, each call to a handler in tail position (a tail call, or 
 return through copies only) becomes the handler's parameters taking the call's arguments, then the handler's own
 MLIL; its calls back to the dispatcher are then self calls in tail position (selfcall). A variable keeps its
 identifier, so a handler's variables may share the dispatcher's: nothing of the dispatcher is live after such a
-call, and neither function reads a variable other than its parameters before writing it (a dispatcher that does
-has none spliced: a handler may leave another value in that register or slot). A handler is copied, not moved:
-other callers keep calling it.
+call. A handler must not read undeclared entry values. A dispatcher's undeclared register inputs require native
+preservation evidence and disjoint handler storage; unmodeled frame/stack state still rejects. A handler is
+copied, not moved: other callers keep calling it.
 
 A handler is a function called at a constant address with at most SPLICE_INSTRUCTIONS of MLIL and no jump table,
 which ends only in returns and tail calls and calls the dispatcher (or a forwarder to it). A function with more
@@ -19,11 +19,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from binaryninja import (ILSourceLocation, MediumLevelILFunction, MediumLevelILLabel, MediumLevelILOperation as Op,
-                         SSAVariable)
+from binaryninja import ILSourceLocation, MediumLevelILFunction, MediumLevelILLabel, MediumLevelILOperation as Op
 
 from ..flow.apply import read_by
-from . import selfcall
+from . import entry, selfcall
 
 SPLICE_INSTRUCTIONS = 256  # MLIL instructions in a handler
 MAX_HANDLERS = 64  # distinct handlers spliced into one function
@@ -34,7 +33,7 @@ _TARGETED = frozenset({Op.MLIL_JUMP_TO})  # instructions naming blocks other tha
 def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
     """(the copy, the number of distinct handlers spliced into it), or None when the function has none."""
     func = mlil.source_function
-    checked_entry = False
+    context = None
     found: dict[int, object] = {}
     forwards: dict[int, bool] = {}
     sites: dict[int, tuple[object, list]] = {}
@@ -48,12 +47,14 @@ def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
         target = instr.dest.constant
         if target == func.start:
             continue  # selfcall handles these; they are not separate handlers
-        if not checked_entry:
-            if _reads_entry(mlil, func.parameter_vars):
-                return None  # no handler can be copied safely over this unmodeled caller context
-            checked_entry = True
+        if context is None:
+            context = entry.Preserved(mlil, func.parameter_vars)
+            if not context.supported:
+                return None
+        if not context.at(func, instr.address):
+            continue
         if target not in found:
-            found[target] = _handler(view, target, func, forwards)
+            found[target] = _handler(view, target, func, forwards, context)
         callee = found[target]
         if callee is None:
             continue
@@ -85,7 +86,7 @@ def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
     return new, count
 
 
-def _handler(view, target: int, func, forwards: dict[int, bool]):
+def _handler(view, target: int, func, forwards: dict[int, bool], context=None):
     """The function at `target` when it is one of the dispatcher's handlers, else None."""
     if _back(view, target, func.start, forwards):
         return None  # the dispatcher itself or a forwarder to it: selfcall's
@@ -103,11 +104,18 @@ def _handler(view, target: int, func, forwards: dict[int, bool]):
             if instr.dest.operation not in selfcall._CONSTANTS:
                 indirect = True
             else:
-                back = back or _back(view, instr.dest.constant, func.start, forwards)
+                returns = _back(view, instr.dest.constant, func.start, forwards)
+                if returns and instr.dest.constant != func.start and context is not None and context.registers:
+                    forwarder = view.get_function_at(instr.dest.constant)
+                    if forwarder is None or forwarder.mlil is None or not context.by(forwarder.mlil):
+                        return None
+                back = back or returns
     if indirect:
         read_by(view, target, func.start)  # a flow fix may resolve it back to the dispatcher
     if not back or _reads_entry(mlil, callee.parameter_vars):
         return None  # an entry value of its own is the dispatcher's register or slot, not this variable's
+    if context is not None and not context.by(mlil):
+        return None
     return callee
 
 
@@ -120,22 +128,7 @@ def _back(view, target: int, start: int, forwards: dict[int, bool]) -> bool:
 def _reads_entry(mlil, params) -> bool:
     """The function reads a variable other than its parameters before writing it: its entry version reaches a
     use other than a phi, through phis (Binary Ninja keeps phis of variables dead at the merge)."""
-    own = {p.identifier for p in params}
-    ssa = mlil.ssa_form
-    for var in mlil.vars:
-        if var.identifier in own:
-            continue
-        work, seen = [SSAVariable(var, 0)], set()
-        while work:
-            version = work.pop()
-            if version in seen:
-                continue
-            seen.add(version)
-            for use in ssa.get_ssa_var_uses(version):
-                if use.operation != Op.MLIL_VAR_PHI:
-                    return True
-                work.append(use.dest)
-    return False
+    return next(entry.variables(mlil, params), None) is not None
 
 
 def _append_body(new, mlil, loc) -> None:

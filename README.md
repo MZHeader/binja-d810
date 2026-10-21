@@ -35,7 +35,8 @@ And after (4 lines):
   nested loops, and machines split across functions, where the dispatcher calls itself for the
   next state or calls a small function per state that returns through a stub back to it. Large
   handlers and their loops stay in place while the dispatcher is removed. Self-calls and outlined
-  handlers can be recovered together, including dispatchers with large argument lists
+  handlers can be recovered together, including dispatchers with large argument lists and
+  undeclared register inputs that the handlers provably preserve
 * Junk loops that only count a variable up to some value and then throw it away
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 
@@ -124,7 +125,8 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   or kept in two places at once. Machines that compute their next state are left alone.
 * State functions pulled into their dispatcher are copied, not moved, so they're still there for
   anything else that calls them. Unoptimized builds that widen a state function's result on the
-  way out keep their calls.
+  way out keep their calls. Unmodeled stack/frame inputs and clobbered hidden registers also
+  keep their calls.
 * Table resolution checks the decoded targets and any visible writes to the table, but it can't
   see changes made by a loader. The debug report says why a table was rejected.
 

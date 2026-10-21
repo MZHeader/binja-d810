@@ -241,6 +241,24 @@ def test_a_handler_without_side_effects_stays_on_the_path():
     assert threads[2].outcome.path == (9, 1, 5, 3, 9, 1, 5, 6) and threads[2].outcome.dest == 4
 
 
+def test_a_large_pure_handler_is_reached_without_copying_its_body():
+    spec = _tree()
+    spec[2]["do"] = [f"t#{i} = {i}" for i in range(1, MAX_COPIED + 2)] + [f"s#3 = {B:#x}"]
+    found = _by_pred(plan(toy(spec)))
+    assert found[0].outcome.path == (1,) and found[0].outcome.dest == 2
+
+
+def test_a_pure_handler_loop_is_left_in_place_after_the_dispatcher():
+    spec = _tree()
+    spec[2] = {"do": ["i#1 = 0"], "goto": 11}
+    spec[11] = {"phi": {"i#2": {2: "i#1", 12: "i#3"}}, "if": ("i#2 u< 100", 12, 13)}
+    spec[12] = {"do": ["i#3 = i#2 + 1"], "goto": 11}
+    spec[13] = {"do": [f"s#3 = {B:#x}"], "goto": 9}
+    spec[9]["phi"]["s#9"] = {13: "s#3", 3: "s#4", 4: "s#5"}
+    found = _by_pred(plan(toy(spec)))
+    assert found[0].outcome.path == (1, 2) and found[0].outcome.dest == 11
+
+
 def test_at_most_eight_side_effects_are_copied_before_the_dispatcher():
     kept = plan(toy(_tree(latch=["!"] * MAX_DUP)))
     dropped = plan(toy(_tree(latch=["!"] * (MAX_DUP + 1))))
@@ -255,13 +273,23 @@ def test_at_most_sixty_four_instructions_are_copied():
     assert {t.pred for t in dropped.threads} == {0}
 
 
-def test_a_path_that_never_leaves_the_dispatcher_is_dropped():
+def test_threading_reaches_a_pure_infinite_handler_without_unrolling_it():
     spec = _tree()  # state C runs a handler without side effects that keeps state C
     spec[4] = {"do": [f"s#5 = {C:#x}"], "goto": 1}
     spec[1]["phi"] = {"s#2": {0: "s#1", 9: "s#9", 4: "s#5"}}
     spec[9]["phi"] = {"s#9": {2: "s#3", 3: "s#4"}}
     threads = _by_pred(plan(toy(spec)))
-    assert set(threads) == {0, 2}  # 3 -> 9 is off the cycle: only the 64-block cap drops it
+    assert set(threads) == {0, 2, 3, 4}
+    assert threads[3].outcome.dest == threads[4].outcome.dest == 4
+    assert 4 not in threads[3].outcome.path and 4 not in threads[4].outcome.path
+
+
+def test_a_path_that_only_cycles_inside_dispatcher_tests_is_dropped():
+    g = toy({0: {"do": [f"s#1 = {A:#x}"], "goto": 1},
+             1: {"if": (f"s#1 == {A:#x}", 2, 3)},
+             2: {"if": (f"s#1 == {B:#x}", 3, 1)},
+             3: {"if": (f"s#1 == {C:#x}", 1, 2)}})
+    assert plan(g, evidenced=frozenset({g.key("s#1").var})) == EMPTY
 
 
 def test_a_path_back_to_its_own_start_is_dropped():

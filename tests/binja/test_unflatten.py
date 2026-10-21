@@ -68,6 +68,17 @@ def test_the_debug_report_shows_the_rounds(builds):
     assert "unflatten: round 1" in workflow.debug_report_text(function_named(on, "fl_tree"))
 
 
+def test_a_large_handler_keeps_its_loop_and_result(builds):
+    _, on, _ = builds
+    func = function_named(on, "fl_large_loop")
+    hlil = text(func)
+    assert not _states(hlil, "fl_large_loop"), hlil
+    assert "while" in hlil or "for" in hlil, hlil
+    assert ("0x60" in hlil or "0x5f" in hlil) and "^" in hlil and "+ 7" in hlil, hlil
+    assert len(list(func.hlil.instructions)) < 40, hlil  # keep the loop; do not clone its 96 iterations
+    assert marks(func) == [91, 92], hlil
+
+
 def _open_one():
     bv = open_sample(sample("flatten", *ONE), d810=True)
     settle(bv)

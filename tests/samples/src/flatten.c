@@ -86,6 +86,24 @@ EXPORT int fl_loop(int n) {  // a counted loop inside one state
     }
 }
 
+EXPORT int fl_large_loop(int x) {  // recovering the dispatcher must not require unrolling this handler
+    uint32_t s = 0x5187a321u;
+    uint32_t r = (uint32_t)x;
+    for (;;) {
+        B(s);
+        if (s == 0x5187a321u) {
+            for (uint32_t i = 0; i < 96; ++i) {
+                B(i);
+                r = (r ^ i) + 7;
+            }
+            s = 0x3b65d902u;
+        }
+        else if (s == 0x3b65d902u) { r += mark(91); s = 0x6c194e53u; }
+        else if (s == 0x6c194e53u) { return r + mark(92); }
+        else { return -1; }
+    }
+}
+
 static int (*lazy)(int);  // resolved on first use, as malware resolves its imports
 LOCAL int twice(int v) { B(v); return v * 2; }
 EXPORT int fl_glue(int x) {  // a handler picks the next state, then shared code with a branch of its own runs

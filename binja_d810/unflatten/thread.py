@@ -342,18 +342,23 @@ def _cut(graph: Graph, thread: Thread, dispatcher: frozenset[int]) -> Optional[T
 
 
 def _truncate(graph: Graph, outcome: Outcome, dispatcher: frozenset[int]) -> Optional[Outcome]:
-    """The path through the dispatcher, ending at the first block past it that is not a dispatcher block and
-    has a side effect. None when the path misses the dispatcher, copies more than MAX_DUP side effects before
-    it, or breaks a cap."""
+    """Copy the dispatcher path, leaving a handler's effects, loops and large bodies in place.
+    A known transition remains useful when copying the entire following handler would exceed the cap.
+    None when the dispatcher itself cannot be reached within the copy limits.
+    """
     path, dest = outcome.path, outcome.dest
     first = next((i for i, b in enumerate(path) if b in dispatcher), None)
     if first is None or sum(_impure(graph, b) for b in path[:first]) > MAX_DUP:
         return None
-    for j in range(first + 1, len(path)):
-        if path[j] not in dispatcher and _impure(graph, path[j]):
-            path, dest = path[:j], path[j]
+    visits, copied = Counter(path), 0
+    for j, block in enumerate(path):
+        size = len(graph.steps(block))
+        loop = visits[block] > 1 and (bool(size) or not isinstance(graph.terminator(block), Goto))
+        if j > first and block not in dispatcher and (_impure(graph, block) or loop or copied + size > MAX_COPIED):
+            path, dest = path[:j], block
             break
-    if len(path) >= MAX_STEPS or sum(len(graph.steps(b)) for b in path) > MAX_COPIED:
+        copied += size
+    if len(path) >= MAX_STEPS or copied > MAX_COPIED:
         return None  # a path still MAX_STEPS long never left the dispatcher
     return Outcome(path, dest, tuple(b for b in path if not isinstance(graph.terminator(b), Goto)))
 

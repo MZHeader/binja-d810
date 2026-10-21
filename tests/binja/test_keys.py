@@ -9,7 +9,8 @@ from flowcases import text
 from helpers import function_named, open_sample, settle
 
 from binja_d810.binja import workflow
-from binja_d810.binja.flow import apply
+from binja_d810.binja.flow import apply, collect, evidence
+from binja_d810.flow.record import Record
 
 # What each function must show once its key is constant, and what it must lose.
 FOLDED = {"key_xor": (("0x11111111",), ()), "key_mba": (("0xa5e84e4b", "0x5a17b1b5"), ("|",)),
@@ -89,3 +90,43 @@ def test_turning_d810_off_restores_the_key(build):
     finally:
         bv.file.close()
         off.file.close()
+
+
+@pytest.mark.parametrize("build", MATRIX, ids=IDS)
+def test_zero_keys_are_rejected_without_analyzing_their_readers(build):
+    bv = open_sample(sample("keys", *build), d810=False)
+    try:
+        site = next(collect.keys(function_named(bv, "key_mul64").mlil))
+        assert bv.write(site.data, bytes(collect.KEY_BYTES)) == collect.KEY_BYTES
+        bv.update_analysis_and_wait()
+        work = apply.Round(bv, apply.State(Record(), enabled={site.function}))
+        assert work.read(site.data, collect.KEY_BYTES) == 0
+        assert site.data not in {s.data for s in collect.keys(function_named(bv, "key_mul64").mlil)}
+
+        def unexpected_reader(func):
+            pytest.fail("a zero key must not request another function's IL")
+
+        work.uses_of = unexpected_reader
+        apply.decide(work, site)
+        assert not work.touched and len(work.record) == 0
+        assert any("skipped: zero" in line for line in work.state.notes[site.function])
+    finally:
+        bv.file.close()
+
+
+def test_a_zero_byte_does_not_hide_a_wider_nonzero_key():
+    from dataclasses import replace
+
+    bv = open_sample("keys_O2.dylib", d810=False)
+    try:
+        site = next(collect.keys(function_named(bv, "key_mul64").mlil))
+        assert bv.write(site.data, b"\x00") == 1  # only the low byte of this synthetic key is zero
+        bv.update_analysis_and_wait()
+        work = apply.Round(bv, apply.State(Record(), enabled={site.function}))
+        assert work.read(site.data, 1) == 0 and work.read(site.data, collect.KEY_BYTES) != 0
+        apply.decide(work, replace(site, size=1))
+        typed = bv.get_data_var_at(site.data)
+        assert typed is not None and typed.type.width == 8 and evidence.is_const(typed.type), work.state.notes
+        assert work.record.get("table", site.data) is not None
+    finally:
+        bv.file.close()

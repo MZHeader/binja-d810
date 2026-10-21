@@ -527,6 +527,12 @@ def decide(work: Round, site) -> None:
 def _decide_key(work: Round, site) -> None:
     """A key (v4.3 spec 3.2) is typed const like a table's one entry, when it is the program's own value and nothing
     visible writes it. Binary Ninja then folds what it encodes in every reader, and the MBA pass the rest."""
+    # Reject zero-filled data before requesting every reader's IL. Check the whole supported width: a
+    # zero byte can be part of a nonzero key that another function reads whole. An unreadable span falls
+    # through to the normal width discovery and checks.
+    if work.read(site.data, collect.KEY_BYTES) == 0:
+        work.note(site.function, f"{site.address:#x}: key {site.data:#x} skipped: zero")
+        return
     size = evidence.widest_read(work.view, site.data, site.size, work.uses_of, collect.KEY_BYTES)
     start, end = site.data, site.data + size
     if evidence.constant_data(work.view, start, end):

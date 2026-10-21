@@ -245,6 +245,7 @@ def keys(mlil) -> Iterator[Site]:
     once per address."""
     func = mlil.source_function
     view = func.view
+    read = evidence.reader(view)
     ssa = mlil.ssa_form
     uses, seen = None, set()
     for instr in ssa.instructions:
@@ -253,6 +254,11 @@ def keys(mlil) -> Iterator[Site]:
                 continue
             at = node.src.constant + _offset(node)
             if at in seen or not evidence.writable_data(view, at, at + node.size):
+                continue
+            if read(at, KEY_BYTES) == 0:
+                # No supported read width can make this a nonzero key. Keeping these out of the queue
+                # avoids reanalysis rounds spent draining batches of globals that will all be refused.
+                seen.add(at)
                 continue
             uses = uses or evidence.Uses(ssa)
             uses.index(instr)

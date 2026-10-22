@@ -55,5 +55,18 @@ for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
     /export:clobber_dispatch /export:clobber_h1 /export:clobber_h2 /export:clobber_h3 \
     /out:"$OUT/entry_outlined_$id.dll" "$OUT/entry_outlined_$id.obj" >/dev/null
 done
+# Handlers carrying declared register parameters and stack state through tail branches.
+clang -arch arm64 -shared -o "$OUT/inherited_outlined.dylib" "$HERE/src/inherited_outlined.S"
+clang -target x86_64-linux-gnu -fPIC -c "$HERE/src/inherited_outlined.S" -o "$OUT/inherited_outlined_x86_64.o"
+ld.lld -shared -Bsymbolic -o "$OUT/inherited_outlined_x86_64.so" "$OUT/inherited_outlined_x86_64.o"
+for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
+  id="$([ "$target" = x86_64-pc-windows-msvc ] && echo x86_64-pe || echo i686-pe)"
+  clang -target "$target" -c "$HERE/src/inherited_outlined.S" -o "$OUT/inherited_outlined_$id.obj"
+  lld-link /dll /noentry /nodefaultlib /safeseh:no \
+    /export:incoming_dispatch /export:incoming_h1 /export:incoming_h2 /export:incoming_h3 \
+    /export:changed_dispatch /export:changed_h1 /export:changed_h2 /export:changed_h3 \
+    /export:shifted_dispatch /export:shifted_h1 /export:shifted_h2 /export:shifted_h3 \
+    /out:"$OUT/inherited_outlined_$id.dll" "$OUT/inherited_outlined_$id.obj" >/dev/null
+done
 rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
 ls "$OUT"

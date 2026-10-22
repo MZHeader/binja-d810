@@ -13,17 +13,24 @@ def variables(mlil, params):
     for var in mlil.vars:
         if var.identifier in own:
             continue
-        work, seen = [SSAVariable(var, 0)], set()
-        while work:
-            version = work.pop()
-            if version in seen:
-                continue
-            seen.add(version)
-            uses = ssa.get_ssa_var_uses(version)
-            if any(use.operation != Op.MLIL_VAR_PHI for use in uses):
-                yield var
-                break
-            work.extend(use.dest for use in uses)
+        if next(uses(ssa, var), None) is not None:
+            yield var
+
+
+def uses(ssa, var):
+    """Concrete uses of an entry value, including uses reached through phis."""
+    work, seen, emitted = [SSAVariable(var, 0)], set(), set()
+    while work:
+        version = work.pop()
+        if version in seen:
+            continue
+        seen.add(version)
+        for use in ssa.get_ssa_var_uses(version):
+            if use.operation == Op.MLIL_VAR_PHI:
+                work.append(use.dest)
+            elif use.instr_index not in emitted:
+                emitted.add(use.instr_index)
+                yield use
 
 
 class Preserved:

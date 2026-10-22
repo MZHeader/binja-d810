@@ -6,7 +6,7 @@ In a copy of the MLIL, each call to a handler in tail position (a tail call, or 
 return through copies only) becomes the handler's parameters taking the call's arguments, then the handler's own
 MLIL; its calls back to the dispatcher are then self calls in tail position (selfcall). A variable keeps its
 identifier, so a handler's variables may share the dispatcher's: nothing of the dispatcher is live after such a
-call. A handler must not read undeclared entry values. A dispatcher's undeclared register inputs require native
+call. Hidden handler inputs must match unchanged caller parameters. A dispatcher's undeclared register inputs require native
 preservation evidence and disjoint handler storage; unmodeled frame/stack state still rejects. A handler is
 copied, not moved: other callers keep calling it.
 
@@ -22,7 +22,7 @@ from typing import Optional
 from binaryninja import ILSourceLocation, MediumLevelILFunction, MediumLevelILLabel, MediumLevelILOperation as Op
 
 from ..flow.apply import read_by
-from . import entry, selfcall
+from . import entry, incoming, selfcall
 
 SPLICE_INSTRUCTIONS = 256  # MLIL instructions in a handler
 MAX_HANDLERS = 64  # distinct handlers spliced into one function
@@ -36,7 +36,7 @@ def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
     context = None
     found: dict[int, object] = {}
     forwards: dict[int, bool] = {}
-    sites: dict[int, tuple[object, list]] = {}
+    sites: dict[int, tuple[object, list, incoming.Inputs]] = {}
     frame = None
     for instr in mlil.instructions:
         i = instr.instr_index
@@ -55,14 +55,17 @@ def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
             continue
         if target not in found:
             found[target] = _handler(view, target, func, forwards, context)
-        callee = found[target]
-        if callee is None:
+        handler = found[target]
+        if handler is None:
+            continue
+        callee, inputs = handler
+        if not inputs.at(instr):
             continue
         frame = frame or selfcall.Arguments(mlil, selfcall.MAX_TRACE)
         moves = selfcall.moves(mlil, i, list(callee.parameter_vars), frame)
         if moves is not None:
-            sites[i] = (callee, moves)
-    count = len({callee.start for callee, _ in sites.values()})
+            sites[i] = (callee, moves, inputs)
+    count = len({callee.start for callee, _, _ in sites.values()})
     if not sites or count > MAX_HANDLERS:
         return None
     new = MediumLevelILFunction(mlil.arch, low_level_il=mlil.llil)
@@ -76,10 +79,10 @@ def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
             if i not in sites:
                 new.append(instr.copy_to(new), loc)
                 continue
-            callee, moves = sites[i]
+            callee, moves, inputs = sites[i]
             for dest, _, emit in moves:
                 new.append(new.set_var(selfcall._size(dest), dest, emit(new, loc), loc), loc)
-            _append_body(new, callee.mlil, loc)
+            _append_body(new, inputs.mlil, loc, inputs.returns)
             break  # the rest of the block only returns the call's result
     new.finalize()
     new.generate_ssa_form()
@@ -87,7 +90,7 @@ def handlers(mlil, view) -> Optional[tuple[MediumLevelILFunction, int]]:
 
 
 def _handler(view, target: int, func, forwards: dict[int, bool], context=None):
-    """The function at `target` when it is one of the dispatcher's handlers, else None."""
+    """The handler and its proven incoming bindings, or None."""
     if _back(view, target, func.start, forwards):
         return None  # the dispatcher itself or a forwarder to it: selfcall's
     callee = view.get_function_at(target)
@@ -112,11 +115,15 @@ def _handler(view, target: int, func, forwards: dict[int, bool], context=None):
                 back = back or returns
     if indirect:
         read_by(view, target, func.start)  # a flow fix may resolve it back to the dispatcher
-    if not back or _reads_entry(mlil, callee.parameter_vars):
-        return None  # an entry value of its own is the dispatcher's register or slot, not this variable's
+    if not back:
+        return None
+    read_by(view, target, func.start)  # folding a handler's loads can make its inherited inputs provable
+    inputs = incoming.Inputs(func, mlil)
+    if not inputs.supported:
+        return None
     if context is not None and not context.by(mlil):
         return None
-    return callee
+    return callee, inputs
 
 
 def _back(view, target: int, start: int, forwards: dict[int, bool]) -> bool:
@@ -131,8 +138,8 @@ def _reads_entry(mlil, params) -> bool:
     return next(entry.variables(mlil, params), None) is not None
 
 
-def _append_body(new, mlil, loc) -> None:
-    """The handler's MLIL appended where `new` is, its blocks under their own labels."""
+def _append_body(new, mlil, loc, returns) -> None:
+    """Append the handler under its own labels. `returns` supplies proven shared stack arguments."""
     labels = {block.start: MediumLevelILLabel() for block in mlil.basic_blocks}
     new.append(new.goto(labels[0], loc), loc)
     for block in mlil.basic_blocks:
@@ -141,7 +148,11 @@ def _append_body(new, mlil, loc) -> None:
             instr = mlil[i]
             new.set_current_address(instr.address, block.arch)
             at = ILSourceLocation.from_instruction(instr)
-            if instr.operation == Op.MLIL_GOTO:
+            if i in returns:
+                args = [a.copy_to(new) for a in instr.params]
+                args.extend(new.var(selfcall._size(p), p, at) for p in returns[i])
+                new.append(new.tailcall(instr.output, instr.dest.copy_to(new), args, at), at)
+            elif instr.operation == Op.MLIL_GOTO:
                 new.append(new.goto(labels[instr.dest], at), at)
             elif instr.operation == Op.MLIL_IF:
                 new.append(new.if_expr(instr.condition.copy_to(new), labels[instr.true], labels[instr.false], at), at)

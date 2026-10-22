@@ -36,7 +36,8 @@ And after (4 lines):
   next state or calls a small function per state that returns through a stub back to it. Large
   handlers and their loops stay in place while the dispatcher is removed. Self-calls and outlined
   handlers can be recovered together, including dispatchers with large argument lists and
-  undeclared register inputs that the handlers provably preserve
+  undeclared register inputs that the handlers provably preserve. Known register and stack
+  inputs can also be carried across handlers when their values and frame layout are proven
 * Junk loops that only count a variable up to some value and then throw it away
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 

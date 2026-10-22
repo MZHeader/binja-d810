@@ -40,7 +40,7 @@ class State:
     pending: dict = field(default_factory=dict)  # site key -> Site
     decided: defaultdict = field(default_factory=lambda: defaultdict(set))  # function -> decided site keys
     claimants: set = field(default_factory=set)  # functions with a claim in the record
-    rejected: dict = field(default_factory=dict)  # (start, end) -> why it may be written, for the session
+    rejected: dict = field(default_factory=dict)  # (reference start, span start, end) -> why it may be written
     notes: defaultdict = field(default_factory=lambda: defaultdict(list))  # function -> report lines
     ranges: Optional[list] = None
     enabled: set = field(default_factory=set)  # functions currently observed with the flow fixes enabled
@@ -384,7 +384,7 @@ class Round:
         self.view, self.state, self.record = view, state, state.record
         self.read = evidence.reader(view)
         self.touched: set[int] = set()
-        self.verdicts: dict[tuple[int, int], Optional[str]] = {}
+        self.verdicts: dict[tuple[int, int, int], Optional[str]] = {}
         self._uses: dict[int, Optional[evidence.Uses]] = {}
         self._code: dict[str, evidence.BinaryCode] = {}
 
@@ -592,14 +592,14 @@ def _unwritable(work: Round, load, span, seconds: Optional[float] = None) -> Opt
     for var in evidence.data_vars(view, span.start, span.end):
         if not var.auto_discovered:
             return f"{var.address:#x} has a user type"
-    key = (evidence.object_start(view, span.start, load.base, work.uses_of), span.end)
+    key = (evidence.object_start(view, span.start, load.base, work.uses_of), span.start, span.end)
     with work.state.lock:
         rejected = work.state.rejected.get(key)
     if rejected is not None:
         return rejected
     if key not in work.verdicts:
         deadline = Deadline.never() if seconds is None else Deadline.after(seconds)
-        work.verdicts[key] = evidence.never_written(view, key[0], key[1], work.uses_of, deadline)
+        work.verdicts[key] = evidence.never_written(view, key[1], key[2], work.uses_of, deadline, first=key[0])
         if work.verdicts[key] is not None:
             with work.state.lock:
                 work.state.rejected[key] = work.verdicts[key]

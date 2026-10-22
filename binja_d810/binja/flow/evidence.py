@@ -12,7 +12,7 @@ from binaryninja import MediumLevelILOperation as Op, SectionSemantics, SSAVaria
 from ...deadline import Deadline
 from ...flow import uses as use_rules
 from ...flow.tables import MAX_ENTRIES, Read, Span
-from . import lowlevel
+from . import access, lowlevel
 
 _KINDS = {
     Op.MLIL_LOAD_SSA: "load", Op.MLIL_LOAD_STRUCT_SSA: "load",
@@ -53,6 +53,7 @@ class Uses:
     def __init__(self, ssa):
         self.ssa = ssa
         self.kinds: dict[int, str] = {}
+        self.nodes: dict[int, object] = {}
         self.parents: dict[int, tuple[int, str]] = {}
         self.addresses: dict[int, int] = {}
         self.offsets: dict[int, int] = {}  # a struct load's or store's offset from its address
@@ -90,6 +91,7 @@ class Uses:
         while stack:
             node, up = stack.pop()
             at, op = node.expr_index, node.operation
+            self.nodes[at] = node
             self.kinds[at] = "field" if op in _FIELD_READS else _KINDS.get(op, op.name.lower())
             self.addresses[at] = node.address
             if op in _CONSTANTS:
@@ -158,13 +160,17 @@ class Uses:
 
 
 def never_written(view, start: int, end: int, uses_of: Callable,
-                  deadline: Deadline = Deadline.never()) -> Optional[str]:
+                  deadline: Deadline = Deadline.never(), *, first: Optional[int] = None) -> Optional[str]:
     """None when no visible code writes [start, end) or lets its address escape (spec 3.2), else why not.
     `uses_of(func)` gives a function's Uses, or None without MLIL (shared within a round). A key read across
-    many functions (v4.3 spec 3.2) is checked until `deadline`."""
-    for source in view.get_data_refs(start, end - start):
+    many functions (v4.3 spec 3.2) is checked until `deadline`. `first` also searches references to a
+    containing object's base; writes are checked against [start, end)."""
+    first = start if first is None else first
+    proof = access.Proof(uses_of, deadline)
+    checked = set()
+    for source in view.get_data_refs(first, end - first):
         return f"data reference from {source:#x}"
-    for ref in view.get_code_refs(start, end - start):
+    for ref in view.get_code_refs(first, end - first):
         if deadline.expired():
             return "too many readers to check in time"
         func = ref.function
@@ -173,14 +179,32 @@ def never_written(view, start: int, end: int, uses_of: Callable,
         uses = uses_of(func)
         if uses is None:
             return f"no MLIL for the function at {func.start:#x}"
-        starts = uses.constants_in(start, end, at=ref.address)
-        if not starts:
-            if uses.reference_read_only(ref.address, start, end):
-                continue
+        # Indexed displacements do not always have their own native data xref. Check every
+        # occurrence in a referenced function, including a dead address copy beside a live store.
+        if func.start in checked:
+            continue
+        starts = uses.constants_in(first, end)
+        visible = bool(starts)
+        if not visible and not uses.reference_read_only(ref.address, first, end):
             return f"reference at {ref.address:#x} not seen in MLIL"
-        verdict, where = use_rules.classify(starts, uses)
+        # Reverse-indexed accesses can start from a nearby address above the span. Include
+        # address chains reaching a store in the same referenced function. Neighbouring
+        # pointer arguments alone belong to a different object, as in the LLIL page check.
+        for node in uses.constants_in(end, end + 8 * MAX_ENTRIES):
+            value = uses.nodes[node].constant
+            up = uses.parent(node)
+            if up is not None and (uses.kind(up[0]), up[1]) in (("load", "src"), ("store", "dest")) \
+                    and not uses.offsets.get(up[0]):
+                continue
+            segment = view.get_segment_at(value)
+            if segment is not None and segment.writable and not segment.executable \
+                    and use_rules.reaches_write(node, uses):
+                starts.append(node)
+        verdict, where = use_rules.classify(starts, proof.graph(uses, (start, end)))
         if verdict != use_rules.READ:
             return f"{verdict} at {uses.address(where):#x}"
+        if visible:
+            checked.add(func.start)
     return None
 
 
@@ -282,8 +306,8 @@ def object_start(view, address: int, base: Optional[int] = None, uses_of: Option
     """Where the never-written check of the object holding `address` starts: the constant an indexed or offset
     address starts from (within MAX_ENTRIES words below); else the start of the data variable holding
     `address`. With `uses_of`, an entry read at a constant address starts at the nearest code-referenced data
-    variable below it instead, when code uses that one as a pointer: its table, passed or indexed elsewhere
-    (spec section 7)."""
+    variable or nearby referenced pointer constant below it instead: its table, passed or indexed
+    elsewhere (spec section 7)."""
     reach = 8 * MAX_ENTRIES
     if base is not None and address - reach <= base <= address:
         return base
@@ -292,6 +316,31 @@ def object_start(view, address: int, base: Optional[int] = None, uses_of: Option
         first = address
     if uses_of is None:
         return first
+    # A base passed to a helper or used only as an indexed displacement need not have
+    # an auto data variable (notably on x86). Include nearby pointer constants from the
+    # key's own readers before walking the data-variable boundaries.
+    candidates = set()
+    seen = set()
+    for ref in view.get_code_refs(address, 1):
+        func = ref.function
+        if func is None or func.start in seen:
+            continue
+        seen.add(func.start)
+        uses = uses_of(func)
+        if uses is None:
+            continue
+        for node in uses.constants_in(max(view.start, address - reach), address):
+            value = uses.nodes[node].constant
+            up = uses.parent(node)
+            if up is not None and (uses.kind(up[0]), up[1]) in (("load", "src"), ("store", "dest")) \
+                    and not uses.offsets.get(up[0]):
+                continue
+            segment = view.get_segment_at(value)
+            if segment is not None and segment.writable and not segment.executable \
+                    and next(iter(view.get_code_refs(value, 1)), None) is not None:
+                candidates.add(value)
+    if candidates:
+        first = min(first, max(candidates))
     at = first
     for _ in range(_STEP_BACK):
         below = view.get_previous_data_var_start_before(at)  # `at` when there is none

@@ -1,4 +1,4 @@
-from binja_d810.flow.uses import ESCAPE, READ, WRITE, classify, encodes, reaches_target
+from binja_d810.flow.uses import ESCAPE, READ, WRITE, classify, encodes, reaches_target, reaches_write
 
 
 class Graph:
@@ -52,6 +52,21 @@ def test_a_stored_value_escapes():
 def test_a_call_argument_escapes():
     g = Graph({"c": "const", "call": "call"}, {"c": ("call", "params")})
     assert classify(["c"], g) == (ESCAPE, "call")
+
+
+def test_a_call_proof_applies_to_one_argument_not_the_whole_call():
+    g = Graph({"a": "const", "b": "const", "call": "call"},
+              {"a": ("call", "params"), "b": ("call", "params")})
+    g.call_read_only = lambda parent, node: node == "a"
+    assert classify(["a"], g) == (READ, None)
+    assert classify(["a", "b"], g) == (ESCAPE, "call")
+
+
+def test_outside_address_search_follows_writes_but_not_stored_or_passed_pointers():
+    assert reaches_write("c", _copies(2, "store", "dest"))
+    assert not reaches_write("c", _copies(2, "store", "src"))
+    assert not reaches_write("c", _copies(2, "call", "params"))
+    assert reaches_write("c", _copies(2, "store", "dest"), limit=1)
 
 
 def test_a_comparison_escapes():

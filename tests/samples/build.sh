@@ -8,7 +8,7 @@ OUT="$HERE/build"
 mkdir -p "$OUT"
 uv run --project "$HERE/../.." python "$HERE/gen_mba.py" --out "$OUT"
 uv run --project "$HERE/../.." python "$HERE/gen_opaque.py" --out "$OUT"
-SOURCES=("$OUT/mba.c" "$OUT/opaque.c" "$HERE/src/regression.c" "$HERE/src/safety.c" "$HERE/src/effects.c" "$HERE/src/hlil_fixtures.c" "$HERE/src/predicates.c" "$HERE/src/bcf.c" "$HERE/src/div.c" "$HERE/src/flow.c" "$HERE/src/flatten.c" "$HERE/src/substitution.c" "$HERE/src/keys.c" "$HERE/src/outlined.c" "$HERE/src/mixed_outlined.c" "$HERE/src/loops.c")
+SOURCES=("$OUT/mba.c" "$OUT/opaque.c" "$HERE/src/regression.c" "$HERE/src/safety.c" "$HERE/src/effects.c" "$HERE/src/hlil_fixtures.c" "$HERE/src/predicates.c" "$HERE/src/bcf.c" "$HERE/src/div.c" "$HERE/src/flow.c" "$HERE/src/flatten.c" "$HERE/src/substitution.c" "$HERE/src/keys.c" "$HERE/src/key_bounds.c" "$HERE/src/outlined.c" "$HERE/src/mixed_outlined.c" "$HERE/src/loops.c")
 FLAGS=(-ffreestanding -fno-builtin -fno-stack-protector)
 for opt in O0 O2; do
   for src in "${SOURCES[@]}"; do

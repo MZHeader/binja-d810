@@ -2,7 +2,7 @@
 
 A table is never written when every use of its address only computes a load address: up through address
 arithmetic to a load's source, and through variables (SSA definitions and merges) up to MAX_DEPTH copies. A
-store's destination is a write. Anything else (a call argument, a stored value, a comparison, a return, a
+store's destination is a write. Anything else (an unproved call argument, a stored value, a comparison, a return, a
 partial read) lets the address escape, so the table may be written where the analysis cannot see. A load or
 store the graph knows reaches a constant address outside the object ("load_outside", "store_outside": an arm64
 page address a neighbour's access goes through) does not use it, nor does address arithmetic whose constant value lies past the object's end ("address_outside": the
@@ -76,6 +76,9 @@ def classify(starts: Iterable[Hashable], graph: UseGraph, max_depth: int = MAX_D
             if depth >= max_depth:
                 return ESCAPE, parent
             work.extend((reader, depth + 1) for reader in graph.readers(parent))
+        elif parent_kind == "call" and operand == "params" and \
+                getattr(graph, "call_read_only", lambda *_: False)(parent, node):
+            continue
         else:
             return ESCAPE, parent
     return READ, None
@@ -106,6 +109,37 @@ def reaches_target(starts: Iterable[Hashable], graph: UseGraph, max_depth: int =
         if parent_kind in ("call", "jump") and operand == "dest":
             return True
         if parent_kind == "set_var" and operand == "src" and depth < max_depth:
+            work.extend((reader, depth + 1) for reader in graph.readers(parent))
+    return False
+
+
+def reaches_write(start: Hashable, graph: UseGraph, limit: int = 256) -> bool:
+    """A nearby outside address feeds a store destination in this function. Only store chains
+    supplement the ordinary reference search here; that search still checks the object's escapes.
+    Exhausted searches include the candidate so the full proof can reject it conservatively.
+    """
+    work, seen = [(start, 0)], set()
+    while work:
+        node, depth = work.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        if len(seen) > limit or depth > MAX_DEPTH:
+            return True
+        kind = graph.kind(node)
+        if kind == "phi":
+            work.extend((reader, depth + 1) for reader in graph.readers(node))
+            continue
+        up = graph.parent(node)
+        if kind not in _CARRIERS or up is None:
+            continue
+        parent, operand = up
+        kind = graph.kind(parent)
+        if kind == "store" and operand == "dest":
+            return True
+        if kind in ADDRESS_OPS:
+            work.append((parent, depth))
+        elif kind == "set_var" and operand == "src":
             work.extend((reader, depth + 1) for reader in graph.readers(parent))
     return False
 

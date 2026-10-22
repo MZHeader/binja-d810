@@ -29,8 +29,8 @@ And after (4 lines):
 * Jumps and calls through encoded tables of code pointers (Hikari-style indirect branches and
   calls), including jumps back into the same function, and identity wrappers around them,
   when no visible code writes the table
-* Constants encoded against a global key that nothing in the binary writes, like
-  `x ^ key ^ 0x3c1d`
+* Constants encoded against a global key whose bytes are proven unwritten, like `x ^ key ^ 0x3c1d`.
+  This includes bounded writes to neighboring buffers and helpers that only read the pointer.
 * Control-flow flattening: state machines driven by compare trees or jump tables, including
   nested loops, and machines split across functions, where the dispatcher calls itself for the
   next state or calls a small function per state that returns through a stub back to it. Large

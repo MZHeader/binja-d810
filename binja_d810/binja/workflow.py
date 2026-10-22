@@ -23,6 +23,7 @@ from ..semantic.backend import default_backends
 from . import budget, log, settings, unflatten
 from .engine import simplify_function
 from .flow import apply as flow_apply, branches
+from .callees import activity as callees
 from .hlil.adapter import HLILAdapter
 from .mlil.adapter import MLILAdapter
 
@@ -34,6 +35,7 @@ HLIL_ACTIVITY_NAME = "extension.binja_d810.mba_hlil"
 BRANCHES_ACTIVITY_NAME = "extension.binja_d810.branches"
 BRANCH_RESET = "core.function.resetIndirectBranchesOnFullUpdate"
 UNFLATTEN_ACTIVITY_NAME = "extension.binja_d810.unflatten"
+CALLEES_ACTIVITY_NAME = "extension.binja_d810.callees"
 # That analysis reads ctx.mlil: a rewrite before it removes the jump it resolves, and the function's
 # analysis then never settles (v4.2, measured). Without it, unflattening follows the MLIL pass.
 UNFLATTEN_AFTER = "core.function.analyzeIndirectBranches"
@@ -133,6 +135,10 @@ def _run(ctx, level: str) -> None:
     config = settings.engine_config(ctx)
     rules = _rules_override if _rules_override is not None else _rules(config.disabled_rules)
     allowance = _begin(ctx, config, level, il)
+    early = callees.take(func) if level == "mlil" else None
+    if early is not None:
+        allowance.charge(early.seconds)
+        allowance.deadline = allowance.deadline.earlier(Deadline.after(allowance.remaining()))
     reserved = probe_seconds = probe_cpu = 0.0
     if level == "mlil" and ctx.get_setting_bool(settings.UNFLATTEN) and allowance.remaining() >= 2:
         started, cpu = time.monotonic(), time.thread_time()
@@ -157,6 +163,14 @@ def _run(ctx, level: str) -> None:
     report.plan_cpu_seconds += probe_cpu
     changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
     allowance.charge(report.total_seconds)
+    if early is not None:
+        report.callees = early.notes
+        report.callee_calls = early.calls
+        report.budget_exhausted |= early.exhausted
+        report.total_seconds += early.seconds
+        report.plan_seconds += early.seconds
+        report.plan_cpu_seconds += early.cpu_seconds
+        report.allowance_seconds += early.seconds
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
@@ -290,6 +304,10 @@ def register(action=None, hlil_action=None, branches_action=None, unflatten_acti
         "title": "D-810: unflatten control flow",
         "description": "Threads flattened control flow past its dispatcher in MLIL; enabled by the D-810 setting.",
     })
+    callees_config = json.dumps({
+        "name": CALLEES_ACTIVITY_NAME, "title": "D-810: pure-callee summaries",
+        "description": "Substitute proven arithmetic helpers before calling-convention inference.",
+    })
     registered = []
     for base in BASE_WORKFLOWS:
         if base not in Workflow:
@@ -298,10 +316,13 @@ def register(action=None, hlil_action=None, branches_action=None, unflatten_acti
         hlil_activity = Activity(configuration=hlil_config, action=hlil_action)
         branches_activity = Activity(configuration=branches_config, action=branches_action)
         unflatten_activity = Activity(configuration=unflatten_config, action=unflatten_action)
-        _ACTIVITIES.extend([activity, hlil_activity, branches_activity, unflatten_activity])
+        callees_activity = Activity(configuration=callees_config, action=callees.run)
+        _ACTIVITIES.extend([activity, hlil_activity, branches_activity, unflatten_activity, callees_activity])
         wf = Workflow(base).clone(base)
         wf.register_activity(activity)
         wf.register_activity(hlil_activity)
+        wf.register_activity(callees_activity)
+        wf.insert_after("core.function.generateLiftedIL", [CALLEES_ACTIVITY_NAME])
         wf.insert_after("core.function.generateMediumLevelIL", [ACTIVITY_NAME])
         wf.insert_after("core.function.generateHighLevelIL", [HLIL_ACTIVITY_NAME])
         wf.register_activity(branches_activity)

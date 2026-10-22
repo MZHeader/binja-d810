@@ -34,6 +34,9 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
                         f"{r.before}  ->  {r.after}")
     for line in report.flow:
         logger.log_info(f"{func.start:#x} flow: {line}")
+    for index, line in enumerate(report.callees):
+        emit = logger.log_info if index == 0 and report.callee_calls else logger.log_debug
+        emit(f"{func.start:#x} callees: {line}")
     for r in report.skipped:
         logger.log_debug(f"{func.start:#x} @ {r.address:#x} [{r.level}] skipped: {r.reason}")
     for r in report.errors:
@@ -71,6 +74,7 @@ def render(report: FunctionReport) -> str:
                      f"(dispatcher check {report.dispatch_probe_seconds:.3f} s)")
     lines += [f"flow: {line}" for line in getattr(report, "flow", [])]
     lines += [f"unflatten: {line}" for line in getattr(report, "unflatten", [])]
+    lines += [f"callees: {line}" for line in report.callees]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

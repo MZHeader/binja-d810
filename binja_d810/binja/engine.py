@@ -84,6 +84,8 @@ class FunctionReport:
     constant_uses: int = 0  # reads replaced by the constant their definition was proven to be (v3.1)
     flow: list[str] = field(default_factory=list)  # targets the flow fixes made constant in this MLIL (v4.0)
     unflatten: list[str] = field(default_factory=list)  # one line per unflattening round (v4.2)
+    callees: list[str] = field(default_factory=list)
+    callee_calls: int = 0
     # Time. Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0
@@ -106,7 +108,8 @@ class FunctionReport:
     def summary(self) -> dict:
         """What was folded, by mechanism, and what was left, by reason: zero counts left out."""
         folded = Counter(r.mechanism for r in self.rewrites)
-        folded.update({"constant uses": self.constant_uses, "flow": len(self.flow), "unflatten": len(self.unflatten)})
+        folded.update({"constant uses": self.constant_uses, "flow": len(self.flow), "unflatten": len(self.unflatten),
+                       "callee calls": self.callee_calls})
         left = Counter(r.reason.split(":")[0] for r in self.skipped)
         return {"folded": {k: n for k, n in folded.items() if n}, "left": dict(left)}
 

@@ -21,8 +21,38 @@ FUNCTION_SECONDS = f"{PREFIX}.functionSeconds"
 FLOW_FIXES = f"{PREFIX}.flowFixes"
 READ_ONLY_RANGES = f"{PREFIX}.readOnlyRanges"
 UNFLATTEN = f"{PREFIX}.unflatten"
+CALLEES = f"{PREFIX}.calleeSummaries"
+CALLEE_INSTRUCTIONS = f"{PREFIX}.calleeInstructions"
+CALLEE_NODES = f"{PREFIX}.calleeNodes"
+CALLEE_FRAME_BYTES = f"{PREFIX}.calleeFrameBytes"
+CALLEE_CALLER_INSTRUCTIONS = f"{PREFIX}.calleeCallerInstructions"
+CALLEE_SITES = f"{PREFIX}.calleeSites"
+CALLEE_PROOF_MS = f"{PREFIX}.calleeProofMilliseconds"
+CALLEE_DEPTH = f"{PREFIX}.calleeDepth"
+CALLEE_NATIVE = f"{PREFIX}.calleeNativeInline"
+CALLEE_RED_ZONE = f"{PREFIX}.calleeRedZoneBytes"
 
 _SPECS = {
+    CALLEE_RED_ZONE: {"title": "Callee red-zone byte limit", "type": "number", "default": 128, "minValue": 0,
+                      "description": "Maximum stack bytes below SP used by scratch proofs, capped by the platform ABI's red zone. Zero disables this; unknown and kernel platforms have none."},
+    CALLEE_NATIVE: {"title": "Prefer native callee inlining", "type": "boolean", "default": False,
+                    "description": "Compare native user-level inlining for register-only summaries. Requires Flow fixes for recorded undo; frame-dependent helpers use direct substitution."},
+    CALLEE_DEPTH: {"title": "Callee summary depth", "type": "number", "default": 4, "minValue": 1,
+                   "description": "Maximum nested summary depth. Recursive and tail-call helpers remain excluded."},
+    CALLEES: {"title": "Pure-callee summaries", "type": "boolean", "default": True,
+               "description": "Expose proven arithmetic helpers, including private register conventions, before MLIL generation."},
+    CALLEE_INSTRUCTIONS: {"title": "Callee instruction limit", "type": "number", "default": 64, "minValue": 1,
+                          "description": "Maximum lifted IL instructions in an arithmetic helper."},
+    CALLEE_NODES: {"title": "Callee expression limit", "type": "number", "default": 2000, "minValue": 1,
+                   "description": "Maximum expression nodes visited when constructing or checking a callee summary."},
+    CALLEE_FRAME_BYTES: {"title": "Callee frame byte limit", "type": "number", "default": 256, "minValue": 1,
+                         "description": "Maximum distinct stack bytes modeled by one callee or caller-frame proof."},
+    CALLEE_CALLER_INSTRUCTIONS: {"title": "Callee caller instruction limit", "type": "number", "default": 4096,
+                                 "minValue": 1, "description": "Maximum caller instructions copied or inspected to prove scratch writes dead."},
+    CALLEE_SITES: {"title": "Callee call-site limit", "type": "number", "default": 64, "minValue": 1,
+                   "description": "Maximum calls considered for summary substitution in one function analysis run."},
+    CALLEE_PROOF_MS: {"title": "Callee proof timeout (milliseconds)", "type": "number", "default": 500,
+                      "minValue": 1, "description": "Maximum solver time for one callee/frame proof, also bounded by the function allowance."},
     ENABLED: {"title": "Enabled", "type": "boolean", "default": True,
               "description": "Global kill switch. When off, D-810 never rewrites anything."},
     TIER2: {"title": "Generic MBA simplifier (Tier 2)", "type": "boolean", "default": True,
@@ -76,6 +106,16 @@ def engine_config(ctx) -> EngineConfig:
         disabled_rules=frozenset(ctx.get_setting_string_list(DISABLED_RULES)),
         function_seconds=float(ctx.get_setting_uint64(FUNCTION_SECONDS)),
     )
+
+
+def callee_limits(ctx):
+    from .callees.lift import Limits
+
+    return Limits(instructions=ctx.get_setting_uint64(CALLEE_INSTRUCTIONS),
+                  nodes=ctx.get_setting_uint64(CALLEE_NODES), frame_bytes=ctx.get_setting_uint64(CALLEE_FRAME_BYTES),
+                  caller_instructions=ctx.get_setting_uint64(CALLEE_CALLER_INSTRUCTIONS),
+                  sites=ctx.get_setting_uint64(CALLEE_SITES), proof_ms=ctx.get_setting_uint64(CALLEE_PROOF_MS),
+                  depth=ctx.get_setting_uint64(CALLEE_DEPTH), red_zone_bytes=ctx.get_setting_uint64(CALLEE_RED_ZONE))
 
 
 def skipped_functions(ctx) -> set[int]:

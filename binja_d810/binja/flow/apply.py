@@ -164,6 +164,14 @@ def enqueue(view, site) -> None:
     _arm(view, state)
 
 
+def defer_reanalysis(func) -> None:
+    """Retry a caller after native analysis has supplied a missing callee snapshot."""
+    state = state_of(func.view)
+    with state.lock:
+        state.waiting.add(func.start)
+    _arm(func.view, state)
+
+
 def busy(view) -> bool:
     """Sites wait, or a round is armed or running."""
     with _STATES_LOCK:
@@ -375,7 +383,7 @@ def _affected(change: Change) -> set[int]:
     affected = set(change.detail.get("readers", [])) | set(change.detail.get("callers", []))
     if change.kind in ("branches", "split"):
         affected.add(change.detail["function"])
-    if change.kind == "inline":
+    if change.kind in ("inline", "callee_inline"):
         affected.add(change.key)
     return affected
 
@@ -520,6 +528,10 @@ def decide(work: Round, site) -> None:
             return
     if site.kind == "wrapper":
         wrappers.decide(work, site)
+        return
+    if site.kind == "callee_inline":
+        from ..callees import native
+        native.decide(work, site)
         return
     if site.kind == "key":
         _decide_key(work, site)

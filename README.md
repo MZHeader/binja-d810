@@ -22,6 +22,8 @@ And after (4 lines):
 * MBA expressions, through D-810's rules, a built-in linear MBA simplifier, and
   [CoBRA](https://github.com/trailofbits/CoBRA) if you have it installed
 * OLLVM-style instruction substitution, like `(x & y) | (x ^ y)` for `x | y`
+* Arithmetic helpers with private register conventions, including nested helpers and proven
+  scratch-slot round trips
 * Opaque predicates, including ones hidden behind long chains of masked constants, ones that
   only hold on every path into a merge, values carried round loops, and the classic
   number-theoretic ones like `7 * y * y - 1 != x * x`
@@ -119,9 +121,53 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   it all when D-810 is turned off. Your own types and branch targets always win.
 * **Unflatten control flow**: on by default. It only touches a function with a clear dispatcher:
   a loop over a state variable that's only ever set to constants. It also removes junk loops.
+* **Pure-callee summaries**: on by default. Exposes arithmetic across helper calls before MLIL
+  generation. Turn it off to restore the calls; the limits are listed below.
 * **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant. Use
   them for data you know never changes. Clearing a range puts the old types back.
 * **Enabled**: a kill switch for everything.
+
+## Arithmetic helpers
+
+D810 reads the helper's lifted IL to find its register inputs and outputs, including registers
+missing from its declared calling convention. It builds fixed-width expression summaries and
+substitutes checked copies of the body at ordinary calls. The copies retain flag writes and
+call/return stack effects. Unsupported effects, loops, tail calls and recursion stay unchanged.
+
+Scratch stores need a byte-level proof that the caller cannot read or escape them. This currently
+requires a straight-line caller whose other calls also have summaries. Partial overwrites do not
+hide later reads. The stores are retained in the copied IL; this pass does not clear alias flags or
+remove arbitrary stack writes. Fixed read-only loads are allowed; writable and relocated loads are not.
+
+The default limits are:
+
+| Setting | Default |
+| --- | ---: |
+| Callee instruction limit, including nested expansion | 64 |
+| Callee expression limit | 2,000 nodes |
+| Callee summary depth | 4 |
+| Callee frame byte limit | 256 |
+| Callee caller instruction limit | 4,096 |
+| Callee call-site limit | 64 caller sites |
+| Callee proof timeout | 500 ms |
+| Callee red-zone byte limit | 128, capped by the platform ABI |
+
+Depth bounds composition through the current IL; helpers simplified in an earlier analysis can
+already be flatter. Summary planning and substitution share the function time budget.
+Unknown and kernel platforms get no red-zone
+allowance; setting its limit to zero disables that support. The ABI bounds come from the
+[System V AMD64 specification](https://gitlab.com/x86-psABIs/x86-64-ABI/-/blob/master/x86-64-ABI/low-level-sys-info.tex)
+and [Apple's ARM64 documentation](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms).
+
+**Prefer native callee inlining** is an optional comparison mode, off by default. For register-only
+helpers it records a user inline flag and restores it when disabled. It needs Flow fixes for the
+undo queue. Frame-dependent helpers continue to use direct substitution, since a global inline
+flag would affect unproved callers too. Existing no-inline flags are respected.
+
+The debug report's `callees` entries list substitutions and rejection reasons. Synthetic fixtures
+cover ARM64, x86-64 and ordinary i686 calls at O0/O2, with independent arithmetic models and undo
+checks. These tests do not establish coverage on real malware. Direct call-link substitution is
+currently supported on those three architectures; other architectures are left unchanged.
 
 ## Notes
 

@@ -8,6 +8,7 @@ from flowcases import (CALL_TARGETS, CALLS, JUMP_LABELS, JUMPS, KEY, KNOWN_MISSE
 from helpers import data_pointers, function_named, open_sample, settle
 
 from binja_d810.binja.flow import apply, collect, evidence, wrappers
+from binja_d810.binja import settings
 from binja_d810.deadline import Deadline
 from binja_d810.flow.codecheck import jump_problem
 from binja_d810.flow.tables import decode
@@ -261,21 +262,29 @@ def test_what_counts_as_an_identity_wrapper(off):
     assert not wrappers.is_identity(function_named(bv, "f_a"))  # it adds to its argument
 
 
-def test_an_inlined_wrapper_survives_reanalysis(builds):
-    key, on, _ = builds
+@pytest.mark.parametrize("build", MATRIX, ids=IDS)
+def test_an_inlined_wrapper_survives_reanalysis(build):
+    key = "-".join(build)
     if (key, "ident_call") in NOT_EMITTED:
         return
-    ident, caller = function_named(on, "ident"), function_named(on, "ident_call")
-    change = apply.record_of(on).get("inline", ident.start)
-    assert change is not None and caller.start in change.claims
-    assert caller.start in change.detail["callers"]
-    before = apply.record_of(on).to_json(), text(caller)
-    ident.reanalyze()
-    caller.reanalyze()
-    settle(on)
-    assert int(ident.inline_during_analysis.value) == 1
-    assert (apply.record_of(on).to_json(), text(caller)) == before
-    assert "f_a(" in text(caller) and "ident(" not in text(caller)
+    # Exercise the recorded auto-inline mechanism itself. Direct callee substitution needs
+    # no global inline flag and is covered independently in test_callees.py.
+    on = open_sample(sample("flow", *build), d810=True, options={settings.CALLEES: False})
+    try:
+        settle(on)
+        ident, caller = function_named(on, "ident"), function_named(on, "ident_call")
+        change = apply.record_of(on).get("inline", ident.start)
+        assert change is not None and caller.start in change.claims
+        assert caller.start in change.detail["callers"]
+        before = apply.record_of(on).to_json(), text(caller)
+        ident.reanalyze()
+        caller.reanalyze()
+        settle(on)
+        assert int(ident.inline_during_analysis.value) == 1
+        assert (apply.record_of(on).to_json(), text(caller)) == before
+        assert "f_a(" in text(caller) and "ident(" not in text(caller)
+    finally:
+        on.file.close()
 
 
 @pytest.mark.parametrize("flag", [None, False, True], ids=["default", "user-no-inline", "user-inline"])
@@ -284,7 +293,7 @@ def test_wrapper_inlining_with_only_the_caller_enabled(flag):
 
     from binja_d810.binja import workflow
 
-    bv = open_sample(sample("flow", "x86_64-pe", "O2"), d810=False)
+    bv = open_sample(sample("flow", "x86_64-pe", "O2"), d810=False, options={settings.CALLEES: False})
     try:
         ident, caller = function_named(bv, "ident"), function_named(bv, "ident_call")
         if flag is not None:

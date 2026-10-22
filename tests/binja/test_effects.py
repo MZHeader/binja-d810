@@ -5,7 +5,7 @@ import pytest
 from arch import IDS, MATRIX, expect_miss, sample
 from helpers import function_named, lift_return, open_sample, set_types, strip_versions
 
-from binja_d810.binja import log
+from binja_d810.binja import log, settings
 from binja_d810.ir.expr import Var, is_mba, substitute, variables
 from binja_d810.ir.parse import parse
 from binja_d810.semantic.verify import Verdict, check_equivalent
@@ -50,7 +50,11 @@ def _count_hlil_derefs(func) -> int:
 
 
 def _pair(file_name, types):
-    on, off = open_sample(file_name, d810=True), open_sample(file_name, d810=False)
+    # This suite tests the expression passes' effect boundary. The optional earlier summary
+    # pass can now prove eff_source arithmetic-only and eff_sink empty from their bodies.
+    # Its separate fixtures test those removals and keep actual writes/unknown calls.
+    on = open_sample(file_name, d810=True, options={settings.CALLEES: False})
+    off = open_sample(file_name, d810=False)
     set_types(on, types)
     set_types(off, types)
     return on, off

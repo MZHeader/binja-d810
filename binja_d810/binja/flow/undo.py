@@ -10,6 +10,19 @@ from . import evidence
 
 
 def revert(view, change) -> set[int]:
+    if change.kind == "callee_inline":
+        func = view.get_function_at(change.key)
+        if func is not None:
+            flag = func.inline_during_analysis
+            if [int(flag.value), flag.confidence] == change.detail["applied_flag"]:
+                previous, confidence = change.detail["previous_flag"]
+                state = view.begin_undo_actions()
+                try:
+                    func.set_user_inline_during_analysis(
+                        InlineDuringAnalysisWithConfidence(InlineDuringAnalysis(previous), confidence))
+                finally:
+                    view.commit_undo_actions(state)
+        return {change.key, *change.detail["callers"]}
     if change.kind == "signature":
         func = view.get_function_at(change.key)
         if func is not None and not func.has_user_type:

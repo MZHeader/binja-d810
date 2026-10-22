@@ -74,18 +74,24 @@ Restart Binary Ninja. You should see `binja-d810: activities ... registered` in 
 
 ## Usage
 
-It's off by default. To run it on one function, right-click it, go to **Function Settings** and
-tick **D-810: simplify MBA expressions**. The function reanalyzes straight away.
+It's off by default. Use **Plugins > D810 > Enable for Current Function**, or right-click the
+function, go to **Function Settings** and tick **D-810: simplify MBA expressions**.
+Both reanalyze the function straight away.
 
 <img src="imgs/function-settings.png" alt="Function Settings menu" width="520">
 
-To run it on a whole binary, tick the same option in **File > Open with Options** before opening
-it. Functions without obfuscation are skipped almost instantly, but heavily obfuscated ones can
-use their whole time budget each, so on big binaries it's often quicker to enable it only for the
-functions you care about.
+To run it on a whole binary, use **Plugins > D810 > Enable for This Binary**, or tick the same
+option in **File > Open with Options** before opening it. The menu also has disable commands
+for the current function and the whole binary; these undo D810's flow fixes. Your skipped-function
+list and time budgets still apply. Functions without obfuscation are skipped almost instantly,
+but heavily obfuscated ones can use their whole time budget each, so on big binaries it's often
+quicker to enable it only for the functions you care about.
 
-Every rewrite is logged under `binja_d810`. For a full report on one function, run this in the
-Python console:
+Every rewrite is logged under `binja_d810`. The log says **D810: analysis complete** once native
+analysis and D810's queued changes have finished. Pass failures are reported as errors; budget
+warnings still mean some work was left unfinished.
+
+Use **Plugins > D810 > Show Function Report** for the latest report, or run this in the Python console:
 
 ```python
 current_function.request_debug_report("d810")

@@ -101,6 +101,8 @@ def _flow(ctx, adapter, func, report) -> bool:
             return False
         return flow_apply.after_pass(func.view, func, adapter, report)
     except Exception as exc:  # never break analysis
+        from . import completion
+        completion.failed(func.view)
         log.logger.log_error(f"binja-d810 flow fixes failed at {func.start:#x}: {exc!r}")
         return False
 
@@ -120,12 +122,14 @@ def _begin(ctx, config, level: str, il) -> budget.Allowance:
 
 
 def _run(ctx, level: str) -> None:
+    from . import completion
     if _levels_override is not None and level not in _levels_override:
         return
     func = ctx.function
     il = ctx.mlil if level == "mlil" else ctx.hlil
     if il is None:
         return
+    completion.touch(func.view)
     config = settings.engine_config(ctx)
     rules = _rules_override if _rules_override is not None else _rules(config.disabled_rules)
     allowance = _begin(ctx, config, level, il)
@@ -154,6 +158,8 @@ def _run(ctx, level: str) -> None:
     changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
     allowance.charge(report.total_seconds)
     log.record(func, report, level)
+    if report.errors or report.rolled_back:
+        completion.failed(func.view)
     if report.rewrites or changed:
         if level == "mlil":
             ctx.mlil = il
@@ -166,6 +172,8 @@ def _unflatten(ctx) -> None:
     func, mlil = ctx.function, ctx.mlil
     if mlil is None or not ctx.get_setting_bool(settings.UNFLATTEN):
         return
+    from . import completion
+    completion.touch(func.view)
     allowance = _begin(ctx, settings.engine_config(ctx), "mlil", mlil)
     ranges, _ = parse_ranges(ctx.get_setting_string_list(settings.READ_ONLY_RANGES))
     started = time.monotonic()
@@ -200,6 +208,9 @@ def run_activity(ctx: AnalysisContext) -> None:
             log.forget(ctx.function, "mlil")
             flow_apply.release(ctx.function.view, ctx.function.start)
     except Exception as exc:  # never break analysis
+        from . import completion
+        if ctx.function is not None:
+            completion.failed(ctx.function.view)
         log.logger.log_error(f"binja-d810 MLIL activity failed: {exc!r}")
 
 
@@ -216,6 +227,9 @@ def run_hlil_activity(ctx: AnalysisContext) -> None:
         if func.check_for_debug_report("d810"):
             show_plain_text_report(f"D-810: {func.name}", debug_report_text(func))
     except Exception as exc:  # never break analysis
+        from . import completion
+        if ctx.function is not None:
+            completion.failed(ctx.function.view)
         log.logger.log_error(f"binja-d810 HLIL activity failed: {exc!r}")
 
 
@@ -225,6 +239,9 @@ def run_unflatten_activity(ctx: AnalysisContext) -> None:
         if _enabled(ctx) and (_levels_override is None or "mlil" in _levels_override):
             _unflatten(ctx)
     except Exception as exc:  # never break analysis: the last committed MLIL stays
+        from . import completion
+        if func is not None:
+            completion.failed(func.view)
         log.logger.log_error(f"binja-d810 unflatten failed at {func.start:#x}: {exc!r}")
 
 
@@ -240,6 +257,9 @@ def run_branches_activity(ctx: AnalysisContext) -> None:
             # The MBA activity's eligibility skips its callback entirely when its toggle is off.
             flow_apply.release(ctx.function.view, ctx.function.start)
     except Exception as exc:  # never break analysis
+        from . import completion
+        if ctx.function is not None:
+            completion.failed(ctx.function.view)
         log.logger.log_error(f"binja-d810 branches activity failed: {exc!r}")
 
 

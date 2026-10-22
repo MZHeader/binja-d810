@@ -22,7 +22,7 @@ from ...flow.ranges import parse as parse_ranges
 from ...flow.record import Change, Record
 from ...flow.tables import Load, Span, decode, span_of
 from ...ir.evaluate import evaluate
-from .. import log
+from .. import completion, log
 from . import collect, evidence, readonly, undo, wrappers
 
 KEY = "binja_d810.flow"  # view metadata: the record, as JSON
@@ -113,6 +113,7 @@ def _arm(view, state: State) -> None:
         if state.armed:
             return
         state.armed = True
+    completion.touch(view)
     event = view.add_analysis_completion_event(lambda: _completed(view, state))
     with state.lock:
         state.events = state.events[-15:] + [event]
@@ -144,9 +145,11 @@ def _run_completed(view, state: State) -> None:
                     state.again = False
                     continue
                 state.running = False
-                return
+                break
+        completion.done(view)
     except Exception as exc:  # never break analysis
         log.logger.log_error(f"binja-d810 flow round failed: {exc!r}")
+        completion.failed(view)
         with state.lock:
             state.running = False
             state.again = False

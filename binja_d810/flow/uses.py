@@ -2,8 +2,8 @@
 
 A table is never written when every use of its address only computes a load address: up through address
 arithmetic to a load's source, and through variables (SSA definitions and merges) up to MAX_DEPTH copies. A
-store's destination is a write. Anything else (an unproved call argument, a stored value, a comparison, a return, a
-partial read) lets the address escape, so the table may be written where the analysis cannot see. A load or
+store's destination is a write. Unproved calls, stores, returns, comparisons and partial reads let the
+address escape, so the table may be written where the analysis cannot see. A load or
 store the graph knows reaches a constant address outside the object ("load_outside", "store_outside": an arm64
 page address a neighbour's access goes through) does not use it, nor does address arithmetic whose constant value lies past the object's end ("address_outside": the
 page plus a neighbour's offset).
@@ -65,6 +65,8 @@ def classify(starts: Iterable[Hashable], graph: UseGraph, max_depth: int = MAX_D
         if parent_kind in ADDRESS_OPS:
             work.append((parent, depth))
         elif parent_kind in ("load", "load_outside") and operand == "src":
+            if not getattr(graph, "loaded_read_only", lambda *_: True)(parent, node):
+                return ESCAPE, parent
             continue
         elif parent_kind == "store_outside" and operand == "dest":
             continue
@@ -76,8 +78,15 @@ def classify(starts: Iterable[Hashable], graph: UseGraph, max_depth: int = MAX_D
             if depth >= max_depth:
                 return ESCAPE, parent
             work.extend((reader, depth + 1) for reader in graph.readers(parent))
+        elif operand == "src" and parent_kind in ("store", "store_outside", "mlil_set_var_aliased",
+                                                   "mlil_set_var_aliased_field") and \
+                getattr(graph, "stored_read_only", lambda *_: False)(parent, node):
+            continue
         elif parent_kind == "call" and operand == "params" and \
                 getattr(graph, "call_read_only", lambda *_: False)(parent, node):
+            continue
+        elif parent_kind == "mlil_ret" and operand == "src" and \
+                getattr(graph, "return_read_only", lambda *_: False)(parent, node):
             continue
         else:
             return ESCAPE, parent

@@ -62,6 +62,27 @@ def test_a_call_proof_applies_to_one_argument_not_the_whole_call():
     assert classify(["a", "b"], g) == (ESCAPE, "call")
 
 
+def test_a_local_store_proof_never_accepts_writing_through_the_pointer():
+    g = Graph({"c": "const", "st": "store"}, {"c": ("st", "src")})
+    g.stored_read_only = lambda *_: True
+    assert classify(["c"], g) == (READ, None)
+    g.parents["c"] = ("st", "dest")
+    assert classify(["c"], g) == (WRITE, "st")
+
+
+def test_a_slot_load_requires_the_loaded_pointers_consumer_proof():
+    g = Graph({"c": "const", "ld": "load"}, {"c": ("ld", "src")})
+    g.loaded_read_only = lambda *_: False
+    assert classify(["c"], g) == (ESCAPE, "ld")
+
+
+def test_returning_a_pointer_requires_an_explicit_consumer_proof():
+    g = Graph({"c": "const", "ret": "mlil_ret"}, {"c": ("ret", "src")})
+    assert classify(["c"], g) == (ESCAPE, "ret")
+    g.return_read_only = lambda *_: True
+    assert classify(["c"], g) == (READ, None)
+
+
 def test_outside_address_search_follows_writes_but_not_stored_or_passed_pointers():
     assert reaches_write("c", _copies(2, "store", "dest"))
     assert not reaches_write("c", _copies(2, "store", "src"))

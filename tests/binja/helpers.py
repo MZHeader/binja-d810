@@ -87,6 +87,26 @@ def data_pointers(bv, func) -> list[int]:
     return sorted(found)
 
 
+def global_reads(func):
+    """Fixed-address reads and widths, independent of dead local initializers and renaming."""
+    from collections import Counter
+    from binaryninja import MediumLevelILOperation as M
+    reads = Counter()
+    pending = list(func.mlil.instructions)
+    while pending:
+        node = pending.pop()
+        if node.operation in (M.MLIL_LOAD, M.MLIL_LOAD_STRUCT):
+            address = node.src.value
+            if address.type in _CONSTANTS:
+                reads[(address.value + getattr(node, "offset", 0), node.size)] += 1
+        for operand in node.operands:
+            if hasattr(operand, "operation"):
+                pending.append(operand)
+            elif isinstance(operand, list):
+                pending.extend(x for x in operand if hasattr(x, "operation"))
+    return reads
+
+
 def settle(bv, seconds: float = 120) -> None:
     """Wait for the flow fixes (v4.0): analysis idle, and no round queued, armed or running, twice in a row."""
     import time

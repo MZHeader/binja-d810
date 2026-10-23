@@ -2,7 +2,7 @@
 
 import pytest
 from arch import IDS, MATRIX, sample
-from helpers import function_named, open_sample, settle
+from helpers import function_named, global_reads, open_sample, settle
 from flowcases import text
 
 from binja_d810.binja.flow import apply, collect, evidence
@@ -123,6 +123,7 @@ def test_workflow_folds_safe_keys_and_restores_them(build):
     bv = open_sample(sample("key_bounds", *build), d810=False)
     try:
         before = {name: text(function_named(bv, name)) for name in SAFE + UNSAFE}
+        reads = {name: global_reads(function_named(bv, name)) for name in UNSAFE}
         Settings().set_bool(workflow.ACTIVITY_SETTING, True, bv)
         for f in bv.functions:
             f.reanalyze()
@@ -130,7 +131,7 @@ def test_workflow_folds_safe_keys_and_restores_them(build):
         for name in SAFE:
             assert "0x11111111" in text(function_named(bv, name)), (name, text(function_named(bv, name)))
         for name in UNSAFE:
-            assert text(function_named(bv, name)) == before[name], name
+            assert global_reads(function_named(bv, name)) == reads[name], name
         Settings().set_bool(workflow.ACTIVITY_SETTING, False, bv)
         for f in bv.functions:
             f.reanalyze()

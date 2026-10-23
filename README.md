@@ -24,6 +24,7 @@ And after (4 lines):
 * OLLVM-style instruction substitution, like `(x & y) | (x ^ y)` for `x | y`
 * Arithmetic helpers with private register conventions, including nested helpers and proven
   scratch-slot round trips
+* Dead private stack writes and non-escaping scratch accesses, including partial byte ranges
 * Opaque predicates, including ones hidden behind long chains of masked constants, ones that
   only hold on every path into a merge, values carried round loops, and the classic
   number-theoretic ones like `7 * y * y - 1 != x * x`
@@ -123,6 +124,8 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   a loop over a state variable that's only ever set to constants. It also removes junk loops.
 * **Pure-callee summaries**: on by default. Exposes arithmetic across helper calls before MLIL
   generation. Turn it off to restore the calls; the limits are listed below.
+* **Clean up private scratch slots**: on by default. Removes proven dead stack traffic and
+  exposes private loads/stores to the expression passes. Disabling it restores the original IL.
 * **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant. Use
   them for data you know never changes. Clearing a range puts the old types back.
 * **Enabled**: a kill switch for everything.
@@ -168,6 +171,40 @@ The debug report's `callees` entries list substitutions and rejection reasons. S
 cover ARM64, x86-64 and ordinary i686 calls at O0/O2, with independent arithmetic models and undo
 checks. These tests do not establish coverage on real malware. Direct call-link substitution is
 currently supported on those three architectures; other architectures are left unchanged.
+
+## Private scratch slots
+
+D810 follows stack addresses through copies and fixed offsets. When every use is accounted for,
+it converts local loads/stores to variable accesses and clears their alias status in the generated
+IL. It then removes a store only if no path can read any of its bytes before they are overwritten.
+An additional SSA check preserves live logical values that happen to share a stack location.
+Unused pure address calculations are removed with the stores.
+
+Escaping addresses, unknown calls, volatile/protected slots and unmodeled memory accesses stay
+conservative. Partial overwrites preserve the remaining bytes. Overlapping logical variables
+keep their alias identities; partial accesses on big-endian targets are currently excluded.
+The proof uses exact byte ranges and all CFG paths, without guessing which branch will run.
+
+Cleanup runs before MBA rewriting and after control-flow recovery, under the shared function
+budget. Its settings are:
+
+| Setting | Default |
+| --- | ---: |
+| `binja_d810.scratchSlots` | true |
+| `binja_d810.scratchInstructions` | 20,000 instructions |
+| `binja_d810.scratchNodes` | 40,000 proof nodes per round |
+| `binja_d810.scratchFrameBytes` | 4,096 distinct stack bytes |
+| `binja_d810.scratchLivenessVisits` | 100,000 fixpoint visits |
+| `binja_d810.scratchRounds` | 4 rounds per cleanup stage |
+| `binja_d810.scratchAddressDepth` | 64 SSA definitions |
+
+The report's `scratch` entries show removed stores, promoted accesses, cleared aliases and
+rejection reasons. No user types or binary bytes are changed; disabling the feature regenerates
+the original aliases. Synthetic ARM64, x86-64 and i686 fixtures check independent arithmetic
+models, escapes, partial overlaps, budgets and disable/restore. One i686 PE O2 partial-store
+fixture exposes an existing native MLIL error that loses the upper bytes before D810 runs;
+the suite records it as an expected failure and separately checks that D810 preserves the baseline.
+These fixtures do not establish coverage on real malware.
 
 ## Notes
 

@@ -20,7 +20,7 @@ from ..deadline import Deadline
 from ..flow.ranges import parse as parse_ranges
 from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
-from . import budget, log, settings, unflatten
+from . import budget, log, scratch, settings, unflatten
 from .engine import simplify_function
 from .flow import apply as flow_apply, branches
 from .callees import activity as callees
@@ -135,6 +135,7 @@ def _run(ctx, level: str) -> None:
     config = settings.engine_config(ctx)
     rules = _rules_override if _rules_override is not None else _rules(config.disabled_rules)
     allowance = _begin(ctx, config, level, il)
+    offered = allowance.remaining()
     early = callees.take(func) if level == "mlil" else None
     if early is not None:
         allowance.charge(early.seconds)
@@ -151,6 +152,14 @@ def _run(ctx, level: str) -> None:
             reserved = min(DISPATCH_RESERVE_SECONDS, remaining / 2)
         probe_seconds, probe_cpu = time.monotonic() - started, time.thread_time() - cpu
     deadline = Deadline(allowance.deadline.at - reserved)
+    scratch_report = None
+    scratch_changed = False
+    if level == "mlil" and ctx.get_setting_bool(settings.SCRATCH):
+        original = il
+        il, scratch_report = scratch.run(il, settings.scratch_limits(ctx), deadline)
+        scratch_changed = il is not original
+        if scratch_changed:
+            allowance.adopt(_handle(il), il)
     make = MLILAdapter if level == "mlil" else HLILAdapter
     adapter = make(il, config.limits.max_nodes, deadline)
     backends = _backends_override if _backends_override is not None else _backends()
@@ -161,6 +170,12 @@ def _run(ctx, level: str) -> None:
     report.total_seconds += probe_seconds
     report.plan_seconds += probe_seconds
     report.plan_cpu_seconds += probe_cpu
+    if scratch_report is not None:
+        _scratch_report(report, scratch_report, "before MBA")
+        report.total_seconds += scratch_report.seconds
+        report.plan_seconds += scratch_report.seconds
+        report.plan_cpu_seconds += scratch_report.cpu_seconds
+        report.allowance_seconds += scratch_report.seconds
     changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
     allowance.charge(report.total_seconds)
     if early is not None:
@@ -171,14 +186,46 @@ def _run(ctx, level: str) -> None:
         report.plan_seconds += early.seconds
         report.plan_cpu_seconds += early.cpu_seconds
         report.allowance_seconds += early.seconds
+    report.allowance_seconds = min(report.allowance_seconds, max(0.0, offered - reserved))
+    report.overrun_seconds = max(report.overrun_seconds, report.total_seconds - report.allowance_seconds)
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed:
+    if report.rewrites or changed or scratch_changed:
         if level == "mlil":
             ctx.mlil = il
         else:
             ctx.hlil = il
+
+
+def _scratch_report(report, result, phase):
+    report.scratch_stores += result.stores
+    report.scratch_accesses += result.accesses
+    report.scratch_aliases += result.aliases
+    report.scratch_computations += result.computations
+    report.scratch_seconds += result.seconds
+    report.budget_exhausted |= result.exhausted
+    report.scratch.extend(f"{phase}: {line}" for line in result.notes)
+
+
+def _scratch_cleanup(ctx):
+    if ctx.mlil is None or not ctx.get_setting_bool(settings.SCRATCH):
+        return
+    original = ctx.mlil
+    allowance = _begin(ctx, settings.engine_config(ctx), "mlil", original)
+    cleaned, result = scratch.run(original, settings.scratch_limits(ctx), allowance.deadline)
+    allowance.charge(result.seconds)
+    if cleaned is not original:
+        ctx.mlil = cleaned
+        allowance.adopt(_handle(cleaned), cleaned)
+    report = log.latest_report(ctx.function, "mlil")
+    if report is not None:
+        _scratch_report(report, result, "after control flow")
+    if result.stores or result.accesses or result.aliases or result.computations:
+        log.logger.log_info(f"{ctx.function.start:#x} scratch after control flow: removed {result.stores} stores and "
+                            f"{result.computations} unused computations; promoted {result.accesses} accesses")
+    for line in result.notes:
+        log.logger.log_debug(f"{ctx.function.start:#x} scratch after control flow: {line}")
 
 
 def _unflatten(ctx) -> None:
@@ -252,6 +299,7 @@ def run_unflatten_activity(ctx: AnalysisContext) -> None:
     try:
         if _enabled(ctx) and (_levels_override is None or "mlil" in _levels_override):
             _unflatten(ctx)
+            _scratch_cleanup(ctx)
     except Exception as exc:  # never break analysis: the last committed MLIL stays
         from . import completion
         if func is not None:

@@ -6,7 +6,7 @@ import pytest
 from arch import IDS, MATRIX, expect_miss, sample
 from binaryninja import Settings
 from flowcases import text
-from helpers import function_named, open_sample, settle
+from helpers import function_named, global_reads, open_sample, settle
 
 from binja_d810.binja import workflow
 from binja_d810.binja.flow import apply, collect, evidence
@@ -57,7 +57,10 @@ def test_a_machine_whose_states_are_encoded_against_a_key_is_unflattened(request
 @pytest.mark.parametrize("name", NEGATIVES)
 def test_a_global_that_is_not_a_key_stays(builds, name):
     _, on, off = builds
-    assert text(function_named(on, name)) == text(function_named(off, name))
+    # Stack cleanup may remove unrelated initializers; every global read must remain.
+    assert global_reads(function_named(on, name)) == global_reads(function_named(off, name))
+    assert not any(c.key <= address < c.detail["end"]
+                   for c in _keys(on) for address, _ in global_reads(function_named(off, name)))
 
 
 def test_the_report_names_the_key(request, builds):

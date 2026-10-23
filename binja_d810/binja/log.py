@@ -37,6 +37,11 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
     for index, line in enumerate(report.callees):
         emit = logger.log_info if index == 0 and report.callee_calls else logger.log_debug
         emit(f"{func.start:#x} callees: {line}")
+    if report.scratch_stores or report.scratch_accesses or report.scratch_aliases or report.scratch_computations:
+        logger.log_info(f"{func.start:#x} scratch: removed {report.scratch_stores} stores and "
+                        f"{report.scratch_computations} unused computations; promoted {report.scratch_accesses} accesses")
+    for line in report.scratch:
+        logger.log_debug(f"{func.start:#x} scratch: {line}")
     for r in report.skipped:
         logger.log_debug(f"{func.start:#x} @ {r.address:#x} [{r.level}] skipped: {r.reason}")
     for r in report.errors:
@@ -75,6 +80,11 @@ def render(report: FunctionReport) -> str:
     lines += [f"flow: {line}" for line in getattr(report, "flow", [])]
     lines += [f"unflatten: {line}" for line in getattr(report, "unflatten", [])]
     lines += [f"callees: {line}" for line in report.callees]
+    if report.scratch_seconds:
+        lines.append(f"scratch: {report.scratch_stores} dead stores; {report.scratch_computations} unused computations; "
+                     f"{report.scratch_accesses} accesses promoted; {report.scratch_aliases} aliases cleared; "
+                     f"{report.scratch_seconds:.3f} s across cleanup stages")
+    lines += [f"scratch: {line}" for line in report.scratch]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

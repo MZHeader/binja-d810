@@ -86,6 +86,12 @@ class FunctionReport:
     unflatten: list[str] = field(default_factory=list)  # one line per unflattening round (v4.2)
     callees: list[str] = field(default_factory=list)
     callee_calls: int = 0
+    scratch: list[str] = field(default_factory=list)
+    scratch_stores: int = 0
+    scratch_accesses: int = 0
+    scratch_aliases: int = 0
+    scratch_computations: int = 0
+    scratch_seconds: float = 0.0
     # Time. Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0
@@ -109,7 +115,8 @@ class FunctionReport:
         """What was folded, by mechanism, and what was left, by reason: zero counts left out."""
         folded = Counter(r.mechanism for r in self.rewrites)
         folded.update({"constant uses": self.constant_uses, "flow": len(self.flow), "unflatten": len(self.unflatten),
-                       "callee calls": self.callee_calls})
+                       "callee calls": self.callee_calls, "scratch stores": self.scratch_stores,
+                       "scratch accesses": self.scratch_accesses})
         left = Counter(r.reason.split(":")[0] for r in self.skipped)
         return {"folded": {k: n for k, n in folded.items() if n}, "left": dict(left)}
 

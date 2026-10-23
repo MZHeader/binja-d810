@@ -31,8 +31,29 @@ CALLEE_PROOF_MS = f"{PREFIX}.calleeProofMilliseconds"
 CALLEE_DEPTH = f"{PREFIX}.calleeDepth"
 CALLEE_NATIVE = f"{PREFIX}.calleeNativeInline"
 CALLEE_RED_ZONE = f"{PREFIX}.calleeRedZoneBytes"
+SCRATCH = f"{PREFIX}.scratchSlots"
+SCRATCH_INSTRUCTIONS = f"{PREFIX}.scratchInstructions"
+SCRATCH_NODES = f"{PREFIX}.scratchNodes"
+SCRATCH_BYTES = f"{PREFIX}.scratchFrameBytes"
+SCRATCH_VISITS = f"{PREFIX}.scratchLivenessVisits"
+SCRATCH_ROUNDS = f"{PREFIX}.scratchRounds"
+SCRATCH_DEPTH = f"{PREFIX}.scratchAddressDepth"
 
 _SPECS = {
+    SCRATCH_DEPTH: {"title": "Scratch address depth", "type": "number", "default": 64, "minValue": 1,
+                    "maxValue": 256, "description": "Maximum nested SSA definitions inspected to resolve a stack address."},
+    SCRATCH: {"title": "Clean up private scratch slots", "type": "boolean", "default": True,
+               "description": "Remove proven dead local stack writes and promote non-escaping stack accesses. Regenerated when disabled."},
+    SCRATCH_INSTRUCTIONS: {"title": "Scratch instruction limit", "type": "number", "default": 20000, "minValue": 1,
+                           "description": "Maximum MLIL instructions inspected or copied by one scratch pass."},
+    SCRATCH_NODES: {"title": "Scratch proof node limit", "type": "number", "default": 40000, "minValue": 1,
+                    "description": "Maximum expression, use and control-flow nodes visited in one scratch cleanup round."},
+    SCRATCH_BYTES: {"title": "Scratch frame byte limit", "type": "number", "default": 4096, "minValue": 1,
+                    "description": "Maximum distinct local stack bytes tracked by scratch liveness."},
+    SCRATCH_VISITS: {"title": "Scratch liveness work limit", "type": "number", "default": 100000, "minValue": 1,
+                     "description": "Maximum instruction visits while solving the byte-liveness fixpoint."},
+    SCRATCH_ROUNDS: {"title": "Scratch cleanup rounds", "type": "number", "default": 4, "minValue": 1,
+                     "description": "Maximum cleanup rounds per pass, before MBA rewriting and after control-flow recovery."},
     CALLEE_RED_ZONE: {"title": "Callee red-zone byte limit", "type": "number", "default": 128, "minValue": 0,
                       "description": "Maximum stack bytes below SP used by scratch proofs, capped by the platform ABI's red zone. Zero disables this; unknown and kernel platforms have none."},
     CALLEE_NATIVE: {"title": "Prefer native callee inlining", "type": "boolean", "default": False,
@@ -116,6 +137,14 @@ def callee_limits(ctx):
                   caller_instructions=ctx.get_setting_uint64(CALLEE_CALLER_INSTRUCTIONS),
                   sites=ctx.get_setting_uint64(CALLEE_SITES), proof_ms=ctx.get_setting_uint64(CALLEE_PROOF_MS),
                   depth=ctx.get_setting_uint64(CALLEE_DEPTH), red_zone_bytes=ctx.get_setting_uint64(CALLEE_RED_ZONE))
+
+
+def scratch_limits(ctx):
+    from .scratch import Limits
+
+    return Limits(instructions=ctx.get_setting_uint64(SCRATCH_INSTRUCTIONS), nodes=ctx.get_setting_uint64(SCRATCH_NODES),
+                  frame_bytes=ctx.get_setting_uint64(SCRATCH_BYTES), visits=ctx.get_setting_uint64(SCRATCH_VISITS),
+                  rounds=ctx.get_setting_uint64(SCRATCH_ROUNDS), address_depth=ctx.get_setting_uint64(SCRATCH_DEPTH))
 
 
 def skipped_functions(ctx) -> set[int]:

@@ -25,6 +25,7 @@ And after (4 lines):
 * Arithmetic helpers with private register conventions, including nested helpers and proven
   scratch-slot round trips
 * Dead private stack writes and non-escaping scratch accesses, including partial byte ranges
+* Comparisons reconstructed from arithmetic flags and supported conditional-compare merges
 * Opaque predicates, including ones hidden behind long chains of masked constants, ones that
   only hold on every path into a merge, values carried round loops, and the classic
   number-theoretic ones like `7 * y * y - 1 != x * x`
@@ -126,6 +127,8 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   generation. Turn it off to restore the calls; the limits are listed below.
 * **Clean up private scratch slots**: on by default. Removes proven dead stack traffic and
   exposes private loads/stores to the expression passes. Disabling it restores the original IL.
+* **Recombine flag conditions**: on by default. Replaces proven flag formulas with comparisons
+  in MLIL and HLIL, including bounded conditional-compare merges.
 * **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant. Use
   them for data you know never changes. Clearing a range puts the old types back.
 * **Enabled**: a kill switch for everything.
@@ -205,6 +208,43 @@ models, escapes, partial overlaps, budgets and disable/restore. One i686 PE O2 p
 fixture exposes an existing native MLIL error that loses the upper bytes before D810 runs;
 the suite records it as an expected failure and separately checks that D810 preserves the baseline.
 These fixtures do not establish coverage on real malware.
+
+## Flag conditions
+
+D810 rebuilds signed and unsigned comparisons from pure boolean and arithmetic expressions.
+For conditional compares, it follows the actual SSA values leaving each arm of a branch and
+combines them with the branch condition. It checks every proposed expression at its exact
+bit widths, then removes newly unused flag calculations. A flag also used as external data
+keeps that use and blocks the dependent rewrite.
+
+The native passes read IL semantics, without matching register or symbol names. A small
+subtraction model isolates ARM64's no-borrow carry convention from x86's borrow convention;
+unit tests prove all ten comparisons at several widths. Native C fixtures cover all eight
+ARM64/x86-64/i686 builds, with an independent symbolic interpreter checking complete branch
+paths and observable stores. On x86-64, ordinary compare chains are often already simplified
+by Binary Ninja. The ARM64 unsigned conditional-compare fixture loses its merged flag locals.
+
+Supported merges are bounded two-arm branches, including one empty arm. Loops, ambiguous
+merges, stale operands, volatile/protected values and unknown flag operations stay unchanged.
+In particular, native `ADD_OVERFLOW` is currently unmodeled: some ARM64 signed conditional
+compares retain their flag locals. Its semantics are not guessed from the displayed expression.
+Explicit arithmetic overflow formulas are supported and proven. These are synthetic results;
+no real-malware coverage is claimed.
+
+| Setting | Default |
+| --- | ---: |
+| `binja_d810.flagConditions` | true; disable to restore the original conditions |
+| `binja_d810.flagInstructions` | 20,000 instructions |
+| `binja_d810.flagNodes` | 2,000 expression nodes |
+| `binja_d810.flagWork` | 80,000 proof visits per pass |
+| `binja_d810.flagCandidates` | 128 comparison attempts per expression |
+| `binja_d810.flagConditionsPerPass` | 128 condition roots |
+| `binja_d810.flagMergeDepth` | 8 nested merges |
+| `binja_d810.flagProofMilliseconds` | 200 ms per proof |
+
+Both stages share the function's time budget. The `flags` report entries list successful
+recombinations and rejection reasons. These are regenerated IL edits, with no binary or user
+metadata changes.
 
 ## Notes
 

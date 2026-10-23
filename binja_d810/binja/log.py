@@ -42,6 +42,9 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
                         f"{report.scratch_computations} unused computations; promoted {report.scratch_accesses} accesses")
     for line in report.scratch:
         logger.log_debug(f"{func.start:#x} scratch: {line}")
+    for index, line in enumerate(report.flags):
+        emit = logger.log_info if index == 0 and report.flag_conditions else logger.log_debug
+        emit(f"{func.start:#x} flags: {line}")
     for r in report.skipped:
         logger.log_debug(f"{func.start:#x} @ {r.address:#x} [{r.level}] skipped: {r.reason}")
     for r in report.errors:
@@ -85,6 +88,9 @@ def render(report: FunctionReport) -> str:
                      f"{report.scratch_accesses} accesses promoted; {report.scratch_aliases} aliases cleared; "
                      f"{report.scratch_seconds:.3f} s across cleanup stages")
     lines += [f"scratch: {line}" for line in report.scratch]
+    lines += [f"flags: {line}" for line in report.flags]
+    if report.flag_seconds:
+        lines.append(f"flags: {report.flag_conditions} conditions; {report.flag_seconds:.3f} s")
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

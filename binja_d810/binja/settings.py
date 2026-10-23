@@ -38,8 +38,32 @@ SCRATCH_BYTES = f"{PREFIX}.scratchFrameBytes"
 SCRATCH_VISITS = f"{PREFIX}.scratchLivenessVisits"
 SCRATCH_ROUNDS = f"{PREFIX}.scratchRounds"
 SCRATCH_DEPTH = f"{PREFIX}.scratchAddressDepth"
+FLAGS = f"{PREFIX}.flagConditions"
+FLAG_INSTRUCTIONS = f"{PREFIX}.flagInstructions"
+FLAG_NODES = f"{PREFIX}.flagNodes"
+FLAG_WORK = f"{PREFIX}.flagWork"
+FLAG_CANDIDATES = f"{PREFIX}.flagCandidates"
+FLAG_CONDITIONS = f"{PREFIX}.flagConditionsPerPass"
+FLAG_MERGES = f"{PREFIX}.flagMergeDepth"
+FLAG_PROOF_MS = f"{PREFIX}.flagProofMilliseconds"
 
 _SPECS = {
+    FLAGS: {"title": "Recombine flag conditions", "type": "boolean", "default": True,
+            "description": "Prove simpler comparisons for boolean flags and bounded conditional-compare merges."},
+    FLAG_INSTRUCTIONS: {"title": "Flag instruction limit", "type": "number", "default": 20000, "minValue": 1,
+                        "description": "Maximum IL instructions in a function considered for flag reconstruction."},
+    FLAG_NODES: {"title": "Flag expression limit", "type": "number", "default": 2000, "minValue": 1,
+                 "description": "Maximum nodes in a lifted flag expression."},
+    FLAG_WORK: {"title": "Flag proof work limit", "type": "number", "default": 80000, "minValue": 1,
+                "description": "Maximum IL, SSA-use and reconstruction visits per flag pass."},
+    FLAG_CANDIDATES: {"title": "Flag comparison candidates", "type": "number", "default": 128, "minValue": 1,
+                      "description": "Maximum comparison proof attempts per flag expression."},
+    FLAG_CONDITIONS: {"title": "Flag conditions per pass", "type": "number", "default": 128, "minValue": 1,
+                      "description": "Maximum condition roots inspected per MLIL or HLIL pass."},
+    FLAG_MERGES: {"title": "Flag merge depth", "type": "number", "default": 8, "minValue": 1, "maxValue": 32,
+                  "description": "Maximum nested conditional-compare merges followed through SSA."},
+    FLAG_PROOF_MS: {"title": "Flag proof timeout (milliseconds)", "type": "number", "default": 200, "minValue": 1,
+                    "description": "Maximum time per comparison proof, also bounded by the shared function deadline."},
     SCRATCH_DEPTH: {"title": "Scratch address depth", "type": "number", "default": 64, "minValue": 1,
                     "maxValue": 256, "description": "Maximum nested SSA definitions inspected to resolve a stack address."},
     SCRATCH: {"title": "Clean up private scratch slots", "type": "boolean", "default": True,
@@ -145,6 +169,14 @@ def scratch_limits(ctx):
     return Limits(instructions=ctx.get_setting_uint64(SCRATCH_INSTRUCTIONS), nodes=ctx.get_setting_uint64(SCRATCH_NODES),
                   frame_bytes=ctx.get_setting_uint64(SCRATCH_BYTES), visits=ctx.get_setting_uint64(SCRATCH_VISITS),
                   rounds=ctx.get_setting_uint64(SCRATCH_ROUNDS), address_depth=ctx.get_setting_uint64(SCRATCH_DEPTH))
+
+
+def flag_limits(ctx):
+    from ..flags.recombine import Limits
+    return Limits(instructions=ctx.get_setting_uint64(FLAG_INSTRUCTIONS), nodes=ctx.get_setting_uint64(FLAG_NODES),
+                  work=ctx.get_setting_uint64(FLAG_WORK), candidates=ctx.get_setting_uint64(FLAG_CANDIDATES),
+                  conditions=ctx.get_setting_uint64(FLAG_CONDITIONS), merges=ctx.get_setting_uint64(FLAG_MERGES),
+                  proof_ms=ctx.get_setting_uint64(FLAG_PROOF_MS))
 
 
 def skipped_functions(ctx) -> set[int]:

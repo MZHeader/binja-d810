@@ -20,7 +20,7 @@ from ..deadline import Deadline
 from ..flow.ranges import parse as parse_ranges
 from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
-from . import budget, log, scratch, settings, unflatten
+from . import budget, flag_conditions, log, scratch, settings, unflatten
 from .engine import simplify_function
 from .flow import apply as flow_apply, branches
 from .callees import activity as callees
@@ -160,6 +160,8 @@ def _run(ctx, level: str) -> None:
         scratch_changed = il is not original
         if scratch_changed:
             allowance.adopt(_handle(il), il)
+    flags = flag_conditions.run(il, level, settings.flag_limits(ctx), deadline) \
+        if ctx.get_setting_bool(settings.FLAGS) else None
     make = MLILAdapter if level == "mlil" else HLILAdapter
     adapter = make(il, config.limits.max_nodes, deadline)
     backends = _backends_override if _backends_override is not None else _backends()
@@ -176,6 +178,14 @@ def _run(ctx, level: str) -> None:
         report.plan_seconds += scratch_report.seconds
         report.plan_cpu_seconds += scratch_report.cpu_seconds
         report.allowance_seconds += scratch_report.seconds
+    if flags is not None:
+        report.flags, report.flag_conditions = flags.notes, flags.conditions
+        report.flag_seconds = flags.seconds
+        report.budget_exhausted |= flags.exhausted
+        report.total_seconds += flags.seconds
+        report.plan_seconds += flags.seconds
+        report.plan_cpu_seconds += flags.cpu_seconds
+        report.allowance_seconds += flags.seconds
     changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
     allowance.charge(report.total_seconds)
     if early is not None:
@@ -191,7 +201,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed:
+    if report.rewrites or changed or scratch_changed or report.flag_conditions:
         if level == "mlil":
             ctx.mlil = il
         else:

@@ -53,6 +53,10 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
         logger.log_info(f"{func.start:#x} constant buffers: evaluated {report.constant_steps} steps; recovered {len(report.constant_strings)} text buffers")
     for line in report.constant_buffers:
         logger.log_debug(f"{func.start:#x} constant buffers: {line}")
+    if report.mutable_folds:
+        logger.log_info(f"{func.start:#x} mutable values: proved {report.mutable_folds} invariant expressions")
+    for line in report.mutable_values:
+        logger.log_debug(f"{func.start:#x} mutable values: {line}")
     for r in report.skipped:
         logger.log_debug(f"{func.start:#x} @ {r.address:#x} [{r.level}] skipped: {r.reason}")
     for r in report.errors:
@@ -106,6 +110,9 @@ def render(report: FunctionReport) -> str:
         lines.append(f"constant buffers: {report.constant_regions} regions; {report.constant_steps} steps; {report.constant_seconds:.3f} s")
     lines += [f"constant buffers: {line}" for line in report.constant_buffers]
     lines += [f"{address:#x} buffer text (printability heuristic): {text!r}" for address, text in report.constant_strings]
+    if report.mutable_seconds:
+        lines.append(f"mutable values: {report.mutable_folds} invariants; {len(report.mutable_domains)} domains; {report.mutable_seconds:.3f} s")
+    lines += [f"mutable values: {line}" for line in report.mutable_values]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

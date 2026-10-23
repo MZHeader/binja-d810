@@ -3,7 +3,8 @@
 scripts/binja_pytest.sh launches Binary Ninja with BINJA_D810_PYTEST_ARGS (JSON list of pytest
 arguments), BINJA_D810_PYTEST_OUT (a directory) and BINJA_D810_PYTEST_CWD (where pytest runs). This module runs pytest on a background
 thread, writes pytest.log and result.json into that directory, then quits the application. On macOS the
-test process prevents idle system sleep for its lifetime, so timed tests survive a detached launcher.
+test process prevents idle sleep and, on AC power, system sleep for its lifetime. Native analysis
+timers can count sleep that Python's monotonic test timer excludes.
 """
 
 import contextlib
@@ -37,7 +38,7 @@ def _run(args: list[str], out_dir: Path) -> None:
     awake = None
     try:
         if sys.platform == "darwin":
-            awake = subprocess.Popen(["/usr/bin/caffeinate", "-i", "-t", os.environ.get(ENV_TIMEOUT, "3600"),
+            awake = subprocess.Popen(["/usr/bin/caffeinate", "-is", "-t", os.environ.get(ENV_TIMEOUT, "3600"),
                                       "-w", str(os.getpid())],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         import pytest

@@ -104,6 +104,10 @@ class FunctionReport:
     constant_steps: int = 0
     constant_strings: list = field(default_factory=list)
     constant_seconds: float = 0.0
+    mutable_values: list[str] = field(default_factory=list)
+    mutable_domains: list = field(default_factory=list)
+    mutable_folds: int = 0
+    mutable_seconds: float = 0.0
     # Time. Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0
@@ -130,7 +134,7 @@ class FunctionReport:
                        "callee calls": self.callee_calls, "scratch stores": self.scratch_stores,
                        "scratch accesses": self.scratch_accesses, "flag conditions": self.flag_conditions,
                        "allocation loads": self.allocation_loads, "allocation lifetimes": self.allocation_lifetimes,
-                       "constant regions": self.constant_regions})
+                       "constant regions": self.constant_regions, "value-set invariants": self.mutable_folds})
         left = Counter(r.reason.split(":")[0] for r in self.skipped)
         return {"folded": {k: n for k, n in folded.items() if n}, "left": dict(left)}
 

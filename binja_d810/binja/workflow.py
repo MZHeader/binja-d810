@@ -20,7 +20,7 @@ from ..deadline import Deadline
 from ..flow.ranges import parse as parse_ranges
 from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
-from . import allocation_roundtrips, annotations, budget, constant_buffers, flag_conditions, log, scratch, settings, unflatten
+from . import allocation_roundtrips, annotations, budget, constant_buffers, flag_conditions, log, mutable_values, scratch, settings, unflatten
 from .engine import simplify_function
 from .flow import apply as flow_apply, branches
 from .callees import activity as callees
@@ -170,6 +170,22 @@ def _run(ctx, level: str) -> None:
             allowance.adopt(_handle(il), il)
     flags = flag_conditions.run(il, level, settings.flag_limits(ctx), deadline) \
         if ctx.get_setting_bool(settings.FLAGS) else None
+    mutable = None
+    mutable_changed = False
+    if level == "mlil":
+        if ctx.get_setting_bool(settings.MUTABLE_VALUES):
+            original = il
+            il, mutable = mutable_values.run(il, settings.mutable_limits(ctx), deadline)
+            mutable_changed = il is not original
+            if mutable_changed: allowance.adopt(_handle(il), il)
+        sites = []
+        if mutable is not None and mutable.domains and mutable.evidence:
+            text = "; ".join(f"{address:#x}/{size}B in {{" + ", ".join(hex(v) for v in values) + "}"
+                             for address, size, values in mutable.domains)
+            sites = [annotations.Site(func.start, func.start, settings.MUTABLE_VALUES,
+                     "D810 possible global values: " + text, mutable.evidence, (settings.MUTABLE_COMMENTS,))]
+        annotations.reconcile(func, settings.MUTABLE_VALUES, sites,
+                              ctx.get_setting_bool(settings.MUTABLE_COMMENTS) and ctx.get_setting_bool(settings.FLOW_FIXES))
     constants = None
     constant_changed = False
     if level == "mlil":
@@ -228,7 +244,15 @@ def _run(ctx, level: str) -> None:
         report.budget_exhausted |= constants.exhausted
         report.total_seconds += constants.seconds; report.plan_seconds += constants.seconds
         report.plan_cpu_seconds += constants.cpu_seconds; report.allowance_seconds += constants.seconds
+    if mutable is not None:
+        report.mutable_values, report.mutable_domains = mutable.notes, mutable.domains
+        report.mutable_folds, report.mutable_seconds = mutable.folded, mutable.seconds
+        report.budget_exhausted |= mutable.exhausted
+        report.total_seconds += mutable.seconds; report.plan_seconds += mutable.seconds
+        report.plan_cpu_seconds += mutable.cpu_seconds; report.allowance_seconds += mutable.seconds
     changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
+    if mutable is not None and mutable.deferred:
+        flow_apply.defer_reanalysis(func)
     allowance.charge(report.total_seconds)
     if early is not None:
         report.callees = early.notes
@@ -243,7 +267,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or report.flag_conditions:
+    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions:
         if level == "mlil":
             ctx.mlil = il
         else:

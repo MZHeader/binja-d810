@@ -25,11 +25,12 @@ class Summary:
 
 
 class Proof:
-    def __init__(self, uses_of, deadline, limit=4096):
+    def __init__(self, uses_of, deadline, limit=4096, accepted_store=None):
         self.uses_of, self.deadline, self.left = uses_of, deadline, limit
         self.calls, self.active = {}, set()
         self.bodies = {}
         self.results = set()
+        self.accepted_store = accepted_store
 
     def graph(self, uses, span=None, depth=0, returns=False):
         return Graph(self, uses, span, depth, returns)
@@ -124,6 +125,8 @@ class Graph:
             if node not in self.stores:
                 self.stores[node] = self.bounds.misses(self.uses.nodes[node], *self.span)
             if self.stores[node]:
+                return "store_outside"
+            if self.proof.accepted_store is not None and self.proof.accepted_store(self.uses, self.uses.nodes[node], self.span):
                 return "store_outside"
         return kind
 

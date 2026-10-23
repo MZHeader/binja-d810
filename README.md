@@ -28,6 +28,7 @@ And after (4 lines):
 * Comparisons reconstructed from arithmetic flags and supported conditional-compare merges
 * Private allocation round trips when explicit semantic contracts establish their memory behavior
 * Bounded constant-input buffer computations, with decoded-text comments at their uses
+* Invariant expressions over bounded mutable-global value sets, including supported atomic updates
 * Opaque predicates, including ones hidden behind long chains of masked constants, ones that
   only hold on every path into a merge, values carried round loops, and the classic
   number-theoretic ones like `7 * y * y - 1 != x * x`
@@ -344,6 +345,71 @@ and compared with the Python generator. Fixtures disable compiler vectorization 
 protectors to test scalar semantics. Three x86 O2 cases currently have incorrect native
 constant-copy bytes **before D810**; strict expected failures record that limitation and check
 that D810 preserves the original IL's bytes. These tests make no real-malware coverage claim.
+
+## Mutable global value sets
+
+`binja_d810.mutableValueSets` (default **true**) extends the existing global-write checks.
+For a private image-initialized integer, every visible write must be proven to XOR or add a
+constant. The pass computes closure under all those updates, including any guard order and
+number of repetitions. Byte-sized XOR writes are lifted into the enclosing integer with its
+actual endianness. Partial additions with unproved carries, unknown writes, escapes, exports,
+relocations and volatile globals are rejected.
+
+Proofs wait for the view's initial analysis and cross-reference discovery. An early caller is
+automatically retried through the idle queue; this also works with Flow fixes disabled.
+
+A read remains a read. Separate memory observations receive separate Z3 symbols. A consumer
+folds only when exact-width Z3 proof shows the same result for every combination of possible
+values and all remaining inputs. Original memory reads are retained and marked against dead
+store elimination; the pass does not rewrite stores or global types. Constrained proofs do not
+enter the ordinary, unconstrained proof cache. This is a conservative set of possibilities,
+not a claim that every value is reachable under the program's actual guards.
+
+The debug report keeps the skipped-constant-key write address and adds the possible values.
+`binja_d810.mutableValueComments` (default **true**) adds an undoable comment at the reading
+function. Disabling the feature regenerates the original IL and removes its owned comment;
+user edits are preserved. Comments require Flow fixes. These checks use the same visible-code,
+address-escape and external-writability assumptions as the existing global analysis.
+
+All limits share the function deadline. Keys below have the `binja_d810.` prefix:
+
+| Setting | Default |
+| --- | --- |
+| `mutableInstructions` | 20,000 instructions per inspected function |
+| `mutableProofWork` | 40,000 proof visits |
+| `mutableExpressionNodes` | 2,000 nodes per expression |
+| `mutableGlobals` | 32 candidate globals/domains |
+| `mutableReaders` | 256 references per global |
+| `mutableValues` | 64 values per closure |
+| `mutableWrites` | 1,024 candidate writes |
+| `mutableClosureSteps` | 4,096 update applications |
+| `mutableBits` | 64 bits per global/consumer; maximum 64 |
+| `mutableProofMilliseconds` | 200 ms per solver query |
+| `mutableCandidates` | 128 arithmetic consumers |
+| `mutableEvidenceBytes` | 1 MiB of code evidence for deferred comments |
+
+Synthetic C tests cover guarded updates, atomic XOR/add, zero initialization, byte writes,
+independent reads, oversized closures and excluded globals on eight builds. Installed Binary
+Ninja lowers the tested ARM64 atomic instructions and x86 locked operations to ordinary
+load/store IL; x86 O0 compare-exchange retries are handled through bounded SSA copy/phi
+provenance. Unrecognized atomic intrinsics stay unsupported. No instruction-text or function-name
+matching is used, and these tests do not establish real-malware coverage.
+
+## Coverage and proof limits
+
+All six passes have plain Python tests and synthetic native fixtures. Successful checks establish
+the supported IL transformations, not coverage on a malware family. Every pass shares the
+function budget and reports rejected or exhausted proofs. Disable keys below use the
+`binja_d810.` prefix; disabling regenerates original IL and releases owned metadata.
+
+| Feature | Proven behavior | Heuristics, assumptions and remaining limits | Disable setting |
+| --- | --- | --- | --- |
+| Callee summaries | Exact register/frame arithmetic and checked call substitution | Bounded acyclic helpers; scratch proofs need supported straight-line callers. Direct call-link support is ARM64/x86/x64. Optional native inlining is a comparison mode. | `calleeSummaries` |
+| Scratch slots | No-escape checks and byte-range liveness on every CFG path | Unknown effects, ambiguous logical overlaps and big-endian partial fields stay unchanged. | `scratchSlots` |
+| Flag conditions | Exact-width comparison equivalence and confined flag uses | Bounded two-arm merges; native `ADD_OVERFLOW` remains unmodeled. | `flagConditions` |
+| Allocation round trips | Exact private byte forwarding under explicit contracts | Fresh/nonnullable storage and elidable lifetime guarantees are assumptions supplied by the analyst; installed libraries did not provide them. No name matching. | `allocationRoundTrips` |
+| Constant buffers | Exact scalar execution, final bytes, live-outs and exit checks | One entry region; no arbitrary call execution or SIMD. Printable text and adjacent-length interpretation are display heuristics. Native input-IL errors remain visible in tests. | `constantBuffers` |
+| Mutable globals | Closed update sets and Z3 invariance for independent reads | Visible-code/no-escape assumptions; guard order is overapproximated. Large sets, unknown atomics and unproved partial-add carries are excluded. | `mutableValueSets` |
 
 ## Notes
 

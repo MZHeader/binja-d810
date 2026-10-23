@@ -160,13 +160,16 @@ class Uses:
 
 
 def never_written(view, start: int, end: int, uses_of: Callable,
-                  deadline: Deadline = Deadline.never(), *, first: Optional[int] = None) -> Optional[str]:
+                  deadline: Deadline = Deadline.never(), *, first: Optional[int] = None,
+                  accepted_store=None, proof_limit=4096) -> Optional[str]:
     """None when no visible code writes [start, end) or lets its address escape (spec 3.2), else why not.
     `uses_of(func)` gives a function's Uses, or None without MLIL (shared within a round). A key read across
     many functions (v4.3 spec 3.2) is checked until `deadline`. `first` also searches references to a
-    containing object's base; writes are checked against [start, end)."""
+    containing object's base; writes are checked against [start, end). An optional
+    `accepted_store(uses, store, span)` may discharge a write with a separate exact proof
+    (mutable domains); without it, every overlapping store still rejects constancy."""
     first = start if first is None else first
-    proof = access.Proof(uses_of, deadline)
+    proof = access.Proof(uses_of, deadline, proof_limit, accepted_store)
     checked = set()
     for source in view.get_data_refs(first, end - first):
         return f"data reference from {source:#x}"

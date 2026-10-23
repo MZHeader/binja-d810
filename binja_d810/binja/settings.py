@@ -57,6 +57,16 @@ ALLOCATION_EXPRESSION = f"{PREFIX}.allocationExpressionNodes"
 ALLOCATION_CONTRACT = f"{PREFIX}.allocationContractBytes"
 CONSTANT_BUFFERS = f"{PREFIX}.constantBuffers"
 CONSTANT_COMMENTS = f"{PREFIX}.constantBufferComments"
+MUTABLE_VALUES = f"{PREFIX}.mutableValueSets"
+MUTABLE_COMMENTS = f"{PREFIX}.mutableValueComments"
+MUTABLE_LIMITS = {
+    "instructions": ("mutableInstructions", 20000), "work": ("mutableProofWork", 40000),
+    "expressions": ("mutableExpressionNodes", 2000), "globals": ("mutableGlobals", 32),
+    "readers": ("mutableReaders", 256), "values": ("mutableValues", 64),
+    "writes": ("mutableWrites", 1024), "closure_steps": ("mutableClosureSteps", 4096),
+    "bits": ("mutableBits", 64), "proof_ms": ("mutableProofMilliseconds", 200),
+    "candidates": ("mutableCandidates", 128), "evidence_bytes": ("mutableEvidenceBytes", 1048576),
+}
 CONSTANT_LIMITS = {
     "instructions": ("constantInstructions", 4096), "nodes": ("constantExpressionNodes", 2000),
     "steps": ("constantSteps", 10000), "trips": ("constantTrips", 256),
@@ -67,6 +77,10 @@ CONSTANT_LIMITS = {
 }
 
 _SPECS = {
+    MUTABLE_VALUES: {"title": "Prove bounded mutable value sets", "type": "boolean", "default": True,
+                     "description": "Prove XOR/add update closures for private globals; fold only consumers invariant over every possible value. Reads and writes remain."},
+    MUTABLE_COMMENTS: {"title": "Annotate mutable value sets", "type": "boolean", "default": True,
+                       "description": "Add undoable possible-value comments. Requires Flow fixes for the idle/undo queue."},
     CONSTANT_BUFFERS: {"title": "Evaluate constant local buffers", "type": "boolean", "default": True,
                        "description": "Exactly evaluate bounded constant/readonly arithmetic and local stores; calls and unknown effects remain boundaries."},
     CONSTANT_COMMENTS: {"title": "Annotate recovered buffer text", "type": "boolean", "default": True,
@@ -178,6 +192,11 @@ for _field, (_name, _default) in CONSTANT_LIMITS.items():
                                   "default": _default, "minValue": 1,
                                   "description": "Bound on " + _field.replace("_", " ") + " in constant-buffer evaluation; also bounded by the function deadline."}
 _SPECS[f"{PREFIX}.constantStoreBytes"]["maxValue"] = 8
+for _field, (_name, _default) in MUTABLE_LIMITS.items():
+    _SPECS[f"{PREFIX}.{_name}"] = {"title": "Mutable values: " + _field.replace("_", " "), "type": "number",
+                                  "default": _default, "minValue": 1,
+                                  "description": "Bound on " + _field.replace("_", " ") + " in mutable-global proofs; also bounded by the function deadline."}
+_SPECS[f"{PREFIX}.mutableBits"]["maxValue"] = 64
 
 
 def register() -> None:
@@ -237,6 +256,11 @@ def allocation_limits(ctx):
 def constant_limits(ctx):
     from .constant_buffers import Limits
     return Limits(**{field: ctx.get_setting_uint64(f"{PREFIX}.{name}") for field, (name, _) in CONSTANT_LIMITS.items()})
+
+
+def mutable_limits(ctx):
+    from .mutable_values import Limits
+    return Limits(**{field: ctx.get_setting_uint64(f"{PREFIX}.{name}") for field, (name, _) in MUTABLE_LIMITS.items()})
 
 
 def skipped_functions(ctx) -> set[int]:

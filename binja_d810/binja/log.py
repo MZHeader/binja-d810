@@ -45,6 +45,10 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
     for index, line in enumerate(report.flags):
         emit = logger.log_info if index == 0 and report.flag_conditions else logger.log_debug
         emit(f"{func.start:#x} flags: {line}")
+    if report.allocation_loads or report.allocation_lifetimes:
+        logger.log_info(f"{func.start:#x} allocations: forwarded {report.allocation_loads} loads; removed {report.allocation_lifetimes} private lifetimes")
+    for line in report.allocations:
+        logger.log_debug(f"{func.start:#x} allocations: {line}")
     for r in report.skipped:
         logger.log_debug(f"{func.start:#x} @ {r.address:#x} [{r.level}] skipped: {r.reason}")
     for r in report.errors:
@@ -91,6 +95,9 @@ def render(report: FunctionReport) -> str:
     lines += [f"flags: {line}" for line in report.flags]
     if report.flag_seconds:
         lines.append(f"flags: {report.flag_conditions} conditions; {report.flag_seconds:.3f} s")
+    if report.allocation_seconds:
+        lines.append(f"allocations: {report.allocation_loads} loads; {report.allocation_lifetimes} lifetimes; {report.allocation_seconds:.3f} s")
+    lines += [f"allocations: {line}" for line in report.allocations]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

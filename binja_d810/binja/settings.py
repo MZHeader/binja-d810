@@ -46,8 +46,35 @@ FLAG_CANDIDATES = f"{PREFIX}.flagCandidates"
 FLAG_CONDITIONS = f"{PREFIX}.flagConditionsPerPass"
 FLAG_MERGES = f"{PREFIX}.flagMergeDepth"
 FLAG_PROOF_MS = f"{PREFIX}.flagProofMilliseconds"
+ALLOCATIONS = f"{PREFIX}.allocationRoundTrips"
+ALLOCATION_INSTRUCTIONS = f"{PREFIX}.allocationInstructions"
+ALLOCATION_NODES = f"{PREFIX}.allocationNodes"
+ALLOCATION_SITES = f"{PREFIX}.allocationSites"
+ALLOCATION_BYTES = f"{PREFIX}.allocationBytes"
+ALLOCATION_WRAPPER = f"{PREFIX}.allocationWrapperInstructions"
+ALLOCATION_DEPTH = f"{PREFIX}.allocationWrapperDepth"
+ALLOCATION_EXPRESSION = f"{PREFIX}.allocationExpressionNodes"
+ALLOCATION_CONTRACT = f"{PREFIX}.allocationContractBytes"
 
 _SPECS = {
+    ALLOCATIONS: {"title": "Simplify private allocation round trips", "type": "boolean", "default": True,
+                  "description": "Requires explicit semantic allocation contracts. Preserve calls unless failure and effects are proved removable."},
+    ALLOCATION_INSTRUCTIONS: {"title": "Allocation instruction limit", "type": "number", "default": 20000, "minValue": 1,
+                              "description": "Maximum MLIL instructions considered by allocation proofs."},
+    ALLOCATION_NODES: {"title": "Allocation proof work limit", "type": "number", "default": 40000, "minValue": 1,
+                       "description": "Maximum IL/use nodes visited by allocation proofs per pass."},
+    ALLOCATION_SITES: {"title": "Allocation call-site limit", "type": "number", "default": 64, "minValue": 1,
+                       "description": "Maximum root call sites considered for allocation contracts per pass; wrapper and use traversal also obey the proof work limit."},
+    ALLOCATION_BYTES: {"title": "Allocation byte limit", "type": "number", "default": 4096, "minValue": 1,
+                       "description": "Maximum size of one modeled private object."},
+    ALLOCATION_WRAPPER: {"title": "Allocation wrapper instruction limit", "type": "number", "default": 64, "minValue": 1,
+                         "description": "Maximum instructions in a constant-argument or forwarding wrapper."},
+    ALLOCATION_DEPTH: {"title": "Allocation wrapper depth", "type": "number", "default": 4, "minValue": 1,
+                       "description": "Maximum nested allocation/deallocation wrappers."},
+    ALLOCATION_EXPRESSION: {"title": "Allocation expression limit", "type": "number", "default": 2000, "minValue": 1,
+                            "description": "Maximum nodes when lifting stored values and wrapper arguments."},
+    ALLOCATION_CONTRACT: {"title": "Allocation contract byte limit", "type": "number", "default": 4096, "minValue": 1,
+                          "description": "Maximum UTF-8 bytes in one explicit semantic contract."},
     FLAGS: {"title": "Recombine flag conditions", "type": "boolean", "default": True,
             "description": "Prove simpler comparisons for boolean flags and bounded conditional-compare merges."},
     FLAG_INSTRUCTIONS: {"title": "Flag instruction limit", "type": "number", "default": 20000, "minValue": 1,
@@ -177,6 +204,14 @@ def flag_limits(ctx):
                   work=ctx.get_setting_uint64(FLAG_WORK), candidates=ctx.get_setting_uint64(FLAG_CANDIDATES),
                   conditions=ctx.get_setting_uint64(FLAG_CONDITIONS), merges=ctx.get_setting_uint64(FLAG_MERGES),
                   proof_ms=ctx.get_setting_uint64(FLAG_PROOF_MS))
+
+
+def allocation_limits(ctx):
+    from .allocation_roundtrips import Limits
+    return Limits(instructions=ctx.get_setting_uint64(ALLOCATION_INSTRUCTIONS), nodes=ctx.get_setting_uint64(ALLOCATION_NODES),
+                  sites=ctx.get_setting_uint64(ALLOCATION_SITES), bytes=ctx.get_setting_uint64(ALLOCATION_BYTES),
+                  wrapper_instructions=ctx.get_setting_uint64(ALLOCATION_WRAPPER), depth=ctx.get_setting_uint64(ALLOCATION_DEPTH),
+                  expression_nodes=ctx.get_setting_uint64(ALLOCATION_EXPRESSION), contract_bytes=ctx.get_setting_uint64(ALLOCATION_CONTRACT))
 
 
 def skipped_functions(ctx) -> set[int]:

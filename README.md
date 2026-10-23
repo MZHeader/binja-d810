@@ -26,6 +26,7 @@ And after (4 lines):
   scratch-slot round trips
 * Dead private stack writes and non-escaping scratch accesses, including partial byte ranges
 * Comparisons reconstructed from arithmetic flags and supported conditional-compare merges
+* Private allocation round trips when explicit semantic contracts establish their memory behavior
 * Opaque predicates, including ones hidden behind long chains of masked constants, ones that
   only hold on every path into a merge, values carried round loops, and the classic
   number-theoretic ones like `7 * y * y - 1 != x * x`
@@ -129,6 +130,8 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   exposes private loads/stores to the expression passes. Disabling it restores the original IL.
 * **Recombine flag conditions**: on by default. Replaces proven flag formulas with comparisons
   in MLIL and HLIL, including bounded conditional-compare merges.
+* **Simplify private allocation round trips**: on by default. Requires explicit semantic
+  contracts; ordinary allocator names and signatures are insufficient.
 * **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant. Use
   them for data you know never changes. Clearing a range puts the old types back.
 * **Enabled**: a kill switch for everything.
@@ -245,6 +248,55 @@ no real-malware coverage is claimed.
 Both stages share the function's time budget. The `flags` report entries list successful
 recombinations and rejection reasons. These are regenerated IL edits, with no binary or user
 metadata changes.
+
+## Private allocation round trips
+
+D810 can forward a private object's loads from preceding stores, including partial overlaps.
+It proves all pointer uses, rejects escapes and observations of the pointer's numeric value,
+and keeps unknown calls, memory effects and control-flow crossings conservative. Constant-size
+and pointer-forwarding call/tail-call wrappers are checked from their MLIL bodies.
+
+This needs a contract guaranteeing fresh, ordinary, nonnull storage. Removing the allocation,
+stores and release also requires an explicit guarantee that the complete lifetime is unobservable,
+including failure, exceptions and effects on later allocations. Without that stronger guarantee,
+only loads are forwarded; calls and stores remain. Possible allocation failure retains the original
+memory accesses. A null check does not authorize deletion of its failure path.
+
+The installed type libraries we tested supplied signatures but no such effect guarantees.
+D810 does **not** identify allocators by names such as `malloc` or `free`. Contracts can come from
+the `binja_d810.memory` type attribute or explicit per-function metadata. Binary Ninja currently
+drops custom attributes when rebuilding some function signatures, so metadata is the reliable
+way to supply a verified contract. For a selected allocator with the required guarantees:
+
+```python
+current_function.store_metadata("binja_d810.memory",
+    '{"version":1,"role":"allocate","parameter":0,"fresh":true,"ordinary":true,"nonnull":true,"elidable":false}')
+```
+
+`parameter` is the zero-based size argument. A release uses
+`{"version":1,"role":"deallocate","parameter":0,"elidable":false}`, where the parameter is
+the object pointer. Set `elidable` on both contracts only when the stronger lifetime guarantee
+has been established. Reanalyze the callers after changing contracts. D810 reads these user-owned
+contracts and leaves them intact when disabled; it makes no user type or binary changes.
+
+| Setting | Default |
+| --- | ---: |
+| `binja_d810.allocationRoundTrips` | true; disable to restore the original IL |
+| `binja_d810.allocationInstructions` | 20,000 instructions |
+| `binja_d810.allocationNodes` | 40,000 proof visits |
+| `binja_d810.allocationSites` | 64 calls |
+| `binja_d810.allocationBytes` | 4,096 bytes per object |
+| `binja_d810.allocationWrapperInstructions` | 64 instructions |
+| `binja_d810.allocationWrapperDepth` | 4 wrappers |
+| `binja_d810.allocationExpressionNodes` | 2,000 nodes |
+| `binja_d810.allocationContractBytes` | 4,096 UTF-8 bytes |
+
+The pass shares the function deadline. The `allocations` report lists forwarded loads, removed
+lifetimes and rejection reasons. Synthetic C fixtures cover ordinary imported allocation calls,
+boxed-value wrappers, partial writes, escapes, pointer observations, missing guarantees and undo
+on all eight builds. Elision tests explicitly assume infallible, unobservable test contracts;
+they do not prove those properties for a real allocator or for malware. Unannotated library
+allocations remain unchanged.
 
 ## Notes
 

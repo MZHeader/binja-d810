@@ -68,5 +68,6 @@ for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
     /export:shifted_dispatch /export:shifted_h1 /export:shifted_h2 /export:shifted_h3 \
     /out:"$OUT/inherited_outlined_$id.dll" "$OUT/inherited_outlined_$id.obj" >/dev/null
 done
+bash "$HERE/allocations.sh"
 rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
 ls "$OUT"

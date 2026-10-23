@@ -20,7 +20,7 @@ from ..deadline import Deadline
 from ..flow.ranges import parse as parse_ranges
 from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
-from . import budget, flag_conditions, log, scratch, settings, unflatten
+from . import allocation_roundtrips, budget, flag_conditions, log, scratch, settings, unflatten
 from .engine import simplify_function
 from .flow import apply as flow_apply, branches
 from .callees import activity as callees
@@ -152,6 +152,14 @@ def _run(ctx, level: str) -> None:
             reserved = min(DISPATCH_RESERVE_SECONDS, remaining / 2)
         probe_seconds, probe_cpu = time.monotonic() - started, time.thread_time() - cpu
     deadline = Deadline(allowance.deadline.at - reserved)
+    allocations = None
+    allocation_changed = False
+    if level == "mlil" and ctx.get_setting_bool(settings.ALLOCATIONS):
+        original = il
+        il, allocations = allocation_roundtrips.run(il, settings.allocation_limits(ctx), deadline)
+        allocation_changed = il is not original
+        if allocation_changed:
+            allowance.adopt(_handle(il), il)
     scratch_report = None
     scratch_changed = False
     if level == "mlil" and ctx.get_setting_bool(settings.SCRATCH):
@@ -186,6 +194,15 @@ def _run(ctx, level: str) -> None:
         report.plan_seconds += flags.seconds
         report.plan_cpu_seconds += flags.cpu_seconds
         report.allowance_seconds += flags.seconds
+    if allocations is not None:
+        report.allocations = allocations.notes
+        report.allocation_loads, report.allocation_lifetimes = allocations.loads, allocations.lifetimes
+        report.allocation_seconds = allocations.seconds
+        report.budget_exhausted |= allocations.exhausted
+        report.total_seconds += allocations.seconds
+        report.plan_seconds += allocations.seconds
+        report.plan_cpu_seconds += allocations.cpu_seconds
+        report.allowance_seconds += allocations.seconds
     changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
     allowance.charge(report.total_seconds)
     if early is not None:
@@ -201,7 +218,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed or report.flag_conditions:
+    if report.rewrites or changed or scratch_changed or allocation_changed or report.flag_conditions:
         if level == "mlil":
             ctx.mlil = il
         else:

@@ -69,5 +69,6 @@ for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
     /out:"$OUT/inherited_outlined_$id.dll" "$OUT/inherited_outlined_$id.obj" >/dev/null
 done
 bash "$HERE/allocations.sh"
+bash "$HERE/constant_buffers.sh"
 rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
 ls "$OUT"

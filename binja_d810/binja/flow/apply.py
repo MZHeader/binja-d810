@@ -533,6 +533,10 @@ def decide(work: Round, site) -> None:
         from ..callees import native
         native.decide(work, site)
         return
+    if site.kind == "annotation":
+        from .. import annotations
+        annotations.decide(work, site)
+        return
     if site.kind == "key":
         _decide_key(work, site)
         return

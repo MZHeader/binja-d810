@@ -49,6 +49,10 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
         logger.log_info(f"{func.start:#x} allocations: forwarded {report.allocation_loads} loads; removed {report.allocation_lifetimes} private lifetimes")
     for line in report.allocations:
         logger.log_debug(f"{func.start:#x} allocations: {line}")
+    if report.constant_regions:
+        logger.log_info(f"{func.start:#x} constant buffers: evaluated {report.constant_steps} steps; recovered {len(report.constant_strings)} text buffers")
+    for line in report.constant_buffers:
+        logger.log_debug(f"{func.start:#x} constant buffers: {line}")
     for r in report.skipped:
         logger.log_debug(f"{func.start:#x} @ {r.address:#x} [{r.level}] skipped: {r.reason}")
     for r in report.errors:
@@ -98,6 +102,10 @@ def render(report: FunctionReport) -> str:
     if report.allocation_seconds:
         lines.append(f"allocations: {report.allocation_loads} loads; {report.allocation_lifetimes} lifetimes; {report.allocation_seconds:.3f} s")
     lines += [f"allocations: {line}" for line in report.allocations]
+    if report.constant_seconds:
+        lines.append(f"constant buffers: {report.constant_regions} regions; {report.constant_steps} steps; {report.constant_seconds:.3f} s")
+    lines += [f"constant buffers: {line}" for line in report.constant_buffers]
+    lines += [f"{address:#x} buffer text (printability heuristic): {text!r}" for address, text in report.constant_strings]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

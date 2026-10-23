@@ -55,8 +55,22 @@ ALLOCATION_WRAPPER = f"{PREFIX}.allocationWrapperInstructions"
 ALLOCATION_DEPTH = f"{PREFIX}.allocationWrapperDepth"
 ALLOCATION_EXPRESSION = f"{PREFIX}.allocationExpressionNodes"
 ALLOCATION_CONTRACT = f"{PREFIX}.allocationContractBytes"
+CONSTANT_BUFFERS = f"{PREFIX}.constantBuffers"
+CONSTANT_COMMENTS = f"{PREFIX}.constantBufferComments"
+CONSTANT_LIMITS = {
+    "instructions": ("constantInstructions", 4096), "nodes": ("constantExpressionNodes", 2000),
+    "steps": ("constantSteps", 10000), "trips": ("constantTrips", 256),
+    "frame_bytes": ("constantFrameBytes", 4096), "work": ("constantProofWork", 100000),
+    "starts": ("constantRegionStarts", 64), "exit_instructions": ("constantAnnotationSteps", 4096),
+    "scalar_bits": ("constantScalarBits", 128), "string_bytes": ("constantStringBytes", 256),
+    "string_minimum": ("constantStringMinimum", 4), "store_bytes": ("constantStoreBytes", 8),
+}
 
 _SPECS = {
+    CONSTANT_BUFFERS: {"title": "Evaluate constant local buffers", "type": "boolean", "default": True,
+                       "description": "Exactly evaluate bounded constant/readonly arithmetic and local stores; calls and unknown effects remain boundaries."},
+    CONSTANT_COMMENTS: {"title": "Annotate recovered buffer text", "type": "boolean", "default": True,
+                        "description": "Add undoable text comments for proved bytes passed to calls. Requires Flow fixes for its idle/undo queue."},
     ALLOCATIONS: {"title": "Simplify private allocation round trips", "type": "boolean", "default": True,
                   "description": "Requires explicit semantic allocation contracts. Preserve calls unless failure and effects are proved removable."},
     ALLOCATION_INSTRUCTIONS: {"title": "Allocation instruction limit", "type": "number", "default": 20000, "minValue": 1,
@@ -159,6 +173,12 @@ _SPECS = {
                                "needed and never changes behaviour."},
 }
 
+for _field, (_name, _default) in CONSTANT_LIMITS.items():
+    _SPECS[f"{PREFIX}.{_name}"] = {"title": "Constant buffers: " + _field.replace("_", " "), "type": "number",
+                                  "default": _default, "minValue": 1,
+                                  "description": "Bound on " + _field.replace("_", " ") + " in constant-buffer evaluation; also bounded by the function deadline."}
+_SPECS[f"{PREFIX}.constantStoreBytes"]["maxValue"] = 8
+
 
 def register() -> None:
     s = Settings()
@@ -212,6 +232,11 @@ def allocation_limits(ctx):
                   sites=ctx.get_setting_uint64(ALLOCATION_SITES), bytes=ctx.get_setting_uint64(ALLOCATION_BYTES),
                   wrapper_instructions=ctx.get_setting_uint64(ALLOCATION_WRAPPER), depth=ctx.get_setting_uint64(ALLOCATION_DEPTH),
                   expression_nodes=ctx.get_setting_uint64(ALLOCATION_EXPRESSION), contract_bytes=ctx.get_setting_uint64(ALLOCATION_CONTRACT))
+
+
+def constant_limits(ctx):
+    from .constant_buffers import Limits
+    return Limits(**{field: ctx.get_setting_uint64(f"{PREFIX}.{name}") for field, (name, _) in CONSTANT_LIMITS.items()})
 
 
 def skipped_functions(ctx) -> set[int]:

@@ -27,6 +27,7 @@ And after (4 lines):
 * Dead private stack writes and non-escaping scratch accesses, including partial byte ranges
 * Comparisons reconstructed from arithmetic flags and supported conditional-compare merges
 * Private allocation round trips when explicit semantic contracts establish their memory behavior
+* Bounded constant-input buffer computations, with decoded-text comments at their uses
 * Opaque predicates, including ones hidden behind long chains of masked constants, ones that
   only hold on every path into a merge, values carried round loops, and the classic
   number-theoretic ones like `7 * y * y - 1 != x * x`
@@ -297,6 +298,52 @@ boxed-value wrappers, partial writes, escapes, pointer observations, missing gua
 on all eight builds. Elision tests explicitly assume infallible, unobservable test contracts;
 they do not prove those properties for a real allocator or for malware. Unannotated library
 allocations remain unchanged.
+
+## Constant buffers and decoded text
+
+`binja_d810.constantBuffers` (default **true**) evaluates a deterministic MLIL region near
+function entry. Scalar arithmetic, bounded loops, immutable image reads and local byte stores
+are evaluated at their actual widths. The pass replaces that region with its final stores and
+preserves register writes and live values. A retained path that can reenter the region vetoes
+the change. Calls, unknown inputs, writable reads, pointer-bit observations and unmodeled effects
+stop evaluation. It never executes the binary or calls a helper.
+
+This is exact concrete evaluation of the input IL, with separate control-flow and live-out
+checks. String recognition is a display heuristic: printable ASCII ending in NUL, or a buffer
+followed by a constant length argument. The computed bytes are known; the callee's interpretation
+of them is not assumed. The debug report records steps, text and rejection reasons.
+`binja_d810.constantBufferComments` (default **true**) controls the comments. They use native
+undo, preserve user edits, and are removed when the feature or D810 is disabled. Comments
+require Flow fixes; IL evaluation does not. No binary bytes change.
+
+Limits share the function time budget. Each key below has the `binja_d810.` prefix:
+
+| Setting | Default |
+| --- | --- |
+| `constantInstructions` | 4,096 MLIL instructions |
+| `constantExpressionNodes` | 2,000 nodes per expression |
+| `constantSteps` | 10,000 executed instructions |
+| `constantTrips` | 256 visits per instruction |
+| `constantFrameBytes` | 4,096 bytes of local frame |
+| `constantProofWork` | 100,000 proof visits |
+| `constantRegionStarts` | 64 entry-block starting positions |
+| `constantAnnotationSteps` | 4,096 retained-tail instructions |
+| `constantScalarBits` | 128 bits |
+| `constantStringBytes` | 256 bytes |
+| `constantStringMinimum` | 4 printable bytes |
+| `constantStoreBytes` | 8 bytes per emitted store; maximum 8 |
+
+The current pass handles one entry region, not arbitrary regions after unknown calls. SIMD,
+floating arithmetic, unknown pointer bytes and ambiguous logical/physical stack overlaps stay
+unchanged. Native synthetic constant-copy operations are identified from their IL metadata and
+original stores, never by library name. Their bytes have already been computed by Binary Ninja.
+
+Tests generate rotate/multiply/add/XOR streams from 16 randomized seeds in loop and unrolled
+forms, built for ARM64, x86-64 PE/ELF and i686 at O0/O2. Final IL bytes are read back independently
+and compared with the Python generator. Fixtures disable compiler vectorization and stack
+protectors to test scalar semantics. Three x86 O2 cases currently have incorrect native
+constant-copy bytes **before D810**; strict expected failures record that limitation and check
+that D810 preserves the original IL's bytes. These tests make no real-malware coverage claim.
 
 ## Notes
 

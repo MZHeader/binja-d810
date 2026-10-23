@@ -174,7 +174,7 @@ class HLifter(hlift._Lifter):
         if var.var.type is not None and var.var.type.volatile:
             return None
         definition = self.definition_of(var)
-        if definition is not None and hasattr(definition, "src") and definition.src.operation == H.HLIL_ADD_OVERFLOW:
+        if definition is not None and getattr(getattr(definition, "src", None), "operation", None) == H.HLIL_ADD_OVERFLOW:
             self.rejections.add("native overflow operation is not modeled")
         result = super().var(var, width)
         if result is not None and var.version and possible_ones(result) <= 1:

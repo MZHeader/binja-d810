@@ -10,6 +10,9 @@ from . import evidence
 
 
 def revert(view, change) -> set[int]:
+    if change.kind.startswith("comment:"):
+        from .. import annotations
+        return annotations.revert(view, change)
     if change.kind == "callee_inline":
         func = view.get_function_at(change.key)
         if func is not None:

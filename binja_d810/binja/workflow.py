@@ -20,7 +20,7 @@ from ..deadline import Deadline
 from ..flow.ranges import parse as parse_ranges
 from ..rules.registry import load_rules
 from ..semantic.backend import default_backends
-from . import allocation_roundtrips, budget, flag_conditions, log, scratch, settings, unflatten
+from . import allocation_roundtrips, annotations, budget, constant_buffers, flag_conditions, log, scratch, settings, unflatten
 from .engine import simplify_function
 from .flow import apply as flow_apply, branches
 from .callees import activity as callees
@@ -170,6 +170,24 @@ def _run(ctx, level: str) -> None:
             allowance.adopt(_handle(il), il)
     flags = flag_conditions.run(il, level, settings.flag_limits(ctx), deadline) \
         if ctx.get_setting_bool(settings.FLAGS) else None
+    constants = None
+    constant_changed = False
+    if level == "mlil":
+        if ctx.get_setting_bool(settings.CONSTANT_BUFFERS):
+            original = il
+            il, constants = constant_buffers.run(il, settings.constant_limits(ctx), deadline)
+            constant_changed = il is not original
+            if constant_changed: allowance.adopt(_handle(il), il)
+        sites = []
+        if constants is not None:
+            texts = {}
+            for address, text in constants.strings: texts.setdefault(address, []).append(text)
+            sites = [annotations.Site(func.start, address, settings.CONSTANT_BUFFERS,
+                     "D810 buffer text: " + ", ".join(json.dumps(text) for text in dict.fromkeys(values)), constants.evidence,
+                     (settings.CONSTANT_COMMENTS,))
+                     for address, values in texts.items()]
+        annotations.reconcile(func, settings.CONSTANT_BUFFERS, sites,
+                              ctx.get_setting_bool(settings.CONSTANT_COMMENTS) and ctx.get_setting_bool(settings.FLOW_FIXES))
     make = MLILAdapter if level == "mlil" else HLILAdapter
     adapter = make(il, config.limits.max_nodes, deadline)
     backends = _backends_override if _backends_override is not None else _backends()
@@ -203,6 +221,13 @@ def _run(ctx, level: str) -> None:
         report.plan_seconds += allocations.seconds
         report.plan_cpu_seconds += allocations.cpu_seconds
         report.allowance_seconds += allocations.seconds
+    if constants is not None:
+        report.constant_buffers, report.constant_strings = constants.notes, constants.strings
+        report.constant_regions, report.constant_steps = constants.regions, constants.steps
+        report.constant_seconds = constants.seconds
+        report.budget_exhausted |= constants.exhausted
+        report.total_seconds += constants.seconds; report.plan_seconds += constants.seconds
+        report.plan_cpu_seconds += constants.cpu_seconds; report.allowance_seconds += constants.seconds
     changed = _flow(ctx, adapter, func, report) if level == "mlil" else False
     allowance.charge(report.total_seconds)
     if early is not None:
@@ -218,7 +243,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed or allocation_changed or report.flag_conditions:
+    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or report.flag_conditions:
         if level == "mlil":
             ctx.mlil = il
         else:

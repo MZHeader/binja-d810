@@ -99,6 +99,11 @@ class FunctionReport:
     allocation_loads: int = 0
     allocation_lifetimes: int = 0
     allocation_seconds: float = 0.0
+    constant_buffers: list[str] = field(default_factory=list)
+    constant_regions: int = 0
+    constant_steps: int = 0
+    constant_strings: list = field(default_factory=list)
+    constant_seconds: float = 0.0
     # Time. Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0
@@ -124,7 +129,8 @@ class FunctionReport:
         folded.update({"constant uses": self.constant_uses, "flow": len(self.flow), "unflatten": len(self.unflatten),
                        "callee calls": self.callee_calls, "scratch stores": self.scratch_stores,
                        "scratch accesses": self.scratch_accesses, "flag conditions": self.flag_conditions,
-                       "allocation loads": self.allocation_loads, "allocation lifetimes": self.allocation_lifetimes})
+                       "allocation loads": self.allocation_loads, "allocation lifetimes": self.allocation_lifetimes,
+                       "constant regions": self.constant_regions})
         left = Counter(r.reason.split(":")[0] for r in self.skipped)
         return {"folded": {k: n for k, n in folded.items() if n}, "left": dict(left)}
 

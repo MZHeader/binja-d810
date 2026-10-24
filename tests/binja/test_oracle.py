@@ -64,3 +64,21 @@ def test_control_flow_is_unvalidated_not_passed():
             oracle.function_result(function_named(bv, "reg_crc32_step"))
     finally:
         bv.file.close()
+
+
+def test_shared_values_are_evaluated_once_per_environment(monkeypatch):
+    expression=('param','x')
+    for _ in range(40):expression=('op','add',64,expression,expression)
+    original=oracle._evaluate;calls=0
+    def counted(node,env,read):
+        nonlocal calls
+        calls+=1
+        return original(node,env,read)
+    monkeypatch.setattr(oracle,'_evaluate',counted)
+    assert oracle.evaluate(expression,{'x':3})==3<<40
+    assert calls==41
+    assert oracle.evaluate(expression,{'x':7})==7<<40
+    assert calls==82
+    assert oracle.params_of(expression)==['x']
+    assert oracle.used_bits(expression)=={'x':64}
+    assert oracle.compare(expression,oracle.reference('x << 40',64),64).kind=='proven'

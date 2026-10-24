@@ -10,6 +10,14 @@ from ..simplify import Limits
 from .engine import EngineConfig
 
 PREFIX = "binja_d810"
+COMPARISON_PREIMAGES = f"{PREFIX}.comparisonPreimages"
+PREIMAGE_INSTRUCTIONS = f"{PREFIX}.preimageInstructions"
+PREIMAGE_NODES = f"{PREFIX}.preimageNodes"
+PREIMAGE_WORK = f"{PREFIX}.preimageWork"
+PREIMAGE_SITES = f"{PREFIX}.preimageSites"
+PREIMAGE_STEPS = f"{PREFIX}.preimageSteps"
+PREIMAGE_ROUNDS = f"{PREFIX}.preimageRounds"
+PREIMAGE_PROOF_MS = f"{PREFIX}.preimageProofMilliseconds"
 ENABLED = f"{PREFIX}.enabled"
 TIER2 = f"{PREFIX}.tier2"
 BITWISE_MASKS = f"{PREFIX}.bitwiseMaskFactoring"
@@ -101,6 +109,22 @@ CONSTANT_LIMITS = {
 }
 
 _SPECS = {
+    COMPARISON_PREIMAGES: {"title":"Simplify encoded comparisons","type":"boolean","default":True,
+                          "description":"Invert arithmetic/rotate encodings around constant equalities. Every replacement requires an exact proof."},
+    PREIMAGE_INSTRUCTIONS: {"title":"Preimage instruction limit","type":"number","default":20000,"minValue":1,
+                           "description":"Maximum IL instructions inspected for encoded comparisons."},
+    PREIMAGE_NODES: {"title":"Preimage expression limit","type":"number","default":2000,"minValue":1,
+                    "description":"Maximum nodes in one lifted comparison."},
+    PREIMAGE_WORK: {"title":"Preimage work limit","type":"number","default":200000,"minValue":1,
+                   "description":"Maximum visits across comparison rounds, also bounded by the function deadline."},
+    PREIMAGE_SITES: {"title":"Preimage comparison limit","type":"number","default":128,"minValue":1,
+                    "description":"Maximum comparison candidates across all rounds of one pass."},
+    PREIMAGE_STEPS: {"title":"Preimage encoding depth","type":"number","default":64,"minValue":1,
+                    "description":"Maximum scalar encodings inverted in one comparison."},
+    PREIMAGE_ROUNDS: {"title":"Preimage rounds","type":"number","default":2,"minValue":1,
+                     "description":"Maximum comparison simplification rounds sharing the work/time allowance."},
+    PREIMAGE_PROOF_MS: {"title":"Preimage proof timeout","type":"number","default":200,"minValue":1,
+                       "description":"Maximum milliseconds for one exact equivalence check, bounded by the function deadline."},
     DEAD_FINITE_LOOPS: {"title": "Remove dead finite scalar loops", "type": "boolean", "default": True,
                         "description": "Remove effect-free loops with no externally read outputs, only after exact bounded termination proof."},
     DEAD_LOOP_ITERATIONS: {"title": "Dead-loop iteration limit", "type": "number", "default": 64, "minValue": 1,
@@ -314,6 +338,16 @@ def flag_limits(ctx):
                   proof_ms=ctx.get_setting_uint64(FLAG_PROOF_MS), rounds=ctx.get_setting_uint64(FLAG_ROUNDS),
                   boolean=ctx.get_setting_bool(FLAG_BOOLEAN), boolean_atoms=ctx.get_setting_uint64(FLAG_BOOLEAN_ATOMS),
                   phi_uses=ctx.get_setting_bool(FLAG_PHI_USES))
+
+
+def preimage_limits(ctx):
+    from .comparison_preimages import Limits
+    return Limits(instructions=ctx.get_setting_uint64(PREIMAGE_INSTRUCTIONS),nodes=ctx.get_setting_uint64(PREIMAGE_NODES),
+                  work=ctx.get_setting_uint64(PREIMAGE_WORK),sites=ctx.get_setting_uint64(PREIMAGE_SITES),
+                  steps=ctx.get_setting_uint64(PREIMAGE_STEPS),rounds=ctx.get_setting_uint64(PREIMAGE_ROUNDS),
+                  proof_ms=ctx.get_setting_uint64(PREIMAGE_PROOF_MS))
+
+
 
 
 def control_limits(ctx):

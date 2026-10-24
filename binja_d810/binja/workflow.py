@@ -218,6 +218,16 @@ def _run(ctx, level: str) -> None:
     adapter = make(il, config.limits.max_nodes, deadline)
     backends = _backends_override if _backends_override is not None else _configured_backends(ctx)
     report = simplify_function(adapter, rules, backends if config.tier2 else (), config, deadline)
+    if ctx.get_setting_bool(settings.COMPARISON_PREIMAGES):
+        from . import comparison_preimages
+        preimages = comparison_preimages.run(il,level,settings.preimage_limits(ctx),deadline)
+        report.preimages, report.preimage_conditions = preimages.notes, preimages.changed
+        report.preimage_seconds = preimages.seconds
+        report.total_seconds += preimages.seconds
+        report.plan_seconds += preimages.seconds
+        report.plan_cpu_seconds += preimages.cpu_seconds
+        report.allowance_seconds += preimages.seconds
+        report.budget_exhausted |= preimages.exhausted
     if level == "hlil" and ctx.get_setting_bool(settings.EQUIVALENT_BRANCHES):
         from . import control_cleanup
         control = control_cleanup.run(il, settings.control_limits(ctx), deadline)
@@ -301,7 +311,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches or report.control_loops:
+    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches or report.control_loops or report.preimage_conditions:
         if level == "mlil":
             ctx.mlil = il
         else:

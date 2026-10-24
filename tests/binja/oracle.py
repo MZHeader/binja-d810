@@ -70,12 +70,19 @@ def function_result(func) -> tuple:
             env[statement.dest.identifier] = _expr(statement.src, env, params)
         elif op == H.HLIL_ASSIGN and statement.dest.operation == H.HLIL_VAR:
             env[statement.dest.var.identifier] = _expr(statement.src, env, params)
+        elif op == H.HLIL_ASSIGN and statement.dest.operation == H.HLIL_SPLIT:
+            high,low=statement.dest.high,statement.dest.low
+            if high.operation!=H.HLIL_VAR or low.operation!=H.HLIL_VAR:
+                raise Unvalidated('non-variable split assignment')
+            value=_fit(_expr(statement.src,env,params),(high.size+low.size)*8,statement)
+            env[low.var.identifier]=('bits',value,0,low.size*8)
+            env[high.var.identifier]=('bits',value,low.size*8,high.size*8)
         elif (op == H.HLIL_ASSIGN and statement.dest.operation == H.HLIL_STRUCT_FIELD
               and statement.dest.src.operation == H.HLIL_VAR and statement.dest.member_index is None):
             # var_8:5.b = value: replace those bytes of the variable, keep the others.
             var = statement.dest.src.var
             old = _read(var, 0, var.type.width * 8, env, params)
-            value = _expr(statement.src, env, params)
+            value = _fit(_expr(statement.src, env, params), statement.dest.size * 8, statement)
             env[var.identifier] = _merge(old, value, statement.dest.offset * 8)
 
         elif op == H.HLIL_RET and len(statement.src) == 1:
@@ -98,13 +105,19 @@ def _statements(node):
 
 
 def _expr(e, env, params) -> tuple:
-    op, width = e.operation, e.size * 8
+    op, width = e.operation, e.size * 8 or 1
     if op in (H.HLIL_CONST, H.HLIL_CONST_PTR):
         return ("const", e.constant & ((1 << width) - 1), width)
     if op == H.HLIL_VAR:
         return _read(e.var, 0, width, env, params)
-    if op == H.HLIL_STRUCT_FIELD and e.src.operation == H.HLIL_VAR and e.member_index is None:
-        return _read(e.src.var, e.offset, width, env, params)
+    if op == H.HLIL_STRUCT_FIELD and e.member_index is None:
+        backing,offset=e,0
+        while backing.operation==H.HLIL_STRUCT_FIELD and backing.member_index is None:
+            offset+=backing.offset;backing=backing.src
+        if backing.operation==H.HLIL_VAR:
+            # A nested storage view can be wider than an intermediate field (x.d.q).
+            # Keep the backing variable's bits; never invent zero/sign extension.
+            return _read(backing.var,offset,width,env,params)
     if op == H.HLIL_STRUCT_FIELD and e.member_index is None:  # y.w:1.b: a field of a field
         inner = _expr(e.src, env, params)
         if 8 * e.offset + width > _width(inner):
@@ -117,6 +130,17 @@ def _expr(e, env, params) -> tuple:
         else:
             left = _fit(left, width, e)
         return ("op", _BINARY[op], width, left, right)
+    if op in (H.HLIL_MULU_DP,H.HLIL_MULS_DP):
+        extension="zx" if op==H.HLIL_MULU_DP else "sx"
+        a,b=(_fit(_expr(v,env,params),width,e) for v in (e.left,e.right))
+        return ("op","mul",2*width,("op",extension,2*width,a),("op",extension,2*width,b))
+    if op in (H.HLIL_ADC,H.HLIL_SBB):
+        a,b=(_fit(_expr(v,env,params),width,e) for v in (e.left,e.right))
+        carry=_expr(e.carry,env,params)
+        carry=("bits",carry,0,1) if _width(carry)>1 else carry
+        if width>1:carry=("op","zx",width,carry)
+        operation="add" if op==H.HLIL_ADC else "sub"
+        return ("op",operation,width,("op",operation,width,a,b),carry)
     if op in _DIVIDE:
         return ("op", _DIVIDE[op], width, _fit(_expr(e.left, env, params), width, e),
                 _fit(_expr(e.right, env, params), width, e))
@@ -204,16 +228,25 @@ def _signed(value: int, width: int) -> int:
 
 
 def evaluate(x: tuple, env: dict[str, int]) -> int:
+    memo={}
+    def read(node):
+        key=id(node)
+        if key not in memo:memo[key]=_evaluate(node,env,read)
+        return memo[key]
+    return read(x)
+
+
+def _evaluate(x,env,read):
     kind = x[0]
     if kind == "param":
         return env[x[1]] & _mask(PARAM_BITS)
     if kind == "const":
         return x[1]
     if kind == "bits":
-        return (evaluate(x[1], env) >> x[2]) & _mask(x[3])
+        return (read(x[1]) >> x[2]) & _mask(x[3])
     _, name, width, *args = x
     m = _mask(width)
-    vals = [evaluate(a, env) for a in args]
+    vals = [read(a) for a in args]
     if name == "neg":
         return -vals[0] & m
     if name == "not":
@@ -256,6 +289,15 @@ def evaluate(x: tuple, env: dict[str, int]) -> int:
 
 
 def to_z3(x: tuple, symbols: dict):
+    memo={}
+    def read(node):
+        key=id(node)
+        if key not in memo:memo[key]=_to_z3(node,symbols,read)
+        return memo[key]
+    return read(x)
+
+
+def _to_z3(x,symbols,read):
     import z3
 
     kind = x[0]
@@ -264,10 +306,10 @@ def to_z3(x: tuple, symbols: dict):
     if kind == "const":
         return z3.BitVecVal(x[1], x[2])
     if kind == "bits":
-        inner = to_z3(x[1], symbols)
+        inner = read(x[1])
         return z3.Extract(x[2] + x[3] - 1, x[2], inner)
     _, name, width, *args = x
-    vals = [to_z3(a, symbols) for a in args]
+    vals = [read(a) for a in args]
     if name == "neg":
         return -vals[0]
     if name == "not":
@@ -331,8 +373,11 @@ def reference(text: str, width: int) -> tuple:
 def params_of(*xs: tuple) -> list[str]:
     found: set[str] = set()
     stack = list(xs)
+    seen=set()
     while stack:
         x = stack.pop()
+        if id(x) in seen:continue
+        seen.add(id(x))
         if x[0] == "param":
             found.add(x[1])
         elif x[0] == "bits":
@@ -346,8 +391,11 @@ def used_bits(x: tuple) -> dict[str, int]:
     """Highest bit (exclusive) read of each parameter."""
     out: dict[str, int] = {}
     stack = [x]
+    seen=set()
     while stack:
         item = stack.pop()
+        if id(item) in seen:continue
+        seen.add(id(item))
         if item[0] == "bits" and item[1][0] == "param":
             out[item[1][1]] = max(out.get(item[1][1], 0), item[2] + item[3])
         elif item[0] == "bits":

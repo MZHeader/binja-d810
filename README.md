@@ -160,6 +160,34 @@ normal form. `bitwiseInputs` defaults to 4 (range 1–4), and `bitwiseConstants`
 final values independently on ARM64, x64 PE/ELF and i686, at O0 and O2. This simplifies the
 mixing operations inside loops; it does not prove their runtime inputs constant.
 
+## Encoded comparisons
+
+Constant equalities can hide a simpler input test behind additions, XORs, rotations and
+multiplications. D810 inverts these operations at their exact widths. Odd multipliers use
+their modular inverse; even multipliers and shifts retain the required bit masks, or prove
+that the target value is impossible. Casts retain their width and sign constraints. Ordered
+comparisons are excluded because these encodings do not generally preserve order.
+
+The MLIL and HLIL passes keep version-safe inputs, reject protected/volatile expressions and
+require a final exact proof. A timeout leaves the code unchanged. Applied and skipped results
+appear under **preimages** in the function report and logger. Disabling
+`binja_d810.comparisonPreimages` and reanalysing restores the original comparisons.
+
+| Setting | Default |
+| --- | ---: |
+| `binja_d810.comparisonPreimages` | true |
+| `binja_d810.preimageInstructions` | 20,000 IL instructions |
+| `binja_d810.preimageNodes` | 2,000 expression nodes |
+| `binja_d810.preimageWork` | 200,000 visits across all rounds |
+| `binja_d810.preimageSites` | 128 comparison candidates |
+| `binja_d810.preimageSteps` | 64 encoding layers |
+| `binja_d810.preimageRounds` | 2 |
+| `binja_d810.preimageProofMilliseconds` | 200 per proof, within the function deadline |
+
+Randomized C fixtures cover 8/16/32/64-bit encodings on ARM64, x64 PE/ELF and i686 at O0/O2.
+An independent final-IL oracle checks their results; effect, ordering, budget and rollback
+controls stay unchanged. Compilers may leave unsupported forms intact rather than simplify them.
+
 ## Equivalent scalar branches
 
 D810 compares both arms of a structured HLIL branch over shared, unconstrained inputs. It

@@ -20,6 +20,19 @@ def add_overflow(a, b):
     return bit("and", bit("eq", sign(a), sign(b)), bit("ne", sign(a), sign(result)))
 
 
+def subtract_overflow_bits(a, b):
+    difference = BinOp("sub", a, b, a.width)
+    changed = BinOp("and", BinOp("xor", a, b, a.width), BinOp("xor", a, difference, a.width), a.width)
+    return bit("ne", BinOp("and", changed, Const(1 << (a.width - 1), a.width), a.width), Const(0, a.width))
+
+
+def subtract_overflow_wide(a, b):
+    wide = a.width + 1
+    exact = BinOp("sub", UnOp("sx", a, wide), UnOp("sx", b, wide), wide)
+    truncated = UnOp("sx", BinOp("sub", a, b, a.width), wide)
+    return bit("ne", exact, truncated)
+
+
 def subtraction(a, b, architecture):
     difference = BinOp("sub", a, b, a.width)
     return {

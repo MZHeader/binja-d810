@@ -227,18 +227,30 @@ subtraction model isolates ARM64's no-borrow carry convention from x86's borrow 
 unit tests prove all ten comparisons at several widths. Native C fixtures cover all eight
 ARM64/x86-64/i686 builds, with an independent symbolic interpreter checking complete branch
 paths and observable stores. On x86-64, ordinary compare chains are often already simplified
-by Binary Ninja. The ARM64 unsigned conditional-compare fixture loses its merged flag locals.
+by Binary Ninja. The ARM64 signed and unsigned conditional-compare fixtures lose their merged
+flag locals. Up to three rounds expose later comparisons after earlier guards simplify; all
+rounds share the work, condition-count and time limits.
 
-Supported merges are bounded two-arm branches, including one empty arm. Loops, ambiguous
+Before native flag lowering, D810 can expand overflow from original integer subtraction IL.
+It captures both operands, keeps the original instruction and flag effects, then adds an
+overflow formula proven against a widened signed subtraction. Architecture metadata identifies
+integer flag writers and condition dependencies; bounded liveness selects the reaching writes.
+Native tests cover operand clobbering and 8/16/32/64-bit signed-minimum cases on ARM64 and x86.
+Memory operands, protected operations and flags also used as raw data keep their original IL.
+
+Supported merges are bounded two-arm branches, including one empty arm. Loop-carried or ambiguous
 merges, stale operands, volatile/protected values and unknown flag operations stay unchanged.
-In particular, native `ADD_OVERFLOW` is currently unmodeled: some ARM64 signed conditional
-compares retain their flag locals. Its semantics are not guessed from the displayed expression.
+Native `ADD_OVERFLOW` remains unmodeled. The earlier subtraction proof avoids it where the
+original flag source is available; its semantics are never guessed from the displayed expression.
 Explicit arithmetic overflow formulas are supported and proven. These are synthetic results;
 no real-malware coverage is claimed.
 
 | Setting | Default |
 | --- | ---: |
 | `binja_d810.flagConditions` | true; disable to restore the original conditions |
+| `binja_d810.flagSourceOverflow` | true; disable only the early subtraction-overflow expansion |
+| `binja_d810.flagSourceBits` | 64 bits; maximum 64 |
+| `binja_d810.flagRounds` | 3; work and condition limits apply across all rounds |
 | `binja_d810.flagInstructions` | 20,000 instructions |
 | `binja_d810.flagNodes` | 2,000 expression nodes |
 | `binja_d810.flagWork` | 80,000 proof visits per pass |
@@ -247,8 +259,8 @@ no real-malware coverage is claimed.
 | `binja_d810.flagMergeDepth` | 8 nested merges |
 | `binja_d810.flagProofMilliseconds` | 200 ms per proof |
 
-Both stages share the function's time budget. The `flags` report entries list successful
-recombinations and rejection reasons. These are regenerated IL edits, with no binary or user
+All stages share the function's time budget. The `flags` report entries list source models,
+successful recombinations and rejection reasons. These are regenerated IL edits, with no binary or user
 metadata changes.
 
 ## Private allocation round trips
@@ -427,7 +439,7 @@ function budget and reports rejected or exhausted proofs. Disable keys below use
 | --- | --- | --- | --- |
 | Callee summaries | Exact register/frame arithmetic and checked call substitution | Bounded acyclic helpers; scratch proofs need supported straight-line callers. Direct call-link support is ARM64/x86/x64. Optional native inlining is a comparison mode. | `calleeSummaries` |
 | Scratch slots | No-escape checks and byte-range liveness on every CFG path | Unknown effects, ambiguous logical overlaps and big-endian partial fields stay unchanged. | `scratchSlots` |
-| Flag conditions | Exact-width comparison equivalence and confined flag uses | Bounded two-arm merges; native `ADD_OVERFLOW` remains unmodeled. | `flagConditions` |
+| Flag conditions | Exact-width comparison equivalence, original subtraction-overflow proofs and confined flag uses | Bounded two-arm merges; early models need pure operands and known flag metadata. Native `ADD_OVERFLOW` remains unmodeled. | `flagConditions` |
 | Allocation round trips | Exact private byte forwarding under explicit contracts | Fresh/nonnullable storage and elidable lifetime guarantees are assumptions supplied by the analyst; installed libraries did not provide them. No name matching. | `allocationRoundTrips` |
 | Constant buffers | Exact scalar execution of multiple regions, final bytes, live-outs and entry/exit checks | Escaped frames, unknown inputs/effects and SIMD remain unsupported. Printable text and adjacent-length interpretation are display heuristics. Native input-IL errors remain visible in tests. | `constantBuffers` |
 | Mutable globals | Closed full/partial update sets and Z3 invariance for independent reads | Visible-code/no-escape assumptions; guard order is overapproximated. Large sets and unknown atomic intrinsics are excluded. | `mutableValueSets` |

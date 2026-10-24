@@ -18,6 +18,7 @@ class Limits:
     conditions: int = 128
     merges: int = 8
     proof_ms: int = 200
+    rounds: int = 3
 
 
 @dataclass

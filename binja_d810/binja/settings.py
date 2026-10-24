@@ -46,6 +46,9 @@ FLAG_CANDIDATES = f"{PREFIX}.flagCandidates"
 FLAG_CONDITIONS = f"{PREFIX}.flagConditionsPerPass"
 FLAG_MERGES = f"{PREFIX}.flagMergeDepth"
 FLAG_PROOF_MS = f"{PREFIX}.flagProofMilliseconds"
+FLAG_SOURCE = f"{PREFIX}.flagSourceOverflow"
+FLAG_SOURCE_BITS = f"{PREFIX}.flagSourceBits"
+FLAG_ROUNDS = f"{PREFIX}.flagRounds"
 ALLOCATIONS = f"{PREFIX}.allocationRoundTrips"
 ALLOCATION_INSTRUCTIONS = f"{PREFIX}.allocationInstructions"
 ALLOCATION_NODES = f"{PREFIX}.allocationNodes"
@@ -107,6 +110,12 @@ _SPECS = {
                           "description": "Maximum UTF-8 bytes in one explicit semantic contract."},
     FLAGS: {"title": "Recombine flag conditions", "type": "boolean", "default": True,
             "description": "Prove simpler comparisons for boolean flags and bounded conditional-compare merges."},
+    FLAG_SOURCE: {"title": "Expand original subtraction overflow", "type": "boolean", "default": True,
+                  "description": "Express integer subtraction overflow from original flag-setting IL before native flag lowering. Requires flag conditions."},
+    FLAG_SOURCE_BITS: {"title": "Source flag scalar width", "type": "number", "default": 64, "minValue": 1, "maxValue": 64,
+                       "description": "Maximum operand width for original subtraction overflow proofs; other flag limits and the shared deadline also apply."},
+    FLAG_ROUNDS: {"title": "Flag recombination rounds", "type": "number", "default": 3, "minValue": 1,
+                  "description": "Maximum rounds of proven guard/merge simplification. Rounds share the flag work limit and function deadline."},
     FLAG_INSTRUCTIONS: {"title": "Flag instruction limit", "type": "number", "default": 20000, "minValue": 1,
                         "description": "Maximum IL instructions in a function considered for flag reconstruction."},
     FLAG_NODES: {"title": "Flag expression limit", "type": "number", "default": 2000, "minValue": 1,
@@ -244,7 +253,7 @@ def flag_limits(ctx):
     return Limits(instructions=ctx.get_setting_uint64(FLAG_INSTRUCTIONS), nodes=ctx.get_setting_uint64(FLAG_NODES),
                   work=ctx.get_setting_uint64(FLAG_WORK), candidates=ctx.get_setting_uint64(FLAG_CANDIDATES),
                   conditions=ctx.get_setting_uint64(FLAG_CONDITIONS), merges=ctx.get_setting_uint64(FLAG_MERGES),
-                  proof_ms=ctx.get_setting_uint64(FLAG_PROOF_MS))
+                  proof_ms=ctx.get_setting_uint64(FLAG_PROOF_MS), rounds=ctx.get_setting_uint64(FLAG_ROUNDS))
 
 
 def allocation_limits(ctx):

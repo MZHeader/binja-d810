@@ -257,6 +257,9 @@ def _run(ctx, level: str) -> None:
     if early is not None:
         report.callees = early.notes
         report.callee_calls = early.calls
+        report.flag_sources = early.source_flags
+        report.flags = early.source_notes + report.flags
+        report.flag_seconds += early.source_seconds
         report.budget_exhausted |= early.exhausted
         report.total_seconds += early.seconds
         report.plan_seconds += early.seconds
@@ -429,8 +432,8 @@ def register(action=None, hlil_action=None, branches_action=None, unflatten_acti
         "description": "Threads flattened control flow past its dispatcher in MLIL; enabled by the D-810 setting.",
     })
     callees_config = json.dumps({
-        "name": CALLEES_ACTIVITY_NAME, "title": "D-810: pure-callee summaries",
-        "description": "Substitute proven arithmetic helpers before calling-convention inference.",
+        "name": CALLEES_ACTIVITY_NAME, "title": "D-810: prepare callees and flags",
+        "description": "Substitute proven arithmetic helpers and expand original subtraction overflow before native lowering.",
     })
     registered = []
     for base in BASE_WORKFLOWS:

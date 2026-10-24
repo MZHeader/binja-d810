@@ -16,7 +16,7 @@ from binja_d810.flags.recombine import Limits
 from binja_d810.ir.expr import CMP_OPS
 
 SIMPLE = tuple("flag_" + op for op in sorted(CMP_OPS))
-CHAINS = ("flag_fixed_chain", "flag_unsigned_chain", "flag_nested_chain")
+CHAINS = ("flag_signed_chain", "flag_fixed_chain", "flag_unsigned_chain", "flag_nested_chain")
 TYPES = {name: f"uint32_t {name}(uint32_t x, uint32_t y)" for name in SIMPLE + ("flag_shared",)}
 TYPES["flag_fixed_chain"] = "uint32_t flag_fixed_chain(int32_t x, int32_t y)"
 for name in ("flag_unsigned_chain", "flag_nested_chain"):
@@ -27,10 +27,11 @@ TYPES["flag_signed_chain"] = "uint32_t flag_signed_chain(int32_t x, int32_t y, i
 def test_flag_settings_are_registered_with_the_documented_defaults():
     values = Settings()
     assert values.get_bool(settings.FLAGS)
+    assert values.get_bool(settings.FLAG_SOURCE)
     for key, default in ((settings.FLAG_INSTRUCTIONS, 20000), (settings.FLAG_NODES, 2000),
                          (settings.FLAG_WORK, 80000), (settings.FLAG_CANDIDATES, 128),
                          (settings.FLAG_CONDITIONS, 128), (settings.FLAG_MERGES, 8),
-                         (settings.FLAG_PROOF_MS, 200)):
+                         (settings.FLAG_PROOF_MS, 200), (settings.FLAG_ROUNDS, 3), (settings.FLAG_SOURCE_BITS, 64)):
         assert values.contains(key) and values.get_integer(key) == default
 
 
@@ -50,13 +51,6 @@ def builds(request):
 def test_compiled_flags_match_independent_comparisons(builds, name):
     build, on, off = builds
     func = function_named(on, name)
-    if build == ("arm64", "O2") and name == "flag_fixed_chain":
-        # The native overflow operation's meaning has not been established. Do not apply
-        # the independent arithmetic oracle to it or pretend this chain was recovered.
-        assert "add_overflow" in text(func)
-        assert text(func) == text(function_named(off, name))
-        assert any("overflow operation is not modeled" in n for r in log.latest_reports(func).values() for n in r.flags)
-        pytest.skip("native signed conditional compare retains an unmodeled overflow operation")
     assert proves(func, name), text(func)
 
 
@@ -68,15 +62,16 @@ def test_emitted_arithmetic_flag_logic_is_actually_recombined(builds):
     assert any("flags:" in log.render(r) for f in candidates for r in log.latest_reports(f).values())
 
 
-def test_native_conditional_compare_merges_disappear_on_arm64(builds):
+@pytest.mark.parametrize("name", ("flag_signed_chain", "flag_fixed_chain", "flag_unsigned_chain"))
+def test_native_conditional_compare_merges_disappear_on_arm64(builds, name):
     build, on, off = builds
     if build != ("arm64", "O2"):
         pytest.skip("this compiler emits the conditional-compare merge on ARM64 O2")
-    func = function_named(on, "flag_unsigned_chain")
+    func = function_named(on, name)
     assert len(list(func.hlil.instructions)) == 1, text(func)
-    assert len(list(function_named(off, "flag_unsigned_chain").hlil.instructions)) > 1
+    assert len(list(function_named(off, name).hlil.instructions)) > 1
     assert sum(r.flag_conditions for r in log.latest_reports(func).values()) > 0
-    assert proves(func, "flag_unsigned_chain")
+    assert proves(func, name)
 
 
 def test_flag_values_used_as_data_keep_their_observable_store(builds):

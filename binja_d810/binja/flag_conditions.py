@@ -32,6 +32,7 @@ class Report:
 class Work:
     def __init__(self, limits, deadline):
         self.left, self.deadline = limits.work, deadline
+        self.conditions_left = limits.conditions
 
     def tick(self):
         self.left -= 1
@@ -209,17 +210,18 @@ def roots(il, level, work):
                 pending.extend(item for item in operand if hasattr(item, "operation"))
 
 
-def run(il, level, limits, deadline):
+def _run_round(il, level, limits, deadline, work):
     started, cpu = time.monotonic(), time.thread_time()
-    report, work, plans = Report(), Work(limits, deadline), []
+    report, plans = Report(), []
     adapter = MLILAdapter(il, limits.nodes, deadline) if level == "mlil" else HLILAdapter(il, limits.nodes, deadline)
     try:
         if len(il) > limits.instructions:
             raise ValueError("flag instruction limit")
-        for index, root in enumerate(roots(il, level, work)):
-            if index >= limits.conditions:
+        for root in roots(il, level, work):
+            if work.conditions_left <= 0:
                 report.notes.append("flag condition limit")
                 break
+            work.conditions_left -= 1
             lifter = MLifter(il, il[root.instr_index], limits, work) if level == "mlil" \
                 else HLifter(root.ssa_form, adapter.aliased, limits, work)
             source = lifter.expr(root.ssa_form)
@@ -296,4 +298,19 @@ def run(il, level, limits, deadline):
     finally:
         report.seconds, report.cpu_seconds = time.monotonic() - started, time.thread_time() - cpu
         report.exhausted = deadline.expired()
+    return report
+
+
+def run(il, level, limits, deadline):
+    """Earlier proven guards expose later merges; all rounds share work and time budgets."""
+    started, cpu = time.monotonic(), time.thread_time()
+    report, work = Report(), Work(limits, deadline)
+    for number in range(limits.rounds):
+        if deadline.expired(): break
+        result = _run_round(il, level, limits, deadline, work)
+        report.conditions += result.conditions
+        report.notes.extend(f"round {number + 1}: {note}" for note in result.notes)
+        if not result.conditions: break
+    report.seconds, report.cpu_seconds = time.monotonic() - started, time.thread_time() - cpu
+    report.exhausted = deadline.expired()
     return report

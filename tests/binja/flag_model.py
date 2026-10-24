@@ -107,6 +107,8 @@ def expected(name):
     x, y, z = (z3.BitVec(n, 32) for n in ("x", "y", "z"))
     if name == "flag_fixed_chain":
         return z3.And(x <= y, x >= 17)
+    if name == "flag_signed_chain":
+        return z3.And(x <= y, x >= z)
     if name in ("flag_unsigned_chain", "flag_nested_chain"):
         condition = z3.Or(z3.ULT(x, y), z3.UGT(x, z))
         return z3.And(condition, z3.Or(y != z, x == 7)) if name == "flag_nested_chain" else condition

@@ -45,6 +45,8 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
     for index, line in enumerate(report.flags):
         emit = logger.log_info if index == 0 and report.flag_conditions else logger.log_debug
         emit(f"{func.start:#x} flags: {line}")
+    if report.flag_sources:
+        logger.log_info(f"{func.start:#x} flags: expanded {report.flag_sources} proven subtraction overflow sources")
     if report.allocation_loads or report.allocation_lifetimes:
         logger.log_info(f"{func.start:#x} allocations: forwarded {report.allocation_loads} loads; removed {report.allocation_lifetimes} private lifetimes")
     for line in report.allocations:
@@ -102,7 +104,7 @@ def render(report: FunctionReport) -> str:
     lines += [f"scratch: {line}" for line in report.scratch]
     lines += [f"flags: {line}" for line in report.flags]
     if report.flag_seconds:
-        lines.append(f"flags: {report.flag_conditions} conditions; {report.flag_seconds:.3f} s")
+        lines.append(f"flags: {report.flag_conditions} conditions; {report.flag_sources} source models; {report.flag_seconds:.3f} s")
     if report.allocation_seconds:
         lines.append(f"allocations: {report.allocation_loads} loads; {report.allocation_lifetimes} lifetimes; {report.allocation_seconds:.3f} s")
     lines += [f"allocations: {line}" for line in report.allocations]

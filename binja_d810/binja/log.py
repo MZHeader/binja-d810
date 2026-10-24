@@ -59,6 +59,10 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
         logger.log_info(f"{func.start:#x} mutable values: proved {report.mutable_folds} invariant expressions")
     for line in report.mutable_values:
         logger.log_debug(f"{func.start:#x} mutable values: {line}")
+    if report.control_branches:
+        logger.log_info(f"{func.start:#x} control cleanup: merged {report.control_branches} equivalent scalar branches")
+    for line in report.control:
+        logger.log_debug(f"{func.start:#x} control cleanup: {line}")
     for r in report.skipped:
         logger.log_debug(f"{func.start:#x} @ {r.address:#x} [{r.level}] skipped: {r.reason}")
     for r in report.errors:
@@ -115,6 +119,9 @@ def render(report: FunctionReport) -> str:
     if report.mutable_seconds:
         lines.append(f"mutable values: {report.mutable_folds} invariants; {len(report.mutable_domains)} domains; {report.mutable_seconds:.3f} s")
     lines += [f"mutable values: {line}" for line in report.mutable_values]
+    if report.control_seconds:
+        lines.append(f"control cleanup: {report.control_branches} equivalent branches; {report.control_seconds:.3f} s")
+    lines += [f"control cleanup: {line}" for line in report.control]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""
         lines.append(f"{r.address:#x} [{r.level} {r.source}] {r.verdict.lower()} by {r.method}{why}\n    {r.before}\n -> {r.after}")

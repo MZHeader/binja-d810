@@ -48,6 +48,7 @@ And after (4 lines):
   undeclared register inputs that the handlers provably preserve. Known register and stack
   inputs can also be carried across handlers when their values and frame layout are proven
 * Junk loops that only count a variable up to some value and then throw it away
+* Equivalent scalar branches: a condition can be removed when both arms leave the same live values
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 
 Every rewrite is checked before it's applied. Conditions are only folded when Z3 proves them,
@@ -158,6 +159,34 @@ normal form. `bitwiseInputs` defaults to 4 (range 1–4), and `bitwiseConstants`
 (range 1–8). These limits apply to both forms. Random-mask fixtures at 8/16/32/64 bits check
 final values independently on ARM64, x64 PE/ELF and i686, at O0 and O2. This simplifies the
 mixing operations inside loops; it does not prove their runtime inputs constant.
+
+## Equivalent scalar branches
+
+D810 compares both arms of a structured HLIL branch over shared, unconstrained inputs. It
+tracks assignment order and proves every value used outside the branch equal at its exact
+width. Private intermediate values may differ. When the guard is pure and every output proof
+succeeds, one original arm replaces the branch. The guard does not have to be constant.
+
+Calls, memory accesses, volatile or aliased variables, partial writes, protected operations
+and unsupported control flow keep the branch unchanged. This is scalar state equivalence;
+it does not infer that two effectful calls or stores are interchangeable. Changes and skipped
+proofs appear under **control cleanup** in the function report and logger. Disable the feature
+with `binja_d810.equivalentBranches`; reanalysis restores the original IL.
+
+| Setting | Default |
+| --- | ---: |
+| `binja_d810.equivalentBranches` | true |
+| `binja_d810.controlInstructions` | 20,000 HLIL instructions |
+| `binja_d810.controlNodes` | 2,000 nodes per scalar expression or composed output |
+| `binja_d810.controlWork` | 80,000 visits across all rounds |
+| `binja_d810.controlBranches` | 64 candidates across all rounds |
+| `binja_d810.controlRounds` | 3 |
+| `binja_d810.controlBits` | 64 bits; maximum 64 |
+| `binja_d810.controlProofMilliseconds` | 200 per output, bounded by the shared function deadline |
+
+Synthetic C fixtures cover ARM64, x64 PE/ELF and i686 at O0/O2. Independent final-value proofs
+check 8/16/32/64-bit computations; native IL tests cover different live outputs, effects, work
+limits and rollback. All output proofs are exact; an inconclusive result leaves the branch alone.
 
 ## Arithmetic helpers
 

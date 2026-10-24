@@ -15,6 +15,14 @@ TIER2 = f"{PREFIX}.tier2"
 BITWISE_MASKS = f"{PREFIX}.bitwiseMaskFactoring"
 BITWISE_INPUTS = f"{PREFIX}.bitwiseInputs"
 BITWISE_CONSTANTS = f"{PREFIX}.bitwiseConstants"
+EQUIVALENT_BRANCHES = f"{PREFIX}.equivalentBranches"
+CONTROL_INSTRUCTIONS = f"{PREFIX}.controlInstructions"
+CONTROL_NODES = f"{PREFIX}.controlNodes"
+CONTROL_WORK = f"{PREFIX}.controlWork"
+CONTROL_BRANCHES = f"{PREFIX}.controlBranches"
+CONTROL_ROUNDS = f"{PREFIX}.controlRounds"
+CONTROL_BITS = f"{PREFIX}.controlBits"
+CONTROL_PROOF_MS = f"{PREFIX}.controlProofMilliseconds"
 MAX_VARS = f"{PREFIX}.maxVariables"
 MAX_NODES = f"{PREFIX}.maxNodes"
 MAX_ITERATIONS = f"{PREFIX}.maxIterations"
@@ -90,6 +98,22 @@ CONSTANT_LIMITS = {
 }
 
 _SPECS = {
+    EQUIVALENT_BRANCHES: {"title": "Merge equivalent scalar branches", "type": "boolean", "default": True,
+                         "description": "Remove a pure condition when both branches provably leave the same observable scalar values."},
+    CONTROL_INSTRUCTIONS: {"title": "Control cleanup instruction limit", "type": "number", "default": 20000, "minValue": 1,
+                           "description": "Maximum HLIL instructions inspected for scalar control cleanup."},
+    CONTROL_NODES: {"title": "Control cleanup expression limit", "type": "number", "default": 2000, "minValue": 1,
+                    "description": "Maximum nodes in one scalar expression or composed branch output."},
+    CONTROL_WORK: {"title": "Control cleanup work limit", "type": "number", "default": 80000, "minValue": 1,
+                   "description": "Maximum proof visits, shared across cleanup rounds and bounded by the function deadline."},
+    CONTROL_BRANCHES: {"title": "Control cleanup branch limit", "type": "number", "default": 64, "minValue": 1,
+                       "description": "Maximum branch candidates across all cleanup rounds."},
+    CONTROL_ROUNDS: {"title": "Control cleanup rounds", "type": "number", "default": 3, "minValue": 1,
+                     "description": "Maximum cleanup rounds, sharing the work limit and function deadline."},
+    CONTROL_BITS: {"title": "Control cleanup scalar width", "type": "number", "default": 64, "minValue": 1, "maxValue": 64,
+                   "description": "Maximum width of a modeled scalar. Partial, volatile or aliased assignments are excluded."},
+    CONTROL_PROOF_MS: {"title": "Control cleanup proof timeout", "type": "number", "default": 200, "minValue": 1,
+                       "description": "Maximum milliseconds for one output equivalence proof, bounded by the function deadline."},
     MUTABLE_VALUES: {"title": "Prove bounded mutable value sets", "type": "boolean", "default": True,
                      "description": "Prove XOR/add update closures for private globals; fold only consumers invariant over every possible value. Reads and writes remain."},
     MUTABLE_COMMENTS: {"title": "Annotate mutable value sets", "type": "boolean", "default": True,
@@ -281,6 +305,14 @@ def flag_limits(ctx):
                   proof_ms=ctx.get_setting_uint64(FLAG_PROOF_MS), rounds=ctx.get_setting_uint64(FLAG_ROUNDS),
                   boolean=ctx.get_setting_bool(FLAG_BOOLEAN), boolean_atoms=ctx.get_setting_uint64(FLAG_BOOLEAN_ATOMS),
                   phi_uses=ctx.get_setting_bool(FLAG_PHI_USES))
+
+
+def control_limits(ctx):
+    from .control_cleanup import Limits
+    return Limits(instructions=ctx.get_setting_uint64(CONTROL_INSTRUCTIONS), nodes=ctx.get_setting_uint64(CONTROL_NODES),
+                  work=ctx.get_setting_uint64(CONTROL_WORK), branches=ctx.get_setting_uint64(CONTROL_BRANCHES),
+                  rounds=ctx.get_setting_uint64(CONTROL_ROUNDS), bits=ctx.get_setting_uint64(CONTROL_BITS),
+                  proof_ms=ctx.get_setting_uint64(CONTROL_PROOF_MS))
 
 
 def allocation_limits(ctx):

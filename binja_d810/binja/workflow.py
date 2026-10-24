@@ -218,6 +218,16 @@ def _run(ctx, level: str) -> None:
     adapter = make(il, config.limits.max_nodes, deadline)
     backends = _backends_override if _backends_override is not None else _configured_backends(ctx)
     report = simplify_function(adapter, rules, backends if config.tier2 else (), config, deadline)
+    if level == "hlil" and ctx.get_setting_bool(settings.EQUIVALENT_BRANCHES):
+        from . import control_cleanup
+        control = control_cleanup.run(il, settings.control_limits(ctx), deadline)
+        report.control, report.control_branches = control.notes, control.branches
+        report.control_seconds = control.seconds
+        report.total_seconds += control.seconds
+        report.plan_seconds += control.seconds
+        report.plan_cpu_seconds += control.cpu_seconds
+        report.allowance_seconds += control.seconds
+        report.budget_exhausted |= control.exhausted
     report.reserved_seconds = reserved
     report.dispatch_probe_seconds = probe_seconds
     report.allowance_seconds += probe_seconds
@@ -280,7 +290,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions:
+    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches:
         if level == "mlil":
             ctx.mlil = il
         else:

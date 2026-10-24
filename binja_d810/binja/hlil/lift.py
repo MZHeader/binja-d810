@@ -188,6 +188,15 @@ class _Lifter:
             found = self.expr(e.src, inlined=inlined)
             return None if found is None or found.width != 1 or width == 0 else UnOp("zx", found, width)
         if width == 0:
+            if op == H.HLIL_CONST and e.constant in (0,1):return Const(e.constant,1)
+            if op == H.HLIL_VAR_SSA:return self.var(e.var,1)
+            if op in (H.HLIL_AND,H.HLIL_OR,H.HLIL_XOR):
+                left=self.expr(e.left,inlined=inlined);right=self.expr(e.right,inlined=inlined)
+                if left is not None and right is not None and left.width==right.width==1:
+                    return BinOp(_BINARY[op],left,right,1)
+            elif op == H.HLIL_NOT:
+                value=self.expr(e.src,inlined=inlined)
+                if value is not None and value.width==1:return UnOp("not",value,1)
             return None
         if op in (H.HLIL_CONST, H.HLIL_CONST_PTR):
             return Const(e.constant, width)
@@ -277,7 +286,8 @@ class _Lifter:
         if key[:2] in self.keep and self.live(ssa_var):
             definition = None  # a value that stays visible elsewhere (ILAdapter.shallow)
         src = definition.src if definition is not None and definition.operation in _DEFINITIONS else None
-        boolean = src is not None and (src.operation in _COMPARE or src.operation == H.HLIL_BOOL_TO_INT)
+        boolean = src is not None and (src.operation in _COMPARE or src.operation == H.HLIL_BOOL_TO_INT or
+                    src.size==0 and src.operation in (H.HLIL_AND,H.HLIL_OR,H.HLIL_XOR,H.HLIL_NOT,H.HLIL_CONST))
         if (src is not None and (boolean or src.size * 8 == width)
                 and self.budget > self.failed.get(key, 0) and self.visits < self.max_visits
                 and ssa_var.var not in self.aliased):

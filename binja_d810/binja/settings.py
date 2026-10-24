@@ -51,6 +51,9 @@ FLAG_PROOF_MS = f"{PREFIX}.flagProofMilliseconds"
 FLAG_SOURCE = f"{PREFIX}.flagSourceOverflow"
 FLAG_SOURCE_BITS = f"{PREFIX}.flagSourceBits"
 FLAG_ROUNDS = f"{PREFIX}.flagRounds"
+FLAG_BOOLEAN = f"{PREFIX}.flagBooleanCircuits"
+FLAG_BOOLEAN_ATOMS = f"{PREFIX}.flagBooleanAtoms"
+FLAG_PHI_USES = f"{PREFIX}.flagPhiUses"
 ALLOCATIONS = f"{PREFIX}.allocationRoundTrips"
 ALLOCATION_INSTRUCTIONS = f"{PREFIX}.allocationInstructions"
 ALLOCATION_NODES = f"{PREFIX}.allocationNodes"
@@ -112,6 +115,12 @@ _SPECS = {
                           "description": "Maximum UTF-8 bytes in one explicit semantic contract."},
     FLAGS: {"title": "Recombine flag conditions", "type": "boolean", "default": True,
             "description": "Prove simpler comparisons for boolean flags and bounded conditional-compare merges."},
+    FLAG_BOOLEAN: {"title": "Simplify encoded Boolean circuits", "type": "boolean", "default": True,
+                   "description": "Recover proven Boolean combinations hidden behind integer casts, masks and arithmetic. Requires flag conditions."},
+    FLAG_PHI_USES: {"title": "Check flag uses through SSA joins", "type": "boolean", "default": True,
+                   "description": "Distinguish unused phi chains from observable flag consumers. All reachable non-phi uses must remain confined; uses the flag work limit and deadline."},
+    FLAG_BOOLEAN_ATOMS: {"title": "Boolean circuit inputs", "type": "number", "default": 4, "minValue": 1, "maxValue": 8,
+                         "description": "Maximum independent predicates in a truth table. Evaluation also uses the flag work limit and shared deadline."},
     FLAG_SOURCE: {"title": "Expand original subtraction overflow", "type": "boolean", "default": True,
                   "description": "Express integer subtraction overflow from original flag-setting IL before native flag lowering. Requires flag conditions."},
     FLAG_SOURCE_BITS: {"title": "Source flag scalar width", "type": "number", "default": 64, "minValue": 1, "maxValue": 64,
@@ -260,7 +269,9 @@ def flag_limits(ctx):
     return Limits(instructions=ctx.get_setting_uint64(FLAG_INSTRUCTIONS), nodes=ctx.get_setting_uint64(FLAG_NODES),
                   work=ctx.get_setting_uint64(FLAG_WORK), candidates=ctx.get_setting_uint64(FLAG_CANDIDATES),
                   conditions=ctx.get_setting_uint64(FLAG_CONDITIONS), merges=ctx.get_setting_uint64(FLAG_MERGES),
-                  proof_ms=ctx.get_setting_uint64(FLAG_PROOF_MS), rounds=ctx.get_setting_uint64(FLAG_ROUNDS))
+                  proof_ms=ctx.get_setting_uint64(FLAG_PROOF_MS), rounds=ctx.get_setting_uint64(FLAG_ROUNDS),
+                  boolean=ctx.get_setting_bool(FLAG_BOOLEAN), boolean_atoms=ctx.get_setting_uint64(FLAG_BOOLEAN_ATOMS),
+                  phi_uses=ctx.get_setting_bool(FLAG_PHI_USES))
 
 
 def allocation_limits(ctx):

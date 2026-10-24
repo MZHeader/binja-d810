@@ -39,6 +39,8 @@ def value(node, state):
                                                                    max(width, 8 * node.var.type.width if node.var.type else width))), width)
     if op == H.HLIL_STRUCT_FIELD:
         return sized(z3.LShR(value(node.src, state), node.offset * 8), width)
+    if op == H.HLIL_SPLIT:
+        return z3.Concat(value(node.high,state),value(node.low,state))
     if op in (H.HLIL_ZX, H.HLIL_LOW_PART, H.HLIL_BOOL_TO_INT):
         return sized(value(node.src, state), width)
     if op == H.HLIL_SX:
@@ -48,6 +50,10 @@ def value(node, state):
         source = sized(value(node.src, state), width)
         return ~source if op == H.HLIL_NOT else -source
     left, right = value(node.left, state), value(node.right, state)
+    if op in (H.HLIL_MULU_DP,H.HLIL_MULS_DP):
+        a,b=sized(left,width),sized(right,width)
+        extend=z3.SignExt if op==H.HLIL_MULS_DP else z3.ZeroExt
+        return extend(width,a)*extend(width,b)
     if op.name.startswith("HLIL_CMP_"):
         width = node.size * 8 or max(left.size(), right.size())
         a, b = sized(left, width), sized(right, width)
@@ -58,6 +64,11 @@ def value(node, state):
                      H.HLIL_CMP_UGT: lambda: z3.UGT(a, b), H.HLIL_CMP_UGE: lambda: z3.UGE(a, b)}[op]()
         return z3.If(condition, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     a, b = sized(left, width), sized(right, width)
+    if op in (H.HLIL_ADC,H.HLIL_SBB):
+        carry=value(node.carry,state)
+        assert carry.size()==1
+        carry=sized(carry,width)
+        return a+b+carry if op==H.HLIL_ADC else a-b-carry
     if op == H.HLIL_ADD_OVERFLOW:
         wide = z3.SignExt(1, a) + z3.SignExt(1, b)
         overflow = wide != z3.SignExt(1, a + b)
@@ -68,7 +79,7 @@ def value(node, state):
             H.HLIL_LSL: lambda: a << b, H.HLIL_LSR: lambda: z3.LShR(a, b), H.HLIL_ASR: lambda: a >> b}[op]()
 
 
-def execute(func):
+def execute(func,loop_limit=0):
     il = func.hlil
     assert il is not None, (func.name, func.analysis_skipped, func.analysis_skip_reason, func.analysis_performance_info)
     parameters = {v.identifier: z3.BitVec(n, 32) for v, n in zip(func.parameter_vars, ("x", "y", "z"))}
@@ -82,6 +93,25 @@ def execute(func):
             return rows
         if op in (H.HLIL_VAR_DECLARE, H.HLIL_NOP):
             return rows
+        if op in (H.HLIL_WHILE,H.HLIL_DO_WHILE,H.HLIL_FOR):
+            assert loop_limit>0,'loop evaluation requires an explicit test bound'
+            active=run(node.init,rows) if op==H.HLIL_FOR else rows
+            count=0
+            if op==H.HLIL_DO_WHILE:
+                active=run(node.body,active);count=1
+            exits=[]
+            while active:
+                body=[]
+                for path,state,writes in active:
+                    guard=value(node.condition,state)!=0
+                    yes,no=z3.simplify(z3.And(path,guard)),z3.simplify(z3.And(path,z3.Not(guard)))
+                    if not z3.is_false(no):exits.append((no,dict(state),list(writes)))
+                    if not z3.is_false(yes):body.append((yes,dict(state),list(writes)))
+                if not body:break
+                assert count<loop_limit,'loop did not terminate within the independent bound'
+                active=run(node.body,body);count+=1
+                if op==H.HLIL_FOR:active=run(node.update,active)
+            return exits
         output = []
         for path, state, writes in rows:
             if op == H.HLIL_IF:
@@ -100,6 +130,12 @@ def execute(func):
                 rhs = value(node.src, state)
                 if node.dest.operation == H.HLIL_VAR:
                     state[node.dest.var.identifier] = rhs
+                elif node.dest.operation == H.HLIL_SPLIT:
+                    high,low=node.dest.high,node.dest.low
+                    assert high.operation==low.operation==H.HLIL_VAR
+                    assert rhs.size()==(high.size+low.size)*8
+                    state[low.var.identifier]=z3.Extract(low.size*8-1,0,rhs)
+                    state[high.var.identifier]=z3.Extract(rhs.size()-1,low.size*8,rhs)
                 elif node.dest.operation == H.HLIL_STRUCT_FIELD:
                     field = node.dest
                     assert field.src.operation == H.HLIL_VAR
@@ -108,7 +144,8 @@ def execute(func):
                     mask = ((1 << bits) - 1) << shift
                     state[field.src.var.identifier] = (old & ~mask) | (sized(rhs, old.size()) << shift)
                 elif node.dest.operation == H.HLIL_DEREF:
-                    writes.append((value(node.dest.src, state), rhs))
+                    assert node.dest.size > 0
+                    writes.append((value(node.dest.src, state), sized(rhs,node.dest.size*8)))
                 else:
                     raise AssertionError(str(node))
                 output.append((path, state, writes))

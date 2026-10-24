@@ -71,5 +71,6 @@ done
 bash "$HERE/allocations.sh"
 bash "$HERE/constant_buffers.sh"
 bash "$HERE/callee_cfg.sh"
+bash "$HERE/boolean_conditions.sh"
 rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
 ls "$OUT"

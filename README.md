@@ -25,7 +25,8 @@ And after (4 lines):
 * Arithmetic helpers with private register conventions, including nested helpers and proven
   scratch-slot round trips
 * Dead private stack writes and non-escaping scratch accesses, including partial byte ranges
-* Comparisons reconstructed from arithmetic flags and supported conditional-compare merges
+* Comparisons and Boolean decisions reconstructed from arithmetic flags, integer encodings and
+  supported conditional-compare merges
 * Private allocation round trips when explicit semantic contracts establish their memory behavior
 * Bounded constant-input buffer computations, with decoded-text comments at their uses
 * Invariant expressions over bounded mutable-global value sets, including supported atomic updates
@@ -244,6 +245,16 @@ by Binary Ninja. The ARM64 signed and unsigned conditional-compare fixtures lose
 flag locals. Up to three rounds expose later comparisons after earlier guards simplify; all
 rounds share the work, condition-count and time limits.
 
+Boolean decisions can also be encoded as integer sums, products, masks and XORs. D810 builds
+a bounded truth table over independent predicates and proposes a simpler Boolean expression.
+Each result is checked against the original at its exact widths before application. The pass
+never assumes an arbitrary integer is Boolean or that the predicates themselves are constant.
+Existing purity, version and flag-use checks still apply. Synthetic fixtures cover 8/16/32/64-bit
+encodings on ARM64, x64 and i686, with independent checks of final values and observable stores.
+Flag-use confinement follows SSA phi outputs, including dead cycles, to their actual consumers.
+A phi with no observable consumer no longer blocks a rewrite. Any data use outside the accepted
+condition slices still rejects it; this check does not delete phis or their other consumers.
+
 Before native flag lowering, D810 can expand overflow from original integer subtraction IL.
 It captures both operands, keeps the original instruction and flag effects, then adds an
 overflow formula proven against a widened signed subtraction. Architecture metadata identifies
@@ -268,6 +279,9 @@ no real-malware coverage is claimed.
 | `binja_d810.flagSourceOverflow` | true; disable only the early subtraction-overflow expansion |
 | `binja_d810.flagSourceBits` | 64 bits; maximum 64 |
 | `binja_d810.flagRounds` | 3; work and condition limits apply across all rounds |
+| `binja_d810.flagBooleanCircuits` | true; disable integer-encoded Boolean reconstruction |
+| `binja_d810.flagBooleanAtoms` | 4 independent predicates; maximum 8 |
+| `binja_d810.flagPhiUses` | true; follow phi outputs when proving flag-use confinement |
 | `binja_d810.flagInstructions` | 20,000 instructions |
 | `binja_d810.flagNodes` | 2,000 expression nodes |
 | `binja_d810.flagWork` | 80,000 proof visits per pass |
@@ -456,7 +470,7 @@ function budget and reports rejected or exhausted proofs. Disable keys below use
 | --- | --- | --- | --- |
 | Callee summaries | Exact register/frame arithmetic, all-path scratch proofs and checked call substitution | Bounded acyclic helpers and callers; unknown calls or ambiguous stack joins reject scratch proofs. Direct call-link support is ARM64/x86/x64. Optional native inlining is a comparison mode. | `calleeSummaries` |
 | Scratch slots | No-escape checks and byte-range liveness on every CFG path | Unknown effects, ambiguous logical overlaps and big-endian partial fields stay unchanged. | `scratchSlots` |
-| Flag conditions | Exact-width comparison equivalence, original subtraction-overflow proofs and confined flag uses | Bounded two-arm merges; early models need pure operands and known flag metadata. Native `ADD_OVERFLOW` remains unmodeled. | `flagConditions` |
+| Flag conditions | Exact-width comparison/Boolean equivalence, original subtraction-overflow proofs and confined flag uses | Bounded truth tables and two-arm merges; early models need pure operands and known flag metadata. Native `ADD_OVERFLOW` remains unmodeled. | `flagConditions` |
 | Allocation round trips | Exact private byte forwarding under explicit contracts | Fresh/nonnullable storage and elidable lifetime guarantees are assumptions supplied by the analyst; installed libraries did not provide them. No name matching. | `allocationRoundTrips` |
 | Constant buffers | Exact scalar execution of multiple regions, final bytes, live-outs and entry/exit checks | Escaped frames, unknown inputs/effects and SIMD remain unsupported. Printable text and adjacent-length interpretation are display heuristics. Native input-IL errors remain visible in tests. | `constantBuffers` |
 | Mutable globals | Closed full/partial update sets and Z3 invariance for independent reads | Visible-code/no-escape assumptions; guard order is overapproximated. Large sets and unknown atomic intrinsics are excluded. | `mutableValueSets` |

@@ -19,6 +19,9 @@ class Limits:
     merges: int = 8
     proof_ms: int = 200
     rounds: int = 3
+    boolean: bool = True
+    boolean_atoms: int = 4
+    phi_uses: bool = True
 
 
 @dataclass
@@ -31,9 +34,26 @@ class Result:
 
 def recombine(expression, *, guards=(), limits=Limits(), deadline=Deadline.never(), tick=lambda: None):
     result = Result(expression)
+    left = limits.work
+    def circuit_tick():
+        nonlocal left
+        tick(); left -= 1
+        if left < 0 or deadline.expired(): raise ValueError("flag reconstruction budget exhausted")
     if deadline.expired() or tree_size(expression) > limits.nodes:
         result.notes.append("flag expression budget exhausted")
         return result
+    if limits.boolean:
+        from .boolean import simplify
+        try:
+            circuit = simplify(expression, max_atoms=limits.boolean_atoms, max_nodes=limits.nodes,
+                               proof_ms=limits.proof_ms, deadline=deadline, tick=circuit_tick)
+            if circuit is not None:
+                expression = circuit
+                result.expression = circuit  # already proved by universal predicate substitution
+                result.changes += 1
+                result.notes.append("Boolean circuit simplified with an exact-width proof")
+        except (ValueError, ArithmeticError, RecursionError) as exc:
+            result.notes.append(str(exc) or "Boolean circuit is unsupported")
     # Operands are discovered semantically from subtraction and comparison expressions.
     # Their order and widths come from the IL; there is no catalogue of target constants.
     pairs, differences = [], []
@@ -55,7 +75,6 @@ def recombine(expression, *, guards=(), limits=Limits(), deadline=Deadline.never
             break
     pairs = differences + [pair for pair in pairs if pair not in differences]
     candidates = [BinOp(op, a, b, 1) for a, b in pairs for op in sorted(CMP_OPS)]
-    left = limits.work
     memo = {}
 
     def visit(node):

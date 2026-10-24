@@ -35,6 +35,7 @@ _COMPARE = {Op.MLIL_CMP_E: "eq", Op.MLIL_CMP_NE: "ne", Op.MLIL_CMP_ULT: "ult", O
 _LOADS = frozenset({Op.MLIL_LOAD_SSA, Op.MLIL_LOAD_STRUCT_SSA})
 # x86 sbb/adc (v4.2): (l - r) - carry and (l + r) + carry, followed through definitions but never roots.
 _CARRY = {Op.MLIL_SBB: "sub", Op.MLIL_ADC: "add"}
+_BOOLEAN_BINARY = {Op.MLIL_AND: "and", Op.MLIL_OR: "or", Op.MLIL_XOR: "xor"}
 SUPPORTED_OPS = frozenset(_BINARY) | frozenset(_UNARY) | frozenset(_COMPARE) | {Op.MLIL_BOOL_TO_INT}
 # Division: lifted only when it cannot trap; otherwise an effect, as before.
 _DIVIDE = {Op.MLIL_DIVU: "udiv", Op.MLIL_DIVS: "sdiv", Op.MLIL_MODU: "urem", Op.MLIL_MODS: "srem"}
@@ -200,6 +201,16 @@ class _Lifter:
         if op == Op.MLIL_VAR_SSA and width == 0:
             return self.boolean(e, inlined=inlined)  # a flag variable (cond:0)
         if width == 0:
+            if op == Op.MLIL_CONST and e.constant in (0,1):
+                return Const(e.constant,1)
+            if op in _BOOLEAN_BINARY:
+                left=self.expr(self.get(e,"left"),inlined=inlined)
+                right=self.expr(self.get(e,"right"),inlined=inlined)
+                if left is not None and right is not None and left.width==right.width==1:
+                    return BinOp(_BOOLEAN_BINARY[op],left,right,1)
+            elif op == Op.MLIL_NOT:
+                value=self.expr(self.get(e,"src"),inlined=inlined)
+                if value is not None and value.width==1:return UnOp("not",value,1)
             return None
         if op in (Op.MLIL_CONST, Op.MLIL_CONST_PTR):
             return Const(e.constant, width)
@@ -407,6 +418,8 @@ class _Lifter:
         zx(t != 0) as t when t can only be 0 or 1 (v2.1's 0/1 rule)."""
         if e.operation in _COMPARE:
             return self.compare(e, inlined=inlined)
+        if e.size==0 and e.operation in {*_BOOLEAN_BINARY,Op.MLIL_NOT,Op.MLIL_CONST}:
+            return self.expr(e,inlined=inlined)
         if e.operation != Op.MLIL_VAR_SSA or e.size != 0:
             return None
         ssa_var = self.get(e, "src")
@@ -572,7 +585,8 @@ def _substitute_leaves(e: Expr, mapping: dict[tuple[str, int], Expr], memo: Opti
 
 
 def _is_flag(e: MediumLevelILInstruction) -> bool:
-    return e.operation in _COMPARE or (e.operation == Op.MLIL_VAR_SSA and e.size == 0)
+    return e.operation in _COMPARE or (e.size==0 and e.operation in
+            {Op.MLIL_VAR_SSA,Op.MLIL_CONST,Op.MLIL_NOT,*_BOOLEAN_BINARY})
 
 
 def _written_bytes(definition) -> int:

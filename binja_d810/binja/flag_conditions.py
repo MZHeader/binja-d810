@@ -8,6 +8,7 @@ from binaryninja import ILInstructionAttribute as Attr, MediumLevelILOperation a
 
 from ..flags.recombine import Limits, recombine
 from ..flags.semantics import choose
+from ..flags.uses import Confinement,Use
 from ..ir.bits import possible_ones
 from ..ir.expr import BinOp, Const, UnOp, tree_size
 from ..ir.normalize import normalize
@@ -256,22 +257,31 @@ def _run_round(il, level, limits, deadline, work):
         # definitions in their expression slices. Other data/side-effect uses veto that plan.
         while plans:
             work.tick()
+            ssa=il.ssa_form
             allowed = {root.ssa_form.instr_index for root, _, _ in plans}
             for _, _, lifter in plans:
                 for value in lifter.inlined.values():
                     work.tick()
-                    definition = il.ssa_form.get_ssa_var_definition(value)
+                    definition = ssa.get_ssa_var_definition(value)
                     if definition is not None:
                         allowed.add(definition.instr_index)
             accepted = []
+            phi_operation=M.MLIL_VAR_PHI if level=='mlil' else H.HLIL_VAR_PHI
+            def users(value):
+                for use in ssa.get_ssa_var_uses(value):
+                    forwarded=use.dest if getattr(limits,'phi_uses',True) and use.operation==phi_operation else None
+                    yield Use(use.instr_index,forwarded,use.operation.name)
+            confinement=Confinement(users,allowed,work.tick)
             for root, replacement, lifter in plans:
-                external = False
+                outside = None
                 for v in lifter.flag_values:
-                    for use in il.ssa_form.get_ssa_var_uses(v):
-                        work.tick()
-                        external |= use.instr_index not in allowed
-                if external:
-                    report.notes.append(f"{root.address:#x}: flag value has other uses")
+                    witness=confinement.external(v)
+                    if witness is not None:
+                        value,use=witness
+                        outside=f"{value} at IL {use.index} ({use.description})"
+                        break
+                if outside is not None:
+                    report.notes.append(f"{root.address:#x}: flag value has other uses: {outside}")
                 else:
                     accepted.append((root, replacement, lifter))
             if len(accepted) == len(plans):

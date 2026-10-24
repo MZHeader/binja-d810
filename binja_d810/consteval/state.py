@@ -49,6 +49,11 @@ class State:
         self.written = set()
         self.order = "little" if little_endian else "big"
 
+    def copy(self):
+        result = State(len(self.memory), self.order == "little")
+        result.memory, result.cells, result.written = list(self.memory), dict(self.cells), set(self.written)
+        return result
+
     def assign(self, key, value, width):
         if width < 1:
             raise ValueError("unknown scalar width")

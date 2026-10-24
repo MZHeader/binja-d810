@@ -74,6 +74,8 @@ CONSTANT_LIMITS = {
     "starts": ("constantRegionStarts", 64), "exit_instructions": ("constantAnnotationSteps", 4096),
     "scalar_bits": ("constantScalarBits", 128), "string_bytes": ("constantStringBytes", 256),
     "string_minimum": ("constantStringMinimum", 4), "store_bytes": ("constantStoreBytes", 8),
+    "regions": ("constantRegions", 8),
+    "definition_depth": ("constantDefinitionDepth", 32),
 }
 
 _SPECS = {

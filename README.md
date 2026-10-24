@@ -310,12 +310,18 @@ installed standard libraries or establish that a real allocator's lifetime can b
 
 ## Constant buffers and decoded text
 
-`binja_d810.constantBuffers` (default **true**) evaluates a deterministic MLIL region near
-function entry. Scalar arithmetic, bounded loops, immutable image reads and local byte stores
-are evaluated at their actual widths. The pass replaces that region with its final stores and
-preserves register writes and live values. A retained path that can reenter the region vetoes
-the change. Calls, unknown inputs, writable reads, pointer-bit observations and unmodeled effects
-stop evaluation. It never executes the binary or calls a helper.
+`binja_d810.constantBuffers` (default **true**) finds deterministic MLIL regions throughout a
+function, including after calls and inside separate branches. Scalar arithmetic, bounded loops,
+immutable image reads and local byte stores are evaluated at their actual widths. Each region
+must have one proved entry; shared tails remain outside it, and retained paths cannot reenter
+it. Register writes and live values are preserved. Unknown inputs, writable reads, pointer-bit
+observations and unmodeled effects stop that candidate; other independent regions can still run.
+
+Calls remain in place and evaluation starts with fresh unknown memory after them. Earlier frame
+pointer captures block later frame rewrites. Read-only, noncapturing helper uses may be proved
+from their IL; ambiguous return or pointer uses stay conservative. Constant register definitions
+and local addresses can be bound through bounded SSA chains. The pass never executes the binary
+or calls a helper.
 
 This is exact concrete evaluation of the input IL, with separate control-flow and live-out
 checks. String recognition is a display heuristic: printable ASCII ending in NUL, or a buffer
@@ -331,19 +337,20 @@ Limits share the function time budget. Each key below has the `binja_d810.` pref
 | --- | --- |
 | `constantInstructions` | 4,096 MLIL instructions |
 | `constantExpressionNodes` | 2,000 nodes per expression |
-| `constantSteps` | 10,000 executed instructions |
+| `constantSteps` | 10,000 evaluation steps across attempted regions |
 | `constantTrips` | 256 visits per instruction |
 | `constantFrameBytes` | 4,096 bytes of local frame |
 | `constantProofWork` | 100,000 proof visits |
-| `constantRegionStarts` | 64 entry-block starting positions |
+| `constantRegionStarts` | 64 candidate starts across the function |
+| `constantRegions` | 8 disjoint replacements |
+| `constantDefinitionDepth` | 32 nested SSA definitions for entry bindings |
 | `constantAnnotationSteps` | 4,096 retained-tail instructions |
 | `constantScalarBits` | 128 bits |
 | `constantStringBytes` | 256 bytes |
 | `constantStringMinimum` | 4 printable bytes |
 | `constantStoreBytes` | 8 bytes per emitted store; maximum 8 |
 
-The current pass handles one entry region, not arbitrary regions after unknown calls. SIMD,
-floating arithmetic, unknown pointer bytes and ambiguous logical/physical stack overlaps stay
+SIMD, floating arithmetic, unknown pointer bytes and ambiguous logical/physical stack overlaps stay
 unchanged. Native synthetic constant-copy operations are identified from their IL metadata and
 original stores, never by library name. Their bytes have already been computed by Binary Ninja.
 
@@ -353,6 +360,10 @@ and compared with the Python generator. Fixtures disable compiler vectorization 
 protectors to test scalar semantics. Three x86 O2 cases currently have incorrect native
 constant-copy bytes **before D810**; strict expected failures record that limitation and check
 that D810 preserves the original IL's bytes. These tests make no real-malware coverage claim.
+Additional fixtures check loops after calls, two sequential regions, conditional regions sharing
+a tail, earlier pointer capture, shared limits and independent final-byte readback on both arms.
+Fixture helper types match their C declarations; an incorrectly inferred pointer return can
+otherwise prevent the noncapture proof.
 
 ## Mutable global value sets
 
@@ -418,7 +429,7 @@ function budget and reports rejected or exhausted proofs. Disable keys below use
 | Scratch slots | No-escape checks and byte-range liveness on every CFG path | Unknown effects, ambiguous logical overlaps and big-endian partial fields stay unchanged. | `scratchSlots` |
 | Flag conditions | Exact-width comparison equivalence and confined flag uses | Bounded two-arm merges; native `ADD_OVERFLOW` remains unmodeled. | `flagConditions` |
 | Allocation round trips | Exact private byte forwarding under explicit contracts | Fresh/nonnullable storage and elidable lifetime guarantees are assumptions supplied by the analyst; installed libraries did not provide them. No name matching. | `allocationRoundTrips` |
-| Constant buffers | Exact scalar execution, final bytes, live-outs and exit checks | One entry region; no arbitrary call execution or SIMD. Printable text and adjacent-length interpretation are display heuristics. Native input-IL errors remain visible in tests. | `constantBuffers` |
+| Constant buffers | Exact scalar execution of multiple regions, final bytes, live-outs and entry/exit checks | Escaped frames, unknown inputs/effects and SIMD remain unsupported. Printable text and adjacent-length interpretation are display heuristics. Native input-IL errors remain visible in tests. | `constantBuffers` |
 | Mutable globals | Closed full/partial update sets and Z3 invariance for independent reads | Visible-code/no-escape assumptions; guard order is overapproximated. Large sets and unknown atomic intrinsics are excluded. | `mutableValueSets` |
 
 ## Notes

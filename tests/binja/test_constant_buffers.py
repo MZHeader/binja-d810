@@ -12,6 +12,7 @@ from binja_d810.binja.flow import apply
 from binja_d810.deadline import Deadline
 
 CASES = json.loads((BUILD / "constant_buffers.json").read_text())
+REGIONS = json.loads((BUILD / "constant_regions.json").read_text())
 
 
 @pytest.fixture(scope="module", params=MATRIX, ids=IDS)
@@ -22,6 +23,11 @@ def builds(request):
         types = {c['name']: f"void {c['name']}(void)" for c in CASES}
         types.update({name: f"void {name}(void)" for name in ('ce_length', 'ce_writable', 'ce_call', 'ce_volatile')})
         types.update({name: f"void {name}(uint32_t x)" for name in ('ce_unknown', 'ce_reentry')})
+        types.update({c['name']: f"void {c['name']}({'uint32_t choose' if c.get('branch') else 'void'})" for c in REGIONS})
+        types['ce_previously_escaped'] = 'void ce_previously_escaped(void)'
+        types.update(constant_buffer_use='void constant_buffer_use(uint8_t *p)',
+                     constant_buffer_length='void constant_buffer_length(uint8_t *p, uint32_t length)',
+                     constant_buffer_capture='void constant_buffer_capture(uint8_t *p)')
         set_types(bv, types)
         settle(bv)
     yield request.param, on, off
@@ -41,7 +47,7 @@ def test_randomized_strings_and_final_il_match_the_independent_generator(builds,
         request.applymarker(pytest.mark.xfail(strict=True, reason='Native constant-copy data already has an incorrect byte before D810; on/off bytes agree'))
     assert expected[:-1].decode('ascii') in [value for _, value in report.constant_strings], log.render(report)
     assert expected in recover(func), text(func)
-    assert report.constant_regions == 1 and report.constant_steps > 0
+    assert report.constant_regions >= 1 and report.constant_steps > 0
     for address, value in report.constant_strings:
         assert json.dumps(value) in func.get_comment_at(address)
 
@@ -158,3 +164,33 @@ def test_protected_native_memory_writes_are_retained(builds, attribute):
     new, report = constant_buffers.run(il)
     assert new is il and not report.regions and not report.strings
     assert any('protected' in note for note in report.notes)
+
+
+@pytest.mark.parametrize('case', REGIONS, ids=lambda c: c['name'])
+def test_later_and_disjoint_regions_match_independent_final_bytes(builds, case):
+    _, on, _ = builds
+    func = function_named(on, case['name'])
+    report = log.latest_report(func)
+    assert set(case['texts']) <= {s for _, s in report.constant_strings}, log.render(report)
+    assert report.constant_regions == case['regions']
+    observed = recover(func, (False,)) + recover(func, (True,)) if case.get('branch') else recover(func)
+    assert {s.encode('ascii') + b'\0' for s in case['texts']} <= set(observed), text(func)
+
+
+def test_prior_capture_keeps_the_original_buffer_computations(builds):
+    _, on, off = builds
+    func = function_named(on, 'ce_previously_escaped')
+    report = log.latest_report(func)
+    assert not report.constant_regions and not report.constant_strings
+    assert any('retain a frame alias' in note for note in report.constant_buffers)
+    assert text(func) == text(function_named(off, 'ce_previously_escaped'))
+
+
+def test_region_count_limits_the_transaction_without_losing_other_code(builds):
+    _, _, off = builds
+    func = function_named(off, 'ce_two_regions')
+    new, report = constant_buffers.run(func.mlil, replace(constant_buffers.Limits(), regions=1))
+    texts = next(c['texts'] for c in REGIONS if c['name'] == 'ce_two_regions')
+    assert new is not func.mlil and report.regions == 1
+    assert texts[0] in [s for _, s in report.strings] and texts[1] not in [s for _, s in report.strings]
+    assert sum('CALL' in i.operation.name for i in new.instructions) == sum('CALL' in i.operation.name for i in func.mlil.instructions)

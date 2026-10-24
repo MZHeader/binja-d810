@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import random
+import re
 
 
 def fixture(seed):
@@ -33,6 +34,8 @@ volatile uint32_t constant_buffer_observer;
 F void constant_buffer_use(const uint8_t *p) { constant_buffer_observer=*p; }
 F void constant_buffer_length(const uint8_t *p, uint32_t n) { constant_buffer_observer=p[n-1]; }
 F uint32_t constant_buffer_unknown(uint32_t x) { return constant_buffer_observer+x; }
+uint8_t *volatile constant_buffer_saved;
+F void constant_buffer_capture(uint8_t *p) { constant_buffer_saved=p; }
 F void ce_length(void) {
   uint8_t buffer[7]; uint32_t s=65;
   for(uint32_t i=0;i<7;++i) { STATE(s); buffer[i]=(uint8_t)s; s+=1; }
@@ -99,6 +102,31 @@ def generate(out, seeds):
             manifest.append(dict(item, name=name, mode=mode))
     (out / "constant_buffers.c").write_text("\n\n".join(code))
     (out / "constant_buffers.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    extra, regions = [], []
+    def body(seed, suffix):
+        item = fixture(seed)
+        _, code = source(item, 'loop')
+        code = code[code.index('{')+1:code.rindex('}')]
+        code = re.sub(r'\b(buffer|s|keys|cipher)\b', lambda m: m[0] + suffix, code)
+        return code, bytes(item['plaintext']).decode('ascii').rstrip('\0')
+    for seed in (20, 21):
+        code, expected = body(seed, '')
+        name = f'ce_after_call_{seed}'
+        extra.append(f'F void {name}(void) {{ constant_buffer_unknown(3); {code} }}')
+        regions.append(dict(name=name, texts=[expected], regions=1))
+    first, a = body(22, 'a'); second, b = body(23, 'b')
+    extra.append(f'F void ce_branch_regions(uint32_t choose) {{ if(choose) {{ {first} }} else {{ {second} }} }}')
+    regions.append(dict(name='ce_branch_regions', texts=[a,b], regions=2, branch=True))
+    first, a = body(24, 'a'); second, b = body(25, 'b')
+    extra.append(f'F void ce_two_regions(void) {{ {first} {second} BUFFER(buffera); constant_buffer_use(buffera); }}')
+    regions.append(dict(name='ce_two_regions', texts=[a,b], regions=2))
+    code, _ = body(26, '')
+    index = code.index('uint32_t s=')
+    code = code[:index] + 'constant_buffer_capture(buffer);\n' + code[index:]
+    extra.append(f'F void ce_previously_escaped(void) {{ {code} }}')
+    path = out / 'constant_buffers.c'
+    path.write_text(path.read_text() + '\n\n' + '\n\n'.join(extra))
+    (out / 'constant_regions.json').write_text(json.dumps(regions, indent=2) + '\n')
 
 
 if __name__ == "__main__":

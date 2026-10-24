@@ -12,8 +12,9 @@ class UnknownValue(Exception):
     pass
 
 
-def recover(func):
+def recover(func, choices=()):
     cells, memory, observed = {}, {}, []
+    branches = iter(choices)
     order = "little" if func.arch.endianness.name == "LittleEndian" else "big"
 
     def local(var):
@@ -23,7 +24,7 @@ def recover(func):
         if node.operation == H.HLIL_VAR and local(node.var): return node.var.storage
         if node.operation == H.HLIL_STRUCT_FIELD: return address(node.src) + node.offset
         if node.operation == H.HLIL_ARRAY_INDEX:
-            base = Pointer(address(node.src)) if node.src.operation == H.HLIL_VAR and local(node.src.var) else value(node.src)
+            base = Pointer(address(node.src)) if node.src.expr_type is not None and node.src.expr_type.type_class == TypeClass.ArrayTypeClass else value(node.src)
             assert isinstance(base, Pointer), str(node)
             return base.offset + value(node.index) * node.size
         if node.operation == H.HLIL_DEREF:
@@ -34,6 +35,8 @@ def recover(func):
     def value(node):
         op, bits = node.operation, node.size * 8 or 1
         mask = (1 << bits) - 1
+        if node.expr_type is not None and node.expr_type.type_class == TypeClass.ArrayTypeClass:
+            return Pointer(address(node))  # Array-to-pointer decay includes nested arrays.
         if op in (H.HLIL_CONST, H.HLIL_CONST_PTR): return node.constant & mask
         if op == H.HLIL_ADDRESS_OF: return Pointer(address(node.src))
         if op == H.HLIL_VAR:
@@ -56,6 +59,9 @@ def recover(func):
             a, b = value(node.left), value(node.right)
             return {H.HLIL_OR: lambda: a | b, H.HLIL_AND: lambda: a & b, H.HLIL_XOR: lambda: a ^ b,
                     H.HLIL_MUL: lambda: a * b, H.HLIL_LSL: lambda: a << b, H.HLIL_LSR: lambda: a >> b}[op]() & mask
+        if op in (H.HLIL_CMP_E, H.HLIL_CMP_NE):
+            same = value(node.left) == value(node.right)
+            return int(same if op == H.HLIL_CMP_E else not same)
         if op in (H.HLIL_STRUCT_FIELD, H.HLIL_ARRAY_INDEX, H.HLIL_DEREF):
             at = address(node)
             if any(at + i not in memory for i in range(node.size)): raise UnknownValue()
@@ -71,6 +77,12 @@ def recover(func):
     def statements(root):
         if root.operation == H.HLIL_BLOCK:
             for child in root.body: yield from statements(child)
+        elif root.operation == H.HLIL_IF:
+            try: taken = bool(value(root.condition))
+            except UnknownValue:
+                try: taken = next(branches)
+                except StopIteration: raise AssertionError('independent branch choice required')
+            yield from statements(root.true if taken else root.false)
         else: yield root
 
     for node in statements(func.hlil.root):

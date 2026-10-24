@@ -1,6 +1,7 @@
 """Exact bounded evaluation of a local-buffer region, retaining its exit and live values."""
 
 from dataclasses import dataclass, field
+from collections import defaultdict
 import time
 
 from binaryninja import (BuiltinType, Endianness, ILInstructionAttribute as Attr, ILSourceLocation,
@@ -10,8 +11,10 @@ from binaryninja import (BuiltinType, Endianness, ILInstructionAttribute as Attr
 from ..consteval.program import Address
 from ..consteval.state import Cell, State, binary, unary
 from ..consteval.strings import recognize
+from ..consteval.regions import reachable, reverse, validate
 from ..deadline import Deadline
 from .memory import fixed_load_is_safe
+from .effects import mlil_effect
 from .mlil.lift import _BINARY, _COMPARE, _UNARY
 from .scratch import operands, walk
 
@@ -30,6 +33,8 @@ class Limits:
     string_bytes: int = 256
     string_minimum: int = 4
     store_bytes: int = 8
+    regions: int = 8
+    definition_depth: int = 32
 
 
 @dataclass
@@ -69,6 +74,15 @@ class Scope:
         self.last_writes = {}
         self.constant_writes = {}
         self.sequence = 0
+        self.executed = 0
+        self.edges = successors(il)
+        self.predecessors = reverse(self.edges)
+        self.escapes = None
+        self.block_starts = {block.start for block in il.basic_blocks}
+        self.bypasses = {}
+        self.entry_index = None
+        self.entry_values, self.entry_active = {}, set()
+        self.exposures = set()
         for instr in il.instructions:
             for node in walk(instr):
                 self.tick()
@@ -89,6 +103,9 @@ class Scope:
                 if destination.operation in _ADDRESSES and self.local(destination.src):
                     key = destination.src.identifier
                     self.extents[key] = max(self.extents.get(key, 0), getattr(destination, "offset", 0) + len(data))
+            if instr.operation not in _WRITES | {M.MLIL_IF, M.MLIL_GOTO, M.MLIL_NOP, M.MLIL_FORCE_VER, M.MLIL_RET}:
+                if instr.operation != M.MLIL_CALL or self.builtin(instr) is None:
+                    self.exposures.add(instr.instr_index)
         if not self.addressed:
             raise ValueError("no local buffer addresses")
         if any(not width or self.vars[key].storage + width > 0 for key, width in self.extents.items()):
@@ -99,6 +116,71 @@ class Scope:
             raise ValueError("constant frame byte limit")
         self.anchor = next(self.vars[key] for key in self.extents if self.vars[key].storage == self.base)
         self.state = State(self.end - self.base, self.little)
+
+    def escaping_frame_uses(self, prior):
+        """Only preceding exposures matter; cache immutable SSA indexing and call proofs."""
+        if self.escapes is None:
+            from .flow import access, evidence
+            ssa, nodes, parents, readers = self.il.ssa_form, {}, defaultdict(list), defaultdict(list)
+            for statement in ssa.instructions:
+                index = statement.non_ssa_form.instr_index
+                pending = [statement]
+                while pending:
+                    self.tick(); node = pending.pop()
+                    if node.expr_index in nodes: continue
+                    nodes[node.expr_index] = node
+                    for role, value in operands(node):
+                        if hasattr(value, "operation"):
+                            parents[value.expr_index].append((node, role, index)); pending.append(value)
+                        elif isinstance(value, SSAVariable) and role != "dest":
+                            readers[value].append(node)
+            uses = {}
+            def uses_of(func):
+                self.tick()
+                if func.start not in uses:
+                    body = self.il if func.start == self.func.start else func.mlil_if_available
+                    uses[func.start] = evidence.Uses(body.ssa_form) if body is not None and len(body) <= self.limits.instructions else None
+                return uses[func.start]
+            proof = access.Proof(uses_of, self.deadline, max(0, self.left))
+            caller_uses = uses_of(self.func)
+            self.escapes = (nodes, parents, readers, proof, proof.graph(caller_uses), {}, set())
+        nodes, parents, readers, proof, graph, calls, escaped = self.escapes
+        if escaped & prior: return escaped & prior
+        loads = {M.MLIL_LOAD_SSA, M.MLIL_LOAD_STRUCT_SSA}
+        stores = {M.MLIL_STORE_SSA, M.MLIL_STORE_STRUCT_SSA}
+        for root in nodes.values():
+            self.tick()
+            if root.operation not in _ADDRESSES or not self.local(root.src): continue
+            if not any(index in prior for _, _, index in parents[root.expr_index]): continue
+            pending, seen = [root], set()
+            while pending:
+                self.tick(); node = pending.pop()
+                if node.expr_index in seen: continue
+                seen.add(node.expr_index)
+                if node.operation == M.MLIL_VAR_PHI:
+                    pending.extend(readers[node.dest])
+                for parent, role, index in parents[node.expr_index]:
+                    if index not in prior: continue
+                    self.tick(); op = parent.operation
+                    if op in loads and role == "src" or op in stores and role == "dest": continue
+                    if op == M.MLIL_SET_VAR_SSA and role == "src":
+                        pending.extend(readers[parent.dest])
+                    elif op in _BINARY or op in _UNARY or op == M.MLIL_VAR_PHI:
+                        pending.append(parent)
+                    elif op in (M.MLIL_CALL_SSA, M.MLIL_TAILCALL_SSA) and role == "params":
+                        if self.builtin(self.il[index]) is not None: continue
+                        key = parent.expr_index, node.expr_index
+                        if key not in calls:
+                            graph.uses.index(self.il.ssa_form[parent.instr_index])
+                            previous = proof.left
+                            try: calls[key] = graph.call_read_only(*key)
+                            finally: self.left -= max(0, previous - proof.left)
+                        if calls[key]: continue
+                        escaped.add(index)
+                    else:
+                        escaped.add(index)
+        self.tick()
+        return escaped & prior
 
     def tick(self):
         self.left -= 1
@@ -132,9 +214,33 @@ class Scope:
                 if logical != physical:
                     raise ValueError("logical and physical local values differ")
             return physical
+        if var.identifier not in self.state.cells and self.entry_index is not None:
+            version = self.il[self.entry_index].get_ssa_var_version(var)
+            value, known = self.entry_value(SSAVariable(var, version))
+            self.state.assign(var.identifier, value, known)
         return self.state.read(var.identifier, width, offset)
 
-    def expression(self, node):
+    def entry_value(self, value):
+        self.tick()
+        if self.local(value.var) or value.var.type is not None and value.var.type.volatile:
+            raise ValueError("entry binding is not an ordinary register value")
+        if value in self.entry_values: return self.entry_values[value]
+        if value in self.entry_active or len(self.entry_active) >= self.limits.definition_depth:
+            raise ValueError("constant entry-definition depth limit")
+        definition = self.il.ssa_form.get_ssa_var_definition(value)
+        if definition is None or definition.operation != M.MLIL_SET_VAR_SSA:
+            raise ValueError("constant region has an unknown entry value")
+        self.entry_active.add(value)
+        try:
+            result = self.expression(definition.src, entry=True)
+            if result[1] != (definition.size * 8 or 1):
+                raise ValueError("constant entry-definition width differs")
+            self.entry_values[value] = result
+            return result
+        finally:
+            self.entry_active.remove(value)
+
+    def expression(self, node, entry=False):
         self.tick()
         self.expression_left -= 1
         if self.expression_left < 0:
@@ -152,12 +258,16 @@ class Scope:
             return int(node.raw_operands[0]), width  # raw lane bits; no floating arithmetic is evaluated
         if op in _READS:
             return self.read_var(node.src, width, 8 * getattr(node, "offset", 0)), width
+        if op == M.MLIL_VAR_SSA and entry:
+            value, known = self.entry_value(node.src)
+            if known != width: raise ValueError("entry register view has ambiguous width")
+            return value, width
         if op in _ADDRESSES:
             if not self.local(node.src):
                 raise ValueError("address is not local storage")
             return Address("frame", node.src.storage - self.base + getattr(node, "offset", 0), self.il.arch.address_size * 8), self.il.arch.address_size * 8
         if op in _BINARY or op in _COMPARE:
-            a, aw = self.expression(node.left); b, bw = self.expression(node.right)
+            a, aw = self.expression(node.left, entry); b, bw = self.expression(node.right, entry)
             compare = op in _COMPARE
             operand_width = node.size * 8 or max(aw, bw)
             if aw != operand_width or (op not in (M.MLIL_LSL, M.MLIL_LSR, M.MLIL_ASR, M.MLIL_ROL, M.MLIL_ROR) and bw != operand_width):
@@ -168,14 +278,15 @@ class Scope:
                     raise ValueError("constant arithmetic operand widths differ")
             return binary(_COMPARE[op] if compare else _BINARY[op], a, b, aw, bw, 1 if compare else width), 1 if compare else width
         if op in _UNARY or op == M.MLIL_BOOL_TO_INT:
-            value, inner = self.expression(node.src)
+            value, inner = self.expression(node.src, entry)
             return unary("zx" if op == M.MLIL_BOOL_TO_INT else _UNARY[op], value, inner, width), width
-        if op in _LOADS:
+        if op in _LOADS or entry and op in (M.MLIL_LOAD_SSA, M.MLIL_LOAD_STRUCT_SSA):
             if node.expr_type is not None and node.expr_type.volatile:
                 raise ValueError("volatile constant-region load")
-            address, _ = self.expression(node.src)
+            address, _ = self.expression(node.src, entry)
             offset = getattr(node, "offset", 0)
             if isinstance(address, Address) and address.buffer == "frame":
+                if entry: raise ValueError("entry frame bytes are unknown")
                 return self.state.load(address.offset + offset, node.size), width
             if isinstance(address, Address): address = address.offset
             address += offset
@@ -280,15 +391,6 @@ def successors(il):
     return result
 
 
-def reachable(edges, start, tick):
-    pending, seen = [start], set()
-    while pending:
-        tick(); node = pending.pop()
-        if node in seen: continue
-        seen.add(node); pending.extend(edges.get(node, ()))
-    return seen
-
-
 @dataclass
 class Plan:
     scope: object
@@ -298,6 +400,7 @@ class Plan:
     outputs: list
     steps: int
     writes: list
+    state: object
 
 
 def attempt(scope, start):
@@ -305,9 +408,22 @@ def attempt(scope, start):
     visited, visits, pc, steps = set(), {}, start, 0
     scope.state.written.clear()
     scope.last_writes.clear(); scope.constant_writes.clear(); scope.sequence = 0
+    scope.entry_index = start
+    if start:
+        prior = reachable(scope.predecessors, start, scope.tick) - {start}
+        if prior & scope.exposures and scope.escaping_frame_uses(prior):
+            raise ValueError("a preceding use may retain a frame alias")
     reason = ""
     while pc in range(len(il)):
-        if steps >= limits.steps or scope.deadline.expired(): raise ValueError("constant evaluation step budget")
+        if pc != start and pc in scope.block_starts:
+            if start not in scope.bypasses:
+                cut = dict(scope.edges); cut[start] = ()
+                scope.bypasses[start] = reachable(cut, 0, scope.tick)
+            if pc in scope.bypasses[start]:
+                reason = "constant region reached a shared control-flow tail"
+                break
+        if scope.executed >= limits.steps or scope.deadline.expired(): raise ValueError("constant evaluation step budget")
+        scope.executed += 1
         visits[pc] = visits.get(pc, 0) + 1
         if visits[pc] > limits.trips: raise ValueError("constant evaluation trip limit")
         # A failed statement cannot partly change the candidate's memory state.
@@ -321,10 +437,9 @@ def attempt(scope, start):
         raise ValueError(reason or "no bounded local region")
     if scope.deadline.expired() or "budget" in reason or "limit" in reason:
         raise ValueError(reason or "constant evaluation deadline")
-    edges = successors(il)
-    after = reachable(edges, pc, scope.tick)
-    if after & visited:
-        raise ValueError("retained control flow can reenter the evaluated region")
+    after = validate(scope.edges, scope.predecessors, start, pc, visited, scope.tick)
+    if any(i.operation == M.MLIL_JUMP for i in il.instructions):
+        raise ValueError("constant region has unbounded incoming jump targets")
     # Only SSA values actually defined in the region and used after its exit need registers.
     outputs, seen, storage = [], set(), set()
     for index in sorted(after):
@@ -355,15 +470,17 @@ def attempt(scope, start):
     recorded = {row[1].identifier for row in writes}
     outputs = [row for row in outputs if row[0].identifier not in recorded]
     outputs.sort(key=lambda row: scope.last_writes.get(row[0].identifier, 0))
-    return Plan(scope, start, pc, visited, outputs, steps, writes)
+    return Plan(scope, start, pc, visited, outputs, steps, writes, scope.state.copy())
 
 
-def rewrite(plan):
-    scope = plan.scope; il = scope.il
+def rewrite(plans):
+    scope = plans[0].scope; il = scope.il
     new = MediumLevelILFunction(il.arch, low_level_il=il.llil)
     new.prepare_to_copy_function(il)
-    resume = MediumLevelILLabel()
-    loc = ILSourceLocation.from_instruction(il[plan.start])
+    resumes = {plan.exit: MediumLevelILLabel() for plan in plans}
+    starts = {plan.start: plan for plan in plans}
+    removed = set().union(*(plan.visited for plan in plans))
+    loc = None
     def literal(value, width):
         if width <= 64: return new.const(width // 8, value, loc)
         size = width // 8
@@ -383,8 +500,10 @@ def rewrite(plan):
         new.prepare_to_copy_block(block)
         for instr in block:
             scope.tick(); new.set_current_address(instr.address, block.arch)
-            if instr.instr_index == plan.exit: new.mark_label(resume)
-            if instr.instr_index == plan.start:
+            if instr.instr_index in resumes: new.mark_label(resumes[instr.instr_index])
+            if instr.instr_index in starts:
+                plan = starts[instr.instr_index]
+                loc = ILSourceLocation.from_instruction(instr)
                 for _, var, op, size, offset, value in plan.writes:
                     expression = pointer(value) if isinstance(value, Address) else literal(value, size * 8 or 1)
                     emitted = new.set_var_field(size, var, offset, expression, loc) if op == M.MLIL_SET_VAR_FIELD else new.set_var(size, var, expression, loc)
@@ -392,17 +511,17 @@ def rewrite(plan):
                 for var, value, width in plan.outputs:
                     expression = pointer(value) if isinstance(value, Address) else literal(value, width)
                     new.append(new.set_var(width // 8, var, expression, loc), loc)
-                offsets = sorted(scope.state.written); position = 0
+                offsets = sorted(plan.state.written); position = 0
                 while position < len(offsets):
                     scope.tick(); begin = offsets[position]; end = position + 1
                     boundaries = {scope.vars[key].storage - scope.base for key in scope.addressed}
                     while end < len(offsets) and offsets[end] == offsets[end - 1] + 1 and offsets[end] not in boundaries and end - position < min(8, scope.limits.store_bytes): end += 1
                     size = end - position
-                    value = scope.state.load(begin, size)
+                    value = plan.state.load(begin, size)
                     new.append(new.store(size, pointer(Address("frame", begin, il.arch.address_size * 8)), new.const(size, value, loc), loc), loc)
                     position = end
-                new.append(new.goto(resume, loc), loc)
-            if instr.instr_index not in plan.visited:
+                new.append(new.goto(resumes[plan.exit], loc), loc)
+            if instr.instr_index not in removed:
                 new.append(instr.copy_to(new), ILSourceLocation.from_instruction(instr))
     new.finalize(); new.generate_ssa_form()
     return new
@@ -461,6 +580,30 @@ def strings(plan):
     return found
 
 
+def advance_prefix(scope, prefix, instr):
+    """Keep only facts established inside this block, resetting at unknown effects."""
+    scope.state = prefix
+    scope.entry_index = None
+    try:
+        scope.step(instr)
+    except ValueError:
+        if instr.operation == M.MLIL_CALL and (data := scope.builtin(instr)) is not None:
+            dest = instr.params[0]
+            if dest.operation in _ADDRESSES and scope.local(dest.src) and not (dest.src.type and dest.src.type.volatile):
+                at = dest.src.storage - scope.base + getattr(dest, "offset", 0)
+                prefix.span(at, len(data))
+                for offset, byte in enumerate(data): prefix.store(at + offset, byte, 1)
+                return prefix  # Retain the protected original literal copy.
+        if instr.operation in _WRITES and mlil_effect(instr.src.ssa_form) is None:
+            prefix.cells.pop(instr.dest.identifier, None)
+            if scope.local(instr.dest):
+                at = instr.dest.storage - scope.base + getattr(instr, "offset", 0)
+                prefix.span(at, instr.size); prefix.memory[at:at + instr.size] = [None] * instr.size
+            return prefix
+        return State(len(prefix.memory), scope.little)
+    return prefix
+
+
 def run(il, limits=Limits(), deadline=Deadline.never()):
     started, cpu = time.monotonic(), time.thread_time(); report = Report()
     try:
@@ -468,56 +611,56 @@ def run(il, limits=Limits(), deadline=Deadline.never()):
         first = next(iter(il.basic_blocks), None)
         if first is None or first.start != 0: return il, report
         scope = Scope(il, limits, deadline)
-        prefix = State(len(scope.state.memory), scope.little)
-        for start in range(min(first.end, limits.starts)):
-            scope.tick()
-            scope.state = State(len(prefix.memory), scope.little)
-            scope.state.memory = list(prefix.memory); scope.state.cells = dict(prefix.cells)
-            try:
-                plan = attempt(scope, start)
-                new = rewrite(plan)
-                try: report.strings = strings(plan)
-                except ValueError as exc: report.notes.append(f"annotation unavailable: {exc}")
-                if report.strings:
-                    code = [(block.start, block.end - block.start) for block in il.source_function.basic_blocks]
-                    if sum(size for _, size in code) <= limits.instructions * il.arch.max_instr_length:
-                        footprint = []
-                        for address, size in code:
-                            scope.tick()
-                            raw = il.source_function.view.read(address, size)
-                            if len(raw) != size: raise ValueError("comment code bytes unavailable")
-                            footprint.append((address, tuple(raw)))
-                        footprint += [(address, tuple(value.to_bytes(size, scope.state.order))) for (address, size), value in scope.readonly.items()]
-                        report.evidence = tuple(footprint)
-                    else:
-                        report.notes.append("comment code-footprint limit")
-                        report.strings = []
-                report.regions = 1; report.instructions = len(plan.visited); report.steps = plan.steps
-                report.notes.append(f"{il[start].address:#x}: evaluated {plan.steps} steps; replaced {len(plan.visited)} instructions with exact final local bytes")
-                return new, report
-            except (ValueError, NotImplementedError, RecursionError) as exc:
-                report.strings = []; report.evidence = ()
-                reason = str(exc) or "constant expression depth unsupported"
-                if reason not in report.notes: report.notes.append(reason)
-            # Retain an unknown pure prologue assignment; its result stays unknown.
-            scope.state = prefix
-            try: scope.step(il[start])
-            except ValueError:
-                instr = il[start]
-                if instr.operation == M.MLIL_CALL and (data := scope.builtin(instr)) is not None:
-                    dest = instr.params[0]
-                    if dest.operation in _ADDRESSES and scope.local(dest.src) and not (dest.src.type and dest.src.type.volatile):
-                        at = dest.src.storage - scope.base + getattr(dest, "offset", 0)
-                        prefix.span(at, len(data))
-                        for offset, byte in enumerate(data): prefix.store(at + offset, byte, 1)
-                        continue  # Analyze the literal effect, while retaining the protected original.
-                if instr.operation not in _WRITES: break
-                prefix.cells.pop(instr.dest.identifier, None)
-                if scope.local(instr.dest):
-                    at = instr.dest.storage - scope.base + getattr(instr, "offset", 0)
-                    prefix.span(at, instr.size); prefix.memory[at:at + instr.size] = [None] * instr.size
-        return il, report
+        plans, occupied, attempts = [], set(), 0
+        for block in il.basic_blocks:
+            prefix = State(len(scope.state.memory), scope.little)
+            for start in range(block.start, block.end):
+                scope.tick()
+                if start in occupied:
+                    prefix = State(len(prefix.memory), scope.little)
+                    continue
+                if attempts >= limits.starts or len(plans) >= limits.regions or scope.executed >= limits.steps: break
+                attempts += 1
+                scope.state = prefix.copy()
+                try:
+                    plan = attempt(scope, start)
+                    if plan.visited & occupied or any(p.exit in plan.visited - {plan.start} or
+                                                     plan.exit in p.visited - {p.start} for p in plans):
+                        raise ValueError("constant regions overlap")
+                    plans.append(plan); occupied.update(plan.visited)
+                except (ValueError, NotImplementedError, RecursionError) as exc:
+                    reason = str(exc) or "constant expression depth unsupported"
+                    if reason not in report.notes: report.notes.append(reason)
+                prefix = advance_prefix(scope, prefix, il[start])
+            if attempts >= limits.starts or len(plans) >= limits.regions or scope.executed >= limits.steps: break
+        if not plans: return il, report
+        new = rewrite(plans)
+        for plan in plans:
+            scope.state = plan.state.copy()
+            scope.entry_index = plan.start
+            try: report.strings.extend(strings(plan))
+            except ValueError as exc: report.notes.append(f"annotation unavailable: {exc}")
+        report.strings = list(dict.fromkeys(report.strings))
+        if report.strings:
+            code = [(block.start, block.end - block.start) for block in il.source_function.basic_blocks]
+            if sum(size for _, size in code) <= limits.instructions * il.arch.max_instr_length:
+                footprint = []
+                for address, size in code:
+                    scope.tick()
+                    raw = il.source_function.view.read(address, size)
+                    if len(raw) != size: raise ValueError("comment code bytes unavailable")
+                    footprint.append((address, tuple(raw)))
+                footprint += [(address, tuple(value.to_bytes(size, scope.state.order))) for (address, size), value in scope.readonly.items()]
+                report.evidence = tuple(footprint)
+            else:
+                report.notes.append("comment code-footprint limit"); report.strings = []
+        report.regions = len(plans)
+        report.instructions = len(occupied); report.steps = sum(p.steps for p in plans)
+        for plan in plans:
+            report.notes.append(f"{il[plan.start].address:#x}: evaluated {plan.steps} steps; replaced {len(plan.visited)} instructions with exact final local bytes")
+        return new, report
     except (ValueError, NotImplementedError, RecursionError) as exc:
+        report.strings = []; report.evidence = ()
         report.notes.append(str(exc) or "constant expression depth unsupported")
         return il, report
     finally:

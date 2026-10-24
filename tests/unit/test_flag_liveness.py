@@ -1,6 +1,6 @@
 import pytest
 import random
-from binja_d810.flags.liveness import live_after
+from binja_d810.flags.liveness import live_after,block_live_after
 
 
 def test_only_the_last_reaching_write_needs_a_source_model():
@@ -51,3 +51,14 @@ def test_worklist_matches_independent_path_search_on_cyclic_graphs():
                 if flag not in writes[node]:pending.extend(edges[node])
             return False
         assert actual=={i:{f for f in ('n','z','c','v') if reaches_read(i,f)} for i in edges}
+
+
+def test_block_summaries_match_instruction_liveness_through_loops_and_kills():
+    rng=random.Random(811)
+    for _ in range(100):
+        blocks={b:tuple(range(b*5,b*5+5)) for b in range(10)}
+        edges={b:tuple({rng.randrange(10) for _ in range(rng.randrange(3))}) for b in blocks}
+        flat={i:((i+1,) if i!=row[-1] else tuple(blocks[t][0] for t in edges[b])) for b,row in blocks.items() for i in row}
+        reads={i:{f for f in ('v','z') if rng.randrange(5)==0} for i in flat}
+        writes={i:{f for f in ('v','z') if rng.randrange(3)==0} for i in flat}
+        assert block_live_after(blocks,edges,reads,writes)==live_after(flat,reads,writes)

@@ -9,8 +9,8 @@ from binaryninja import (FlagRole, ILInstructionAttribute as Attr, ILSourceLocat
                          LowLevelILFunction, LowLevelILOperation as L)
 from ..deadline import Deadline
 from ..flags.semantics import subtract_overflow_bits, subtract_overflow_wide
-from ..flags.liveness import live_after
-from ..ir.expr import BinOp, Const, Var
+from ..flags.liveness import block_live_after
+from ..ir.expr import BinOp, Const, Var, tree_size
 from ..semantic.verify import Verdict, check
 from .callees.rewrite import _copy
 
@@ -27,6 +27,7 @@ class Report:
     models: int = 0
     notes: list = field(default_factory=list)
     seconds: float = 0.0
+    work: int = 0
 
 
 def run(il, limits, deadline=Deadline.never(), max_bits=64):
@@ -47,26 +48,32 @@ def run(il, limits, deadline=Deadline.never(), max_bits=64):
     try:
         if il.arch.name not in INTEGER_CLASSES: return il, report
         if len(il) > limits.instructions: raise ValueError('source flag instruction limit')
-        needed, raw, reads, writes = set(), set(), {}, {}
+        arch=il.arch
+        classes=arch.semantic_class_for_flag_write_type
+        writers=arch.flags_written_by_flag_write_type
+        overflow={flag for kind,flags in writers.items() if classes.get(kind) in INTEGER_CLASSES[arch.name]
+                  for flag in flags if arch.get_flag_role(flag,classes[kind])==FlagRole.OverflowFlagRole}
+        needed, reads, writes = set(), {}, {}
         for instruction in il.instructions:
             reads[instruction.instr_index], writes[instruction.instr_index] = set(), set()
             for node in walk(instruction):
-                writes[instruction.instr_index].update(il.arch.flags_written_by_flag_write_type.get(node.flags,()))
+                writes[instruction.instr_index].update(writers.get(node.flags,()))
                 if node.operation == L.LLIL_SET_FLAG: writes[instruction.instr_index].add(str(node.dest))
-                if node.operation in (L.LLIL_FLAG,L.LLIL_FLAG_BIT): raw.add(str(node.src))
+                if node.operation in (L.LLIL_FLAG,L.LLIL_FLAG_BIT): reads[instruction.instr_index].add(('data',str(node.src)))
                 elif node.operation == L.LLIL_FLAG_GROUP:
-                    reads[instruction.instr_index].update(il.arch.flags_required_for_semantic_flag_group.get(node.semantic_group.name,()))
+                    reads[instruction.instr_index].update(('condition',f) for f in arch.flags_required_for_semantic_flag_group.get(node.semantic_group.name,()) if f in overflow)
                 elif node.operation == L.LLIL_FLAG_COND:
                     cls = node.semantic_class.name if node.semantic_class else None
-                    reads[instruction.instr_index].update(il.arch.get_flags_required_for_flag_condition(node.condition,cls))
-            needed.update(reads[instruction.instr_index])
+                    reads[instruction.instr_index].update(('condition',f) for f in arch.get_flags_required_for_flag_condition(node.condition,cls) if f in overflow)
+            needed.update(f for kind,f in reads[instruction.instr_index] if kind=='condition')
+            writes[instruction.instr_index]={(kind,f) for f in writes[instruction.instr_index] for kind in ('data','condition')}
         if not needed: return il, report
-        edges = {}
+        blocks, edges = {}, {}
         for block in il.basic_blocks:
-            for instruction in block:
-                index = instruction.instr_index
-                edges[index] = (index+1,) if index+1 < block.end else tuple(e.target.start for e in block.outgoing_edges if e.target is not None)
-        live = live_after(edges,reads,writes,tick)
+            tick()
+            blocks[block.start]=tuple(i.instr_index for i in block)
+            edges[block.start]=tuple(e.target.start for e in block.outgoing_edges if e.target is not None)
+        live = block_live_after(blocks,edges,reads,writes,tick)
         plans, proofs = {}, {}
         for instruction in il.instructions:
             tick()
@@ -75,9 +82,10 @@ def run(il, limits, deadline=Deadline.never(), max_bits=64):
             classes = il.arch.semantic_class_for_flag_write_type
             if source.flags not in classes or classes[source.flags] not in INTEGER_CLASSES[il.arch.name]: continue
             written = il.arch.flags_written_by_flag_write_type.get(source.flags, ())
-            flags = [f for f in written if f in live.get(instruction.instr_index,()) and il.arch.get_flag_role(f,classes[source.flags]) == FlagRole.OverflowFlagRole]
+            following=live.get(instruction.instr_index,())
+            flags = [f for f in written if ('condition',f) in following and il.arch.get_flag_role(f,classes[source.flags]) == FlagRole.OverflowFlagRole]
             if not flags: continue
-            if raw & set(written):
+            if any(('data',f) in following for f in written):
                 report.notes.append(f'{instruction.address:#x}: raw flag data use keeps the original flag source'); continue
             if instruction.attributes & PROTECTED or source.attributes & PROTECTED:
                 report.notes.append(f'{instruction.address:#x}: protected flag source stays unchanged'); continue
@@ -102,6 +110,8 @@ def run(il, limits, deadline=Deadline.never(), max_bits=64):
             if len(plans) >= limits.conditions: raise ValueError('source flag model count limit')
             plans[instruction.instr_index] = source,flags,proofs[width]
         if not plans: return il, report
+        required=len(il)+sum(len(flags)*tree_size(expression) for _,flags,expression in plans.values())
+        if required>left: raise ValueError('source flag rebuild work limit')
         new = LowLevelILFunction(il.arch,source_func=il.source_function)
         new.prepare_to_copy_function(il)
         temporary = il.temp_reg_count
@@ -129,8 +139,10 @@ def run(il, limits, deadline=Deadline.never(), max_bits=64):
                     for flag in flags: new.append(new.set_flag(flag,lower(expression,bindings,loc),loc=loc))
         new.finalize()
         report.models = len(plans)
-        report.notes.insert(0,f'{len(plans)} subtraction overflow sources expanded with exact-width proofs')
+        report.notes.insert(0,f'{len(plans)} subtraction overflow sources expanded with exact-width proofs; {limits.work-left} work visits')
         return new,report
     except (ValueError,NotImplementedError,RecursionError) as exc:
         report.notes.append(f'left unchanged: {exc}'); return il,report
-    finally: report.seconds = time.monotonic()-started
+    finally:
+        report.seconds = time.monotonic()-started
+        report.work = limits.work-left

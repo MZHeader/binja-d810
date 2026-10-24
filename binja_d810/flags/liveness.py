@@ -28,3 +28,23 @@ def live_after(edges, reads, writes, tick=lambda: None):
                 if pred not in queued:
                     pending.append(pred); queued.add(pred)
     return after
+
+
+def block_live_after(blocks, edges, reads, writes, tick=lambda: None):
+    """Solve at block boundaries, then expand once through each instruction in reverse."""
+    generated, killed = {}, {}
+    for block, instructions in blocks.items():
+        use,kill=set(),set()
+        for instruction in instructions:
+            tick()
+            use.update(set(reads.get(instruction,()))-kill)
+            kill.update(writes.get(instruction,()))
+        generated[block],killed[block]=use,kill
+    outgoing=live_after(edges,generated,killed,tick)
+    result={}
+    for block,instructions in blocks.items():
+        live=outgoing[block]
+        for instruction in reversed(instructions):
+            tick();result[instruction]=live
+            live=set(reads.get(instruction,())) | (live-set(writes.get(instruction,())))
+    return result

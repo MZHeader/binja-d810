@@ -16,10 +16,11 @@ ONE = ("x86_64-elf", "O2")  # the build the single-build tests use
 
 @pytest.fixture(scope="module", params=MATRIX, ids=IDS)
 def builds(request):
-    """(build-level, D-810 on and settled, D-810 off)."""
+    """Compare unflattening with the other passes enabled identically on both sides."""
     on = open_sample(sample("flatten", *request.param), d810=True)
     settle(on)
-    off = open_sample(sample("flatten", *request.param), d810=False)
+    off = open_sample(sample("flatten", *request.param), d810=True, options={settings.UNFLATTEN: False})
+    settle(off)
     yield "-".join(request.param), on, off
     on.file.close()
     off.file.close()

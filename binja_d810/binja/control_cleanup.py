@@ -4,6 +4,8 @@ import time
 from binaryninja import HighLevelILOperation as H, ILInstructionAttribute as Attr
 from ..control.equivalence import Assignment, equivalent
 from ..ir.expr import BinOp, Const, UnOp, Var, tree_size
+from ..ir.normalize import normalize
+from ..semantic.constant_guard import prove as constant_guard
 from .hlil.adapter import HLILAdapter, shallow_copy
 from .hlil.lift import _BINARY, _UNARY, _COMPARE, STRUCTURE, children
 
@@ -12,6 +14,8 @@ _PROTECTED = {Attr.ILPreventDeadStoreElimination, Attr.ILPreventAliasAnalysis}
 
 @dataclass(frozen=True)
 class Limits:
+    equivalents: bool = True
+    constants: bool = True
     instructions: int = 20000
     nodes: int = 2000
     work: int = 80000
@@ -24,6 +28,7 @@ class Limits:
 @dataclass
 class Report:
     branches: int = 0
+    constants: int = 0
     notes: list[str] = field(default_factory=list)
     seconds: float = 0.0
     cpu_seconds: float = 0.0
@@ -62,6 +67,12 @@ def structure(root, tick):
         if node.operation in STRUCTURE:
             yield node
             stack.extend(reversed(list(children(node))))
+        else:
+            # Conditional values directly assigned/returned by a statement are not visible
+            # to the normal structural walk; inspect these roots without expanding arithmetic.
+            expressions = ([node.src] if node.operation in (H.HLIL_VAR_INIT,H.HLIL_ASSIGN) else
+                           list(node.src) if node.operation==H.HLIL_RET else [])
+            stack.extend(e for e in expressions if e.operation==H.HLIL_IF)
 
 
 def tree_nodes(root, tick):
@@ -181,10 +192,14 @@ def run(il, limits, deadline):
             if not any(node.operation == H.HLIL_IF for node in structure(il.root, work.tick)):
                 break
             nodes = tree_nodes(il.root, work.tick)
+            protected = protected_nodes(il.root,work.tick)
             uses = reads(nodes, work.tick)
-            plans = []
+            plans = [];covered=set()
             for root in nodes:
-                if root.operation != H.HLIL_IF:
+                if root.operation != H.HLIL_IF or root.expr_index in covered:
+                    continue
+                if root.expr_index in protected:
+                    report.notes.append(f'{root.address:#x}: protected branch kept')
                     continue
                 if remaining <= 0:
                     report.notes.append("control branch limit")
@@ -198,6 +213,20 @@ def run(il, limits, deadline):
                         raise ValueError("non-Boolean branch guard")
                     if tree_size(guard) > limits.nodes:
                         raise ValueError("branch expression limit")
+                    constant=normalize(guard)
+                    if limits.constants and isinstance(constant,Const):
+                        region=list(walk(root,work.tick))
+                        rejected=root.false if constant.value else root.true
+                        if any(node.operation==H.HLIL_LABEL for node in region):
+                            raise ValueError('labelled constant branch kept')
+                        if any(node.attributes & _PROTECTED for node in walk(rejected,work.tick)):
+                            raise ValueError('protected untaken branch kept')
+                        if constant_guard(guard,proof_ms=limits.proof_ms,deadline=deadline) is not None:
+                            plans.append((root,root.true if constant.value else root.false,'constant'))
+                            covered.update(node.expr_index for node in region)
+                        else:report.notes.append(f'{root.address:#x}: constant guard not proven')
+                        continue
+                    if not limits.equivalents:continue
                     left, right = scalar.block(root.true), scalar.block(root.false)
                     region = {n.expr_index for n in walk(root, work.tick)}
                     written = {a.target for a in left + right}
@@ -209,7 +238,7 @@ def run(il, limits, deadline):
                     proven, reason = equivalent(left, right, outputs, max_nodes=limits.nodes,
                                                 proof_ms=limits.proof_ms, deadline=deadline, tick=work.tick)
                     if proven:
-                        plans.append(root)
+                        plans.append((root,root.true,'equivalent'))
                     else:
                         report.notes.append(f"{root.address:#x}: {reason}")
                 except (ValueError, RecursionError) as exc:
@@ -220,19 +249,21 @@ def run(il, limits, deadline):
             if not plans:
                 break
             committing = True
-            for root in plans:
+            for root,selected,_ in plans:
                 adapter.backups.append((root.expr_index, shallow_copy(il, root)))
-                il.replace_expr(root.expr_index, shallow_copy(il, root.true))
+                il.replace_expr(root.expr_index, shallow_copy(il, selected))
             adapter.finish()
             committing = False
-            report.branches += len(plans)
-            report.notes.extend(f"{root.address:#x}: both scalar branches proved equivalent; pure guard removed" for root in plans)
+            report.branches += sum(kind=='equivalent' for _,_,kind in plans)
+            report.constants += sum(kind=='constant' for _,_,kind in plans)
+            report.notes.extend(f"{root.address:#x}: " + ('proved constant guard; original selected arm retained' if kind=='constant'
+                                else 'both scalar branches proved equivalent; pure guard removed') for root,_,kind in plans)
             if report.exhausted:
                 break
     except (ValueError, RecursionError) as exc:
         if committing:
             adapter.restore()
-            report.branches = 0
+            report.branches = report.constants = 0
             report.notes.append("control changes rolled back")
         report.notes.append(str(exc))
         report.exhausted |= work.left < 0 or deadline.expired()

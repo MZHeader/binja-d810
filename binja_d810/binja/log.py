@@ -61,6 +61,8 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
         logger.log_debug(f"{func.start:#x} mutable values: {line}")
     if report.control_branches:
         logger.log_info(f"{func.start:#x} control cleanup: merged {report.control_branches} equivalent scalar branches")
+    if report.constant_branches:
+        logger.log_info(f"{func.start:#x} control cleanup: selected {report.constant_branches} proven constant branches")
     if report.control_loops:
         logger.log_info(f"{func.start:#x} control cleanup: removed {report.control_loops} dead scalar loops with proven termination")
     for line in report.control:
@@ -128,7 +130,7 @@ def render(report: FunctionReport) -> str:
         lines.append(f"mutable values: {report.mutable_folds} invariants; {len(report.mutable_domains)} domains; {report.mutable_seconds:.3f} s")
     lines += [f"mutable values: {line}" for line in report.mutable_values]
     if report.control_seconds:
-        lines.append(f"control cleanup: {report.control_branches} equivalent branches; "
+        lines.append(f"control cleanup: {report.control_branches} equivalent branches; {report.constant_branches} constant branches; "
                      f"{report.control_loops} dead finite loops; {report.control_seconds:.3f} s")
     lines += [f"control cleanup: {line}" for line in report.control]
     if report.preimage_seconds:

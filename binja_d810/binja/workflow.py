@@ -241,10 +241,11 @@ def _run(ctx, level: str) -> None:
         report.plan_cpu_seconds += recurrences.cpu_seconds
         report.allowance_seconds += recurrences.seconds
         report.budget_exhausted |= recurrences.exhausted
-    if level == "hlil" and ctx.get_setting_bool(settings.EQUIVALENT_BRANCHES):
+    if level == "hlil" and (ctx.get_setting_bool(settings.EQUIVALENT_BRANCHES) or ctx.get_setting_bool(settings.CONSTANT_BRANCHES)):
         from . import control_cleanup
         control = control_cleanup.run(il, settings.control_limits(ctx), deadline)
         report.control, report.control_branches = control.notes, control.branches
+        report.constant_branches = control.constants
         report.control_seconds = control.seconds
         report.total_seconds += control.seconds
         report.plan_seconds += control.seconds
@@ -324,7 +325,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches or report.control_loops or report.preimage_conditions or report.recurrence_conditions:
+    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches or report.control_loops or report.preimage_conditions or report.recurrence_conditions or report.constant_branches:
         if level == "mlil":
             ctx.mlil = il
         else:

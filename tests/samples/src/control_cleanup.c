@@ -39,3 +39,9 @@ F uint32_t dl_store(uint32_t x,uint32_t y,uint32_t z) {
  do {a=(a^y)*13+5;KEEP(a);ce_observed=a;i++;KEEP(i);} while(i!=6);
  return z+3;
 }
+F uint32_t cb_identity(uint32_t x,uint32_t y,uint32_t z) {
+ uint32_t a=(x^y)+2*(x&y);KEEP(a);
+ uint32_t b=x+y;KEEP(b);
+ if(a==b){ce_observed=x;return y+3;}
+ else{ce_observed=z;return x-7;}
+}

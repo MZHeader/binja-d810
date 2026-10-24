@@ -228,6 +228,16 @@ impossible targets. An independent Python model enumerates every input in their 
 an independent final-IL oracle checks the results on ARM64, x64 PE/ELF and i686 at O0/O2.
 This does not cover arbitrary cryptographic hashes, unbounded loops or runtime memory inputs.
 
+## Constant branches
+
+A pure, proven constant HLIL guard can select its original arm, including direct conditional
+assignments and returns. The selected arm keeps its calls, stores and control transfers.
+Labels that permit another entry, protected regions and effectful guards prevent removal.
+The feature uses exact-width proofs, the shared deadline and the `control*` limits below;
+native edit failures roll back. Counts and skipped reasons appear under **control cleanup**.
+Set `binja_d810.constantBranches` to false and reanalyse to restore the original branches.
+It defaults to true and can be controlled independently of equivalent-branch merging.
+
 ## Equivalent scalar branches
 
 D810 compares both arms of a structured HLIL branch over shared, unconstrained inputs. It

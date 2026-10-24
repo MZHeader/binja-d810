@@ -34,6 +34,7 @@ BITWISE_MASKS = f"{PREFIX}.bitwiseMaskFactoring"
 BITWISE_INPUTS = f"{PREFIX}.bitwiseInputs"
 BITWISE_CONSTANTS = f"{PREFIX}.bitwiseConstants"
 EQUIVALENT_BRANCHES = f"{PREFIX}.equivalentBranches"
+CONSTANT_BRANCHES = f"{PREFIX}.constantBranches"
 DEAD_FINITE_LOOPS = f"{PREFIX}.deadFiniteLoops"
 DEAD_LOOP_ITERATIONS = f"{PREFIX}.deadLoopIterations"
 DEAD_LOOP_SITES = f"{PREFIX}.deadLoopSites"
@@ -119,6 +120,8 @@ CONSTANT_LIMITS = {
 }
 
 _SPECS = {
+    CONSTANT_BRANCHES: {"title":"Select proven constant branches","type":"boolean","default":True,
+                        "description":"Select the original arm of a pure, proven constant HLIL condition, including direct conditional assignments and returns. Labelled or protected untaken regions stay."},
     RECURRENCE_SECONDS: {"title":"Recurrence time allowance","type":"number","default":6,"minValue":1,
                          "description":"Maximum seconds for recurrence proofs in one HLIL pass, within the shared function budget."},
     RECURRENCE_RESERVE: {"title":"Time reserved after recurrence proofs","type":"number","default":1,"minValue":0,
@@ -391,7 +394,8 @@ def recurrence_limits(ctx):
 
 def control_limits(ctx):
     from .control_cleanup import Limits
-    return Limits(instructions=ctx.get_setting_uint64(CONTROL_INSTRUCTIONS), nodes=ctx.get_setting_uint64(CONTROL_NODES),
+    return Limits(equivalents=ctx.get_setting_bool(EQUIVALENT_BRANCHES),constants=ctx.get_setting_bool(CONSTANT_BRANCHES),
+                  instructions=ctx.get_setting_uint64(CONTROL_INSTRUCTIONS), nodes=ctx.get_setting_uint64(CONTROL_NODES),
                   work=ctx.get_setting_uint64(CONTROL_WORK), branches=ctx.get_setting_uint64(CONTROL_BRANCHES),
                   rounds=ctx.get_setting_uint64(CONTROL_ROUNDS), bits=ctx.get_setting_uint64(CONTROL_BITS),
                   proof_ms=ctx.get_setting_uint64(CONTROL_PROOF_MS))

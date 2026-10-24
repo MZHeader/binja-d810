@@ -16,6 +16,9 @@ BITWISE_MASKS = f"{PREFIX}.bitwiseMaskFactoring"
 BITWISE_INPUTS = f"{PREFIX}.bitwiseInputs"
 BITWISE_CONSTANTS = f"{PREFIX}.bitwiseConstants"
 EQUIVALENT_BRANCHES = f"{PREFIX}.equivalentBranches"
+DEAD_FINITE_LOOPS = f"{PREFIX}.deadFiniteLoops"
+DEAD_LOOP_ITERATIONS = f"{PREFIX}.deadLoopIterations"
+DEAD_LOOP_SITES = f"{PREFIX}.deadLoopSites"
 CONTROL_INSTRUCTIONS = f"{PREFIX}.controlInstructions"
 CONTROL_NODES = f"{PREFIX}.controlNodes"
 CONTROL_WORK = f"{PREFIX}.controlWork"
@@ -98,6 +101,12 @@ CONSTANT_LIMITS = {
 }
 
 _SPECS = {
+    DEAD_FINITE_LOOPS: {"title": "Remove dead finite scalar loops", "type": "boolean", "default": True,
+                        "description": "Remove effect-free loops with no externally read outputs, only after exact bounded termination proof."},
+    DEAD_LOOP_ITERATIONS: {"title": "Dead-loop iteration limit", "type": "number", "default": 64, "minValue": 1,
+                           "description": "Maximum loop-body executions in one exact termination proof."},
+    DEAD_LOOP_SITES: {"title": "Dead-loop candidate limit", "type": "number", "default": 64, "minValue": 1,
+                      "description": "Maximum loops considered across all dead-loop cleanup rounds."},
     EQUIVALENT_BRANCHES: {"title": "Merge equivalent scalar branches", "type": "boolean", "default": True,
                          "description": "Remove a pure condition when both branches provably leave the same observable scalar values."},
     CONTROL_INSTRUCTIONS: {"title": "Control cleanup instruction limit", "type": "number", "default": 20000, "minValue": 1,
@@ -313,6 +322,14 @@ def control_limits(ctx):
                   work=ctx.get_setting_uint64(CONTROL_WORK), branches=ctx.get_setting_uint64(CONTROL_BRANCHES),
                   rounds=ctx.get_setting_uint64(CONTROL_ROUNDS), bits=ctx.get_setting_uint64(CONTROL_BITS),
                   proof_ms=ctx.get_setting_uint64(CONTROL_PROOF_MS))
+
+
+def dead_loop_limits(ctx):
+    from .dead_loops import Limits
+    return Limits(instructions=ctx.get_setting_uint64(CONTROL_INSTRUCTIONS), nodes=ctx.get_setting_uint64(CONTROL_NODES),
+                  work=ctx.get_setting_uint64(CONTROL_WORK), loops=ctx.get_setting_uint64(DEAD_LOOP_SITES),
+                  rounds=ctx.get_setting_uint64(CONTROL_ROUNDS), bits=ctx.get_setting_uint64(CONTROL_BITS),
+                  iterations=ctx.get_setting_uint64(DEAD_LOOP_ITERATIONS))
 
 
 def allocation_limits(ctx):

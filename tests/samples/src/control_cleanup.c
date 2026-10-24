@@ -24,3 +24,18 @@ F uint32_t ce_store(uint32_t x,uint32_t y,uint32_t z) {
 F uint32_t ce_guard_load(uint32_t x,uint32_t y,uint32_t z) {
  uint32_t a;if(ce_observed){a=x^y;KEEP(a);a^=y;}else{a=x+y;KEEP(a);a-=y;}return a;
 }
+F uint32_t dl_dead(uint32_t x,uint32_t y,uint32_t z) {
+ uint32_t a=x,i=0;
+ do {a=(a^y)*13+5;KEEP(a);i++;KEEP(i);} while(i!=6);
+ return z+3;
+}
+F uint32_t dl_live(uint32_t x,uint32_t y,uint32_t z) {
+ uint32_t a=x,i=0;
+ do {a=(a^y)*13+5;KEEP(a);i++;KEEP(i);} while(i!=6);
+ return a+z;
+}
+F uint32_t dl_store(uint32_t x,uint32_t y,uint32_t z) {
+ uint32_t a=x,i=0;
+ do {a=(a^y)*13+5;KEEP(a);ce_observed=a;i++;KEEP(i);} while(i!=6);
+ return z+3;
+}

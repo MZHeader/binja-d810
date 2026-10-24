@@ -47,7 +47,7 @@ And after (4 lines):
   handlers can be recovered together, including dispatchers with large argument lists and
   undeclared register inputs that the handlers provably preserve. Known register and stack
   inputs can also be carried across handlers when their values and frame layout are proven
-* Junk loops that only count a variable up to some value and then throw it away
+* Dead scalar loops whose termination can be proved, including arithmetic loops left after branch cleanup
 * Equivalent scalar branches: a condition can be removed when both arms leave the same live values
 * x86, x64 and ARM64 binaries (PE, ELF and Mach-O)
 
@@ -187,6 +187,34 @@ with `binja_d810.equivalentBranches`; reanalysis restores the original IL.
 Synthetic C fixtures cover ARM64, x64 PE/ELF and i686 at O0/O2. Independent final-value proofs
 check 8/16/32/64-bit computations; native IL tests cover different live outputs, effects, work
 limits and rollback. All output proofs are exact; an inconclusive result leaves the branch alone.
+
+## Dead finite scalar loops
+
+After branch cleanup, a loop may compute values that nobody reads. D810 removes such a loop
+only when its body and guards are pure scalar operations, none of its writes are read outside
+it, and exact bounded interpretation proves it terminates. Unknown arithmetic inputs remain
+unknown; every decision controlling execution must be determined from known values at the
+original bit widths. Counter wraparound, signed comparisons, breaks, continues and loop updates
+are included. This can remove dead arithmetic/hash loops without assuming their inputs constant.
+
+Entry constants come only from a straight-line prefix in the same enclosing block. Unknown
+control flow discards those facts. Calls, memory traffic, escaped or volatile variables, partial
+writes, nested loops and unsupported operations are rejected. A live result, unknown decision
+or exhausted bound keeps the loop. The pass does not summarize live loops or invert hashes.
+
+`binja_d810.deadFiniteLoops` defaults to true. `deadLoopIterations` defaults to 64 body executions
+per proof, and `deadLoopSites` to 64 candidates across all rounds. The `controlInstructions`,
+`controlNodes`, `controlWork`, `controlRounds` and `controlBits` limits above also apply to this
+pass. Each cleanup pass has its own work cap and shares the existing function deadline.
+Reports and logs list removed loops, exact iteration counts and rejection reasons under
+**control cleanup**. Disabling the feature and reanalysing restores the original IL.
+Unused scalar initializers and declarations feeding removed loops are also cleared after a
+fresh use check. Effectful sources and assignment expressions with observed values stay intact.
+
+Tests use randomized starts/steps at 8/16/32/64 bits and native C fixtures on ARM64, x64 PE/ELF
+and i686 at O0/O2. They check final values independently and preserve live results, stores,
+unknown/infinite loops, escapes and protected operations. Termination and removal are exact
+checks; no heuristic trip count is used.
 
 ## Arithmetic helpers
 

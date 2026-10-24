@@ -228,6 +228,17 @@ def _run(ctx, level: str) -> None:
         report.plan_cpu_seconds += control.cpu_seconds
         report.allowance_seconds += control.seconds
         report.budget_exhausted |= control.exhausted
+    if level == "hlil" and ctx.get_setting_bool(settings.DEAD_FINITE_LOOPS):
+        from . import dead_loops
+        loops = dead_loops.run(il, settings.dead_loop_limits(ctx), deadline)
+        report.control.extend(loops.notes)
+        report.control_loops = loops.loops
+        report.control_seconds += loops.seconds
+        report.total_seconds += loops.seconds
+        report.plan_seconds += loops.seconds
+        report.plan_cpu_seconds += loops.cpu_seconds
+        report.allowance_seconds += loops.seconds
+        report.budget_exhausted |= loops.exhausted
     report.reserved_seconds = reserved
     report.dispatch_probe_seconds = probe_seconds
     report.allowance_seconds += probe_seconds
@@ -290,7 +301,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches:
+    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches or report.control_loops:
         if level == "mlil":
             ctx.mlil = il
         else:

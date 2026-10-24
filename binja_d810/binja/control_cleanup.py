@@ -5,7 +5,7 @@ from binaryninja import HighLevelILOperation as H, ILInstructionAttribute as Att
 from ..control.equivalence import Assignment, equivalent
 from ..ir.expr import BinOp, Const, UnOp, Var, tree_size
 from .hlil.adapter import HLILAdapter, shallow_copy
-from .hlil.lift import _BINARY, _UNARY, _COMPARE, children
+from .hlil.lift import _BINARY, _UNARY, _COMPARE, STRUCTURE, children
 
 _PROTECTED = {Attr.ILPreventDeadStoreElimination, Attr.ILPreventAliasAnalysis}
 
@@ -30,6 +30,10 @@ class Report:
     exhausted: bool = False
 
 
+class BudgetExceeded(ValueError):
+    pass
+
+
 class Work:
     def __init__(self, limits, deadline):
         self.left, self.deadline = limits.work, deadline
@@ -37,7 +41,7 @@ class Work:
     def tick(self):
         self.left -= 1
         if self.left < 0 or self.deadline.expired():
-            raise ValueError("control cleanup budget exhausted")
+            raise BudgetExceeded("control cleanup budget exhausted")
 
 
 def walk(root, tick):
@@ -47,6 +51,17 @@ def walk(root, tick):
         node = stack.pop()
         yield node
         stack.extend(reversed(list(children(node))))
+
+
+def structure(root, tick):
+    """Inspect control structure without walking scalar expression trees."""
+    stack = [root]
+    while stack:
+        tick()
+        node = stack.pop()
+        if node.operation in STRUCTURE:
+            yield node
+            stack.extend(reversed(list(children(node))))
 
 
 class Scalar:
@@ -141,6 +156,8 @@ def run(il, limits, deadline):
         if len(il) > limits.instructions:
             raise ValueError("control instruction limit")
         for _ in range(limits.rounds):
+            if not any(node.operation == H.HLIL_IF for node in structure(il.root, work.tick)):
+                break
             nodes = list(walk(il.root, work.tick))
             uses = reads(nodes, work.tick)
             plans = []

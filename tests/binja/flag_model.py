@@ -34,6 +34,11 @@ def value(node, state):
         return z3.BitVecVal(node.constant, width)
     if op == H.HLIL_IMPORT:
         return z3.BitVec("import_" + str(node.constant), width)
+    if op == H.HLIL_ASSIGN and node.dest.operation == H.HLIL_VAR:
+        assigned = sized(value(node.src,state),node.dest.size*8)
+        assert node.dest.var.type is None or node.dest.var.type.width*8 == assigned.size()
+        state[node.dest.var.identifier] = assigned
+        return sized(assigned,width)
     if op == H.HLIL_VAR:
         return sized(state.setdefault(node.var.identifier, z3.BitVec("uninitialized_" + str(node.var.identifier),
                                                                    max(width, 8 * node.var.type.width if node.var.type else width))), width)

@@ -4,7 +4,8 @@ import pytest
 from arch import IDS, MATRIX, sample
 from helpers import function_named, open_sample, set_types
 
-from binja_d810.binja import log
+from binja_d810.binja import log, settings
+from oracle import compare, function_result, reference
 
 TYPES = {name: f"uint32_t {name}(uint32_t x, uint32_t y)" for name in (
     "sub_or", "sub_and", "sub_xor", "sub_bool", "sub_const", "xor_cancel", "plain_mask", "plain_or", "mix", "merge",
@@ -14,10 +15,15 @@ TYPES["sq_merged"] = "uint32_t sq_merged(uint32_t x, uint32_t y, uint32_t n)"
 COLLAPSED = {"sub_or": ("^", "&"), "sub_and": ("^", "~"), "sub_xor": ("~", "&"), "sub_bool": ("^",),
              "sub_const": ("0xf0",), "xor_cancel": ("^",)}
 CONTROLS = ("plain_mask", "plain_or", "mix", "merge")
+EXPECTED = {"plain_mask": "x & 255", "plain_or": "x | y",
+            "mix": "((x >> 8) & 255) | ((x >> 16) & 65280)",
+            "merge": "(x & 61680) | (y & ~61680)"}
 
 
 def _open(build, level, d810):
-    bv = open_sample(sample("substitution", build, level), d810=d810)
+    # Isolate substitution from scratch cleanup: the latter legitimately removes unused O0
+    # parameter spills, including the uninitialized half of a combined x64 stack variable.
+    bv = open_sample(sample("substitution", build, level), d810=d810, options={settings.SCRATCH: False})
     set_types(bv, TYPES)
     return bv
 
@@ -45,6 +51,10 @@ def test_substitutions_collapse(views, name):
 @pytest.mark.parametrize("name", CONTROLS)
 def test_ordinary_bitwise_code_is_unchanged(views, name):
     assert _text(views[0], name) == _text(views[1], name)
+    func = function_named(views[0], name)
+    assert not any(report.rewrites for report in log.latest_reports(func).values())
+    result = compare(function_result(func), reference(EXPECTED[name], 32), 32)
+    assert result.kind in ("proven", "exhaustive"), result
 
 
 @pytest.mark.parametrize("name", ["sq_pred", "sq_div", "sq_merged"])

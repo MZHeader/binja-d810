@@ -49,7 +49,8 @@ def test_live_data_and_memory_effects_are_unchanged(builds,name):
 def program(func,mode):
     il=HighLevelILFunction(func.arch,source_func=func)
     x,y,z=func.parameter_vars
-    read=lambda v:il.var(4,v)
+    shared=il.var(4,y)
+    read=lambda v:shared if mode=='shared_live' and v==y else il.var(4,v)
     init=il.assign(4,read(x),il.const(4,0))
     value=il.mult(4,il.xor_expr(4,read(y),read(z)),il.const(4,7))
     if mode=='load':value=il.deref(4,il.const_pointer(func.arch.address_size,func.start),None)
@@ -67,7 +68,7 @@ def program(func,mode):
         loop=il.for_expr(init,il.compare_not_equal(4,read(x),il.const(4,8)),update,il.block([assignment]))
         init=il.nop()
     if mode=='post':loop=il.do_while_expr(body,il.const(0,1))
-    result=read(y) if mode=='live' else read(z)
+    result=read(y) if mode in ('live','shared_live') else read(z)
     prefix=[init]
     if mode=='embedded':result=il.add(4,il.assign(4,read(x),il.const(4,9)),read(z))
     if mode=='seed_call':prefix=[il.var_init(4,y,il.call(il.const_pointer(func.arch.address_size,func.start),[read(z)])),init]
@@ -82,7 +83,7 @@ def program(func,mode):
     return il
 
 
-@pytest.mark.parametrize('mode',('dead','for','post','embedded','seed_call','live','load','store','protected','partial','aliased','unknown','infinite','continue'))
+@pytest.mark.parametrize('mode',('dead','for','post','embedded','seed_call','live','shared_live','load','store','protected','partial','aliased','unknown','infinite','continue'))
 def test_native_effect_deadness_and_termination_boundaries(builds,mode):
     f=function_named(builds[1],'dl_dead');il=program(f,mode);before=str(il.root)
     report=dead_loops.run(il,dead_loops.Limits(),Deadline.after(5))
@@ -103,6 +104,11 @@ def test_native_effect_deadness_and_termination_boundaries(builds,mode):
     else:
         assert report.loops==0,report.notes
         assert str(il.root)==before
+        if mode=='shared_live':
+            nodes=list(walk(il.root,lambda:None))
+            shared=len({n.expr_index for n in nodes})!=len(nodes)
+            reason='shared HLIL expression indices' if shared else 'read outside the loop'
+            assert any(reason in note for note in report.notes),report.notes
 
 
 def test_caps_and_failure_restore_native_il(builds,monkeypatch):

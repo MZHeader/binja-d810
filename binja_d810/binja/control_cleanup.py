@@ -64,6 +64,17 @@ def structure(root, tick):
             stack.extend(reversed(list(children(node))))
 
 
+def tree_nodes(root, tick):
+    """Use-region membership requires a tree, not expression indices shared between regions."""
+    seen, result = set(), []
+    for node in walk(root, tick):
+        if node.expr_index in seen:
+            raise ValueError("shared HLIL expression indices are unsupported")
+        seen.add(node.expr_index)
+        result.append(node)
+    return result
+
+
 class Scalar:
     def __init__(self, il, limits, work):
         self.aliased = frozenset(il.aliased_vars)
@@ -136,12 +147,12 @@ def reads(nodes, tick):
     out = {}
     for node in nodes:
         tick()
-        if node.operation != H.HLIL_VAR:
-            continue
-        parent = node.parent
-        if parent is not None and parent.operation == H.HLIL_ASSIGN and parent.dest.expr_index == node.expr_index:
-            continue
-        out.setdefault(node.var.identifier, set()).add(node.expr_index)
+        # Classify operand roles from reachable edges. The SDK's single parent field can
+        # refer to an older, now-unreachable copy after a structural replacement.
+        operands = [node.src] if node.operation == H.HLIL_ASSIGN and node.dest.operation == H.HLIL_VAR else children(node)
+        for operand in operands:
+            if operand.operation == H.HLIL_VAR:
+                out.setdefault(operand.var.identifier, set()).add(operand.expr_index)
     return out
 
 
@@ -158,7 +169,7 @@ def run(il, limits, deadline):
         for _ in range(limits.rounds):
             if not any(node.operation == H.HLIL_IF for node in structure(il.root, work.tick)):
                 break
-            nodes = list(walk(il.root, work.tick))
+            nodes = tree_nodes(il.root, work.tick)
             uses = reads(nodes, work.tick)
             plans = []
             for root in nodes:

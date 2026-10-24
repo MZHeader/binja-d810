@@ -168,7 +168,8 @@ width. Private intermediate values may differ. When the guard is pure and every 
 succeeds, one original arm replaces the branch. The guard does not have to be constant.
 
 Calls, memory accesses, volatile or aliased variables, partial writes, protected operations
-and unsupported control flow keep the branch unchanged. This is scalar state equivalence;
+and unsupported control flow keep the branch unchanged. Shared HLIL expression indices are
+excluded so use regions cannot overlap ambiguously. This is scalar state equivalence;
 it does not infer that two effectful calls or stores are interchangeable. Changes and skipped
 proofs appear under **control cleanup** in the function report and logger. Disable the feature
 with `binja_d810.equivalentBranches`; reanalysis restores the original IL.

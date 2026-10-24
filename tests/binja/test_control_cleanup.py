@@ -54,10 +54,11 @@ def test_live_differences_and_stores_survive(builds):
 def program(func,mode='equal'):
     il=HighLevelILFunction(func.arch,source_func=func)
     x,y,z=func.parameter_vars
-    read=lambda v:il.var(4,v)
+    shared=il.var(4,x)
+    read=lambda v:shared if mode=='shared_different' and v==x else il.var(4,v)
     a=il.add(4,il.xor_expr(4,read(x),read(y)),il.mult(4,il.const(4,2),il.and_expr(4,read(x),read(y))))
     b=il.add(4,read(x),read(y))
-    if mode=='different':b=il.add(4,b,il.const(4,1))
+    if mode in ('different','shared_different'):b=il.add(4,b,il.const(4,1))
     yes=il.assign(4,read(x),a);no=il.assign(4,read(x),b)
     if mode=='protected':il.set_expr_attributes(yes,{Attr.ILPreventDeadStoreElimination})
     guard=il.compare_not_equal(4,read(z),il.const(4,0))
@@ -67,7 +68,7 @@ def program(func,mode='equal'):
     return il
 
 
-@pytest.mark.parametrize('mode',('equal','different','protected','load'))
+@pytest.mark.parametrize('mode',('equal','different','shared_different','protected','load'))
 def test_native_hlil_proof_and_effect_boundaries(builds,mode):
     f=function_named(builds[1],'ce_equal_32');il=program(f,mode)
     before=str(il.root)
@@ -75,6 +76,13 @@ def test_native_hlil_proof_and_effect_boundaries(builds,mode):
     if mode!='equal':
         assert report.branches==0,report.notes
         assert str(il.root)==before
+        if mode=='shared_different':
+            nodes=list(cleanup.walk(il.root,lambda:None))
+            # This SDK can clone reused builder indices into a proper AST. Either reject
+            # a shared region, or prove the now-distinct live outputs differ; never merge it.
+            shared=len({n.expr_index for n in nodes})!=len(nodes)
+            reason='shared HLIL expression indices' if shared else 'not equivalent'
+            assert any(reason in note for note in report.notes),report.notes
     else:
         assert report.branches==1,report.notes
         assert 'if (' not in str(il.root)

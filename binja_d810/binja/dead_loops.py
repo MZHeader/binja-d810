@@ -4,7 +4,7 @@ import time
 from binaryninja import HighLevelILOperation as H
 from ..control.equivalence import Assignment
 from ..control.finite import Break, Continue, Decision, Havoc, Loop, abstract_value, terminates
-from .control_cleanup import BudgetExceeded, Scalar, Work, walk, reads, structure
+from .control_cleanup import BudgetExceeded, Scalar, Work, walk, reads, structure, tree_nodes
 from .hlil.adapter import HLILAdapter, shallow_copy
 
 _LOOPS = {H.HLIL_WHILE, H.HLIL_DO_WHILE, H.HLIL_FOR}
@@ -111,12 +111,13 @@ def remove_orphans(affected, adapter, model, report):
     removed = 0
     try:
         for _ in range(model.limits.rounds):
-            nodes = list(walk(adapter.hlil.root, model.work.tick))
+            nodes = tree_nodes(adapter.hlil.root, model.work.tick)
             uses = reads(nodes, model.work.tick)
+            block_statements = {child.expr_index for block in nodes if block.operation == H.HLIL_BLOCK for child in block.body}
             plans = []
             for node in nodes:
                 model.work.tick()
-                if node.parent is None or node.parent.operation != H.HLIL_BLOCK:
+                if node.expr_index not in block_statements:
                     continue
                 if node.operation == H.HLIL_VAR_DECLARE:
                     target = node.var
@@ -166,7 +167,7 @@ def run(il, limits, deadline):
         for _ in range(limits.rounds):
             if not any(node.operation in _LOOPS for node in structure(il.root, work.tick)):
                 break
-            nodes = list(walk(il.root, work.tick))
+            nodes = tree_nodes(il.root, work.tick)
             uses = reads(nodes, work.tick)
             model = Model(il, limits, work)
             initial = entries(nodes, model)

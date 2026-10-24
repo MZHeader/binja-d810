@@ -13,6 +13,10 @@ static uint32_t bad_seed=0x1234;
 static uint32_t escaped_seed=0x1234;
 static uint32_t zero_seed;
 static uint32_t large_seed=17;
+static uint32_t partial_seed=0x1234c0aa;
+static uint32_t atomic_partial_seed=0x5678c0bb;
+static uint32_t word_seed=0x9a34c0ab;
+static uint32_t atomic_word_seed=0xdefc918a;
 D uint32_t exported_seed=0x1234;
 uint32_t *volatile saved_seed;
 F void mv_update(uint32_t guard) { if(guard&1) seed^=0x40; if(guard&2) seed+=0x80000000u; }
@@ -34,3 +38,17 @@ F void mv_zero_update(uint32_t guard) { __asm__ volatile("" : "+m"(zero_seed)); 
 F uint32_t mv_zero_invariant(void) { return zero_seed&0x3f; }
 F void mv_large_update(uint32_t guard) { if(guard) large_seed+=1; }
 F uint32_t mv_large_read(void) { return large_seed&0x3f; }
+F void mv_partial_update(uint32_t guard) { if(guard) ((uint8_t*)&partial_seed)[1]+=0x40; }
+F uint32_t mv_partial_invariant(void) { return partial_seed&0xffff00ffu; }
+F uint32_t mv_partial_varying(void) { return partial_seed; }
+F void mv_atomic_partial_update(uint32_t guard) {
+  if(guard) __atomic_fetch_add(((uint8_t*)&atomic_partial_seed)+1,0x40,__ATOMIC_RELAXED);
+}
+F uint32_t mv_atomic_partial_invariant(void) { return atomic_partial_seed&0xffff00ffu; }
+F void mv_word_update(uint32_t guard) { __asm__ volatile("" : "+m"(word_seed)); if(guard) ((uint16_t*)&word_seed)[0]+=0x4000; }
+F uint32_t mv_word_invariant(void) { return word_seed&0xffff00ffu; }
+F void mv_atomic_word_update(uint32_t guard) {
+  __asm__ volatile("" : "+m"(atomic_word_seed));
+  if(guard) __atomic_fetch_add((uint16_t*)&atomic_word_seed,0x8000,__ATOMIC_RELAXED);
+}
+F uint32_t mv_atomic_word_invariant(void) { return atomic_word_seed&0xffff7fffu; }

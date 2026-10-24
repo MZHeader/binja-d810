@@ -14,9 +14,14 @@ INVARIANTS = {
     'mv_atomic_invariant': (0x23, {0x5623, 0x5663}),
     'mv_atomic_add_invariant': (0x9876, {0x9876, 0x80009876}),
     'mv_zero_invariant': (0, {0, 0x40}),
+    'mv_partial_invariant': (0x123400aa, {0x123400aa | (b << 8) for b in (0, 0x40, 0x80, 0xc0)}),
+    'mv_atomic_partial_invariant': (0x567800bb, {0x567800bb | (b << 8) for b in (0, 0x40, 0x80, 0xc0)}),
+    'mv_word_invariant': (0x9a3400ab, {0x9a3400ab | (b << 8) for b in (0, 0x40, 0x80, 0xc0)}),
+    'mv_atomic_word_invariant': (0xdefc118a, {0xdefc918a, 0xdefc118a}),
 }
 NEGATIVES = ('mv_unknown_read', 'mv_escaped_read', 'mv_exported_read', 'mv_exported_partial', 'mv_large_read')
-WRITERS = ('mv_update', 'mv_atomic_update', 'mv_atomic_add', 'mv_unknown_update', 'mv_escape', 'mv_zero_update', 'mv_large_update')
+WRITERS = ('mv_update', 'mv_atomic_update', 'mv_atomic_add', 'mv_unknown_update', 'mv_escape', 'mv_zero_update', 'mv_large_update',
+           'mv_partial_update', 'mv_atomic_partial_update', 'mv_word_update', 'mv_atomic_word_update')
 
 
 @pytest.fixture(scope='module', params=MATRIX, ids=IDS)
@@ -24,7 +29,7 @@ def builds(request):
     on = open_sample(sample('mutable_values', *request.param), d810=True)
     off = open_sample(sample('mutable_values', *request.param), d810=True, options={settings.MUTABLE_VALUES: False})
     for bv in (on, off):
-        types = {name: f'uint32_t {name}(void)' for name in (*INVARIANTS, *NEGATIVES, 'mv_varying', 'mv_two_reads')}
+        types = {name: f'uint32_t {name}(void)' for name in (*INVARIANTS, *NEGATIVES, 'mv_varying', 'mv_two_reads', 'mv_partial_varying')}
         types.update({name: f'void {name}(uint32_t x)' for name in WRITERS if name != 'mv_escape'})
         types['mv_escape'] = 'void mv_escape(void)'
         set_types(bv, types); settle(bv)
@@ -64,7 +69,7 @@ def test_unknown_writers_escaped_and_exported_globals_stay_excluded(builds, name
     assert text(func) == text(function_named(off, name))
 
 
-@pytest.mark.parametrize('name', ('mv_varying', 'mv_two_reads'))
+@pytest.mark.parametrize('name', ('mv_varying', 'mv_two_reads', 'mv_partial_varying'))
 def test_varying_reads_are_reported_without_equating_distinct_observations(builds, name):
     _, on, off = builds
     func = function_named(on, name)

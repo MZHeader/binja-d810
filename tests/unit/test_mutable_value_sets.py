@@ -70,7 +70,33 @@ def test_partial_xor_updates_preserve_every_other_byte(little):
                 changed = int.from_bytes(expected[offset:offset+size], order) ^ constant
                 expected[offset:offset+size] = changed.to_bytes(size, order)
                 assert int.from_bytes(original, order) ^ update.constant == int.from_bytes(expected, order)
-    with pytest.raises(ValueError): embed_update(Update('add', 1), 1, 1, 4, little_endian=little)
+
+
+@pytest.mark.parametrize('little', (False, True))
+def test_partial_add_wraps_inside_its_own_bytes_without_changing_neighbors(little):
+    order = 'little' if little else 'big'
+    for total in (2, 4, 8):
+        for offset in range(total):
+            for size in range(1, total - offset + 1):
+                raw = bytearray(range(16, 16 + total))
+                raw[offset:offset + size] = bytes([255]) * size
+                initial = int.from_bytes(raw, order)
+                delta = 1 << (size * 8 - 1)
+                update = embed_update(Update('add', delta), offset, size, total, little_endian=little)
+                raw[offset:offset + size] = ((int.from_bytes(raw[offset:offset + size], order) + delta)
+                                             % (1 << (size * 8))).to_bytes(size, order)
+                found = closure(initial, total * 8, [update])
+                assert found.values == {initial, int.from_bytes(raw, order)}
+
+
+def test_disjoint_and_overlapping_partial_updates_form_one_exact_closed_domain():
+    updates = [Update('add', 0x40, 0, 8), Update('add', 0x80, 8, 8), Update('xor', 0x80)]
+    found = closure(0x12ffc0, 32, updates)
+    expected = {0x120000 | (b << 8) | a for a in (0, 0x40, 0x80, 0xc0) for b in (0x7f, 0xff)}
+    assert found.values == expected
+    for invalid in (Update('add', 1, -1, 8), Update('add', 1, 4, 0), Update('xor', 1, 25, 8)):
+        result = closure(0, 32, [invalid])
+        assert not result.values and result.reason
 
 
 def test_random_small_closures_match_an_exhaustive_independent_fixedpoint():

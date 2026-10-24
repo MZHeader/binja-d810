@@ -351,9 +351,9 @@ that D810 preserves the original IL's bytes. These tests make no real-malware co
 `binja_d810.mutableValueSets` (default **true**) extends the existing global-write checks.
 For a private image-initialized integer, every visible write must be proven to XOR or add a
 constant. The pass computes closure under all those updates, including any guard order and
-number of repetitions. Byte-sized XOR writes are lifted into the enclosing integer with its
-actual endianness. Partial additions with unproved carries, unknown writes, escapes, exports,
-relocations and volatile globals are rejected.
+number of repetitions. Partial XOR/add writes are modeled at the written slice's actual width
+and endianness: addition wraps inside those bytes and cannot carry into neighboring bytes.
+Unknown writes, escapes, exports, relocations and volatile globals are rejected.
 
 Proofs wait for the view's initial analysis and cross-reference discovery. An early caller is
 automatically retried through the idle queue; this also works with Flow fixes disabled.
@@ -388,12 +388,14 @@ All limits share the function deadline. Keys below have the `binja_d810.` prefix
 | `mutableCandidates` | 128 arithmetic consumers |
 | `mutableEvidenceBytes` | 1 MiB of code evidence for deferred comments |
 
-Synthetic C tests cover guarded updates, atomic XOR/add, zero initialization, byte writes,
+Synthetic C tests cover guarded updates, atomic XOR/add, zero initialization, byte/word writes,
 independent reads, oversized closures and excluded globals on eight builds. Installed Binary
 Ninja lowers the tested ARM64 atomic instructions and x86 locked operations to ordinary
 load/store IL; x86 O0 compare-exchange retries are handled through bounded SSA copy/phi
 provenance. Unrecognized atomic intrinsics stay unsupported. No instruction-text or function-name
-matching is used, and these tests do not establish real-malware coverage.
+matching is used, and these tests do not establish real-malware coverage. Partial-add tests
+include byte and word wraparound on both primary architectures, with independent byte models
+also checking little- and big-endian slices.
 
 ## Coverage and proof limits
 
@@ -409,7 +411,7 @@ function budget and reports rejected or exhausted proofs. Disable keys below use
 | Flag conditions | Exact-width comparison equivalence and confined flag uses | Bounded two-arm merges; native `ADD_OVERFLOW` remains unmodeled. | `flagConditions` |
 | Allocation round trips | Exact private byte forwarding under explicit contracts | Fresh/nonnullable storage and elidable lifetime guarantees are assumptions supplied by the analyst; installed libraries did not provide them. No name matching. | `allocationRoundTrips` |
 | Constant buffers | Exact scalar execution, final bytes, live-outs and exit checks | One entry region; no arbitrary call execution or SIMD. Printable text and adjacent-length interpretation are display heuristics. Native input-IL errors remain visible in tests. | `constantBuffers` |
-| Mutable globals | Closed update sets and Z3 invariance for independent reads | Visible-code/no-escape assumptions; guard order is overapproximated. Large sets, unknown atomics and unproved partial-add carries are excluded. | `mutableValueSets` |
+| Mutable globals | Closed full/partial update sets and Z3 invariance for independent reads | Visible-code/no-escape assumptions; guard order is overapproximated. Large sets and unknown atomic intrinsics are excluded. | `mutableValueSets` |
 
 ## Notes
 

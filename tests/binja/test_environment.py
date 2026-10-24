@@ -9,7 +9,7 @@ def test_activity_registered_on_meta_analysis():
 
 
 def test_activity_registered_on_objective_c_when_present():
-    if "core.function.objectiveC" not in Workflow:
+    if "core.function.objectiveC" not in {wf.name for wf in Workflow}:
         pytest.skip("this build has no core.function.objectiveC workflow")
     assert Workflow("core.function.objectiveC").contains(workflow.ACTIVITY_NAME)
 
@@ -51,6 +51,31 @@ def test_unflattening_runs_after_indirect_branches_are_resolved():
 
 
 def test_unflattening_registered_on_objective_c_when_present():
-    if "core.function.objectiveC" not in Workflow:
+    if "core.function.objectiveC" not in {wf.name for wf in Workflow}:
         pytest.skip("this build has no core.function.objectiveC workflow")
     assert Workflow("core.function.objectiveC").contains(workflow.UNFLATTEN_ACTIVITY_NAME)
+
+
+def test_optional_workflow_lookup_does_not_create_an_empty_workflow(monkeypatch):
+    before={wf.name for wf in Workflow}
+    absent='tests.d810.absent.optional.workflow'
+    assert absent not in before
+    monkeypatch.setattr(workflow,'BASE_WORKFLOWS',(absent,))
+    assert workflow.register()==[]
+    assert {wf.name for wf in Workflow}==before
+
+
+def test_registered_plugin_activities_are_connected_to_native_entry_points():
+    for wf in Workflow:
+        if wf.name not in workflow.BASE_WORKFLOWS:continue
+        assert wf.contains('core.function.generateMediumLevelIL')
+        assert not any(name.startswith('extension.binja_d810.') for name in wf.activity_roots())
+
+
+def test_failed_insertion_keeps_the_registered_native_workflow(monkeypatch):
+    name='core.function.metaAnalysis'
+    before=Workflow(name).configuration()
+    monkeypatch.setattr(workflow,'BASE_WORKFLOWS',(name,))
+    monkeypatch.setattr(Workflow,'insert_after',lambda *args,**kwargs:False)
+    assert workflow.register()==[]
+    assert Workflow(name).configuration()==before

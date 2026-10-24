@@ -60,6 +60,9 @@ in between, by copying code rather than guessing, so the program's behaviour doe
 * `z3-solver` in Binary Ninja's Python
 * Optional: CoBRA, through the `d810-cobra` package
 
+Workflow setup checks the available native stages before installing activities. Missing optional
+workflows are left alone; a failed insertion keeps the original workflow intact.
+
 ## Install
 
 Clone it and link it into your plugins folder:

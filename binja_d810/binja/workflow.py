@@ -436,28 +436,39 @@ def register(action=None, hlil_action=None, branches_action=None, unflatten_acti
         "description": "Substitute proven arithmetic helpers and expand original subtraction overflow before native lowering.",
     })
     registered = []
+    # SDK membership invokes GetOrCreate: probing an absent optional workflow creates an
+    # empty graph. Enumerate registered workflows instead, then validate native anchors.
+    available = {wf.name: wf for wf in Workflow if wf.registered}
     for base in BASE_WORKFLOWS:
-        if base not in Workflow:
+        if base not in available:
+            continue
+        source = available[base]
+        anchors = ("core.function.generateLiftedIL", "core.function.generateMediumLevelIL",
+                   "core.function.generateHighLevelIL", BRANCH_RESET, UNFLATTEN_AFTER)
+        missing = [name for name in anchors if not source.contains(name)]
+        roots = set(source.activity_roots())
+        if missing or not roots:
+            log.logger.log_warn(f"D810: leaving workflow {base} unchanged; missing native stages: {missing}")
             continue
         activity = Activity(configuration=config, action=action)
         hlil_activity = Activity(configuration=hlil_config, action=hlil_action)
         branches_activity = Activity(configuration=branches_config, action=branches_action)
         unflatten_activity = Activity(configuration=unflatten_config, action=unflatten_action)
         callees_activity = Activity(configuration=callees_config, action=callees.run)
-        _ACTIVITIES.extend([activity, hlil_activity, branches_activity, unflatten_activity, callees_activity])
-        wf = Workflow(base).clone(base)
-        wf.register_activity(activity)
-        wf.register_activity(hlil_activity)
-        wf.register_activity(callees_activity)
-        wf.insert_after("core.function.generateLiftedIL", [CALLEES_ACTIVITY_NAME])
-        wf.insert_after("core.function.generateMediumLevelIL", [ACTIVITY_NAME])
-        wf.insert_after("core.function.generateHighLevelIL", [HLIL_ACTIVITY_NAME])
-        wf.register_activity(branches_activity)
-        if wf.contains(BRANCH_RESET):
-            wf.insert_after(BRANCH_RESET, [BRANCHES_ACTIVITY_NAME])
-        wf.register_activity(unflatten_activity)
-        wf.insert_after(UNFLATTEN_AFTER if wf.contains(UNFLATTEN_AFTER) else ACTIVITY_NAME, [UNFLATTEN_ACTIVITY_NAME])
-        wf.register()
+        wf = source.clone(base)
+        placements = (("core.function.generateLiftedIL", callees_activity),
+                      ("core.function.generateMediumLevelIL", activity),
+                      ("core.function.generateHighLevelIL", hlil_activity),
+                      (BRANCH_RESET, branches_activity), (UNFLATTEN_AFTER, unflatten_activity))
+        complete = True
+        for anchor, extension in placements:
+            if wf.register_activity(extension) is None or not wf.insert_after(anchor, [extension.name]):
+                complete = False
+                break
+        if not complete or set(wf.activity_roots()) != roots or not wf.register():
+            log.logger.log_error(f"D810: workflow {base} registration failed; original workflow retained")
+            continue
+        _ACTIVITIES.extend(extension for _, extension in placements)
         registered.append(base)
     log_info(f"binja-d810: activities {ACTIVITY_NAME}, {HLIL_ACTIVITY_NAME}, {BRANCHES_ACTIVITY_NAME}, "
              f"{UNFLATTEN_ACTIVITY_NAME} registered on {registered}")

@@ -5,7 +5,7 @@ Branches are explored rather than treated as unrelated phi inputs.
 """
 
 import z3
-from binaryninja import HighLevelILOperation as H, TypeClass
+from binaryninja import HighLevelILOperation as H, TypeClass,VariableSourceType,BuiltinType
 
 
 def sized(value, width):
@@ -13,8 +13,51 @@ def sized(value, width):
         z3.ZeroExt(width - value.size(), value) if value.size() < width else value
 
 
+def stack_read(state,offset,bits):
+    count=(bits+7)//8
+    values=[state.setdefault(('stack',offset+i),z3.BitVec(f'stack_uninitialized_{offset+i}',8)) for i in range(count)]
+    return sized(z3.Concat(*(values if state.get('_big_endian') else list(reversed(values)))) if count>1 else values[0],bits)
+
+
+def stack_write(state,offset,bits,datum):
+    count=(bits+7)//8;datum=sized(datum,count*8)
+    for i in range(count):
+        shift=(count-1-i if state.get('_big_endian') else i)*8
+        state[('stack',offset+i)]=z3.Extract(shift+7,shift,datum)
+
+
+def local_address(node,state):
+    def pointer(item):
+        if item.operation==H.HLIL_ADDRESS_OF:return address(item.src)
+        if item.operation==H.HLIL_VAR and item.expr_type is not None and item.expr_type.type_class==TypeClass.ArrayTypeClass:return address(item)
+        if item.operation in (H.HLIL_ADD,H.HLIL_SUB):
+            base=pointer(item.left);offset=z3.simplify(value(item.right,state))
+            if base is not None and z3.is_bv_value(offset):return base+(offset.as_long() if item.operation==H.HLIL_ADD else -offset.as_long())
+        return None
+    def address(item):
+        if item.operation==H.HLIL_VAR and item.var.source_type==VariableSourceType.StackVariableSourceType:return item.var.storage
+        if item.operation==H.HLIL_STRUCT_FIELD:
+            base=address(item.src)
+            return None if base is None else base+item.offset
+        if item.operation==H.HLIL_DEREF:return pointer(item.src)
+        if item.operation==H.HLIL_ARRAY_INDEX:
+            base=pointer(item.src);index=z3.simplify(value(item.index,state))
+            if base is not None and z3.is_bv_value(index):return base+index.as_long()*item.size
+        return None
+    return address(node)
+
+
+def store_variable(var,bits,datum,state):
+    state[var.identifier]=sized(datum,bits)
+    if state.get('_local_memory') and var.source_type==VariableSourceType.StackVariableSourceType:
+        stack_write(state,var.storage,bits,datum)
+
+
 def value(node, state):
     op, width = node.operation, node.size * 8 or 1
+    if state.get('_local_memory') and op in (H.HLIL_VAR,H.HLIL_STRUCT_FIELD,H.HLIL_DEREF,H.HLIL_ARRAY_INDEX):
+        at=local_address(node,state)
+        if at is not None:return stack_read(state,at,width)
     if op == H.HLIL_DEREF_FIELD and node.expr_type.type_class == TypeClass.ArrayTypeClass:
         return value(node.src, state) + node.offset  # array-to-pointer decay, not a scalar memory read
     if op == H.HLIL_ADDRESS_OF:
@@ -43,6 +86,13 @@ def value(node, state):
         return sized(state.setdefault(node.var.identifier, z3.BitVec("uninitialized_" + str(node.var.identifier),
                                                                    max(width, 8 * node.var.type.width if node.var.type else width))), width)
     if op == H.HLIL_STRUCT_FIELD:
+        backing,offset=node,0
+        while backing.operation==H.HLIL_STRUCT_FIELD and backing.member_index is None:
+            offset+=backing.offset;backing=backing.src
+        if backing.operation==H.HLIL_VAR:
+            whole=value(backing,state)
+            assert 8*offset+width<=whole.size(),'field outside backing variable'
+            return sized(z3.LShR(whole,offset*8),width)
         return sized(z3.LShR(value(node.src, state), node.offset * 8), width)
     if op == H.HLIL_SPLIT:
         return z3.Concat(value(node.high,state),value(node.low,state))
@@ -84,10 +134,15 @@ def value(node, state):
             H.HLIL_LSL: lambda: a << b, H.HLIL_LSR: lambda: z3.LShR(a, b), H.HLIL_ASR: lambda: a >> b}[op]()
 
 
-def execute(func,loop_limit=0):
+def execute(func,loop_limit=0,local_memory=False):
     il = func.hlil
     assert il is not None, (func.name, func.analysis_skipped, func.analysis_skip_reason, func.analysis_performance_info)
     parameters = {v.identifier: z3.BitVec(n, 32) for v, n in zip(func.parameter_vars, ("x", "y", "z"))}
+    if local_memory:
+        parameters.update(_local_memory=True,_big_endian=func.arch.endianness.name=='BigEndian')
+        for var in func.parameter_vars:
+            if var.source_type==VariableSourceType.StackVariableSourceType:
+                stack_write(parameters,var.storage,32,parameters[var.identifier])
     returns = []
 
     def run(node, rows):
@@ -126,28 +181,42 @@ def execute(func,loop_limit=0):
             elif op == H.HLIL_RET:
                 returns.append((path, value(node.src[0], state), writes))
             elif op == H.HLIL_VAR_INIT:
-                state[node.dest.identifier] = value(node.src, state)
+                store_variable(node.dest,node.size*8 or 1,value(node.src,state),state)
                 output.append((path, state, writes))
             elif op == H.HLIL_ADDRESS_OF:
                 value(node, state)  # pure address expressions may survive as unused statements
                 output.append((path, state, writes))
+            elif op == H.HLIL_CALL and state.get('_local_memory'):
+                # Native constant-data builtins represent compiler stores, not target calls.
+                assert len(node.params)==3 and node.params[1].operation==H.HLIL_CONST_DATA
+                raw,kind=node.params[1].constant_data.data_and_builtin
+                assert kind in (BuiltinType.BuiltinMemcpy,BuiltinType.BuiltinStrncpy)
+                assert node.params[0].operation==H.HLIL_ADDRESS_OF
+                at=local_address(node.params[0].src,state)
+                count=z3.simplify(value(node.params[2],state))
+                assert at is not None and z3.is_bv_value(count)
+                raw=bytes(raw);count=count.as_long();assert 0<count<=len(raw)
+                for i,byte in enumerate(raw[:count]):stack_write(state,at+i,8,z3.BitVecVal(byte,8))
+                output.append((path,state,writes))
             elif op == H.HLIL_ASSIGN:
                 rhs = value(node.src, state)
                 if node.dest.operation == H.HLIL_VAR:
-                    state[node.dest.var.identifier] = rhs
+                    store_variable(node.dest.var,node.dest.size*8 or 1,rhs,state)
                 elif node.dest.operation == H.HLIL_SPLIT:
                     high,low=node.dest.high,node.dest.low
                     assert high.operation==low.operation==H.HLIL_VAR
                     assert rhs.size()==(high.size+low.size)*8
-                    state[low.var.identifier]=z3.Extract(low.size*8-1,0,rhs)
-                    state[high.var.identifier]=z3.Extract(rhs.size()-1,low.size*8,rhs)
+                    store_variable(low.var,low.size*8,z3.Extract(low.size*8-1,0,rhs),state)
+                    store_variable(high.var,high.size*8,z3.Extract(rhs.size()-1,low.size*8,rhs),state)
+                elif state.get('_local_memory') and local_address(node.dest,state) is not None:
+                    stack_write(state,local_address(node.dest,state),node.dest.size*8,rhs)
                 elif node.dest.operation == H.HLIL_STRUCT_FIELD:
                     field = node.dest
                     assert field.src.operation == H.HLIL_VAR
                     old = value(field.src, state)
                     bits, shift = field.size * 8, field.offset * 8
                     mask = ((1 << bits) - 1) << shift
-                    state[field.src.var.identifier] = (old & ~mask) | (sized(rhs, old.size()) << shift)
+                    store_variable(field.src.var,old.size(),(old & ~mask) | (sized(rhs, old.size()) << shift),state)
                 elif node.dest.operation == H.HLIL_DEREF:
                     assert node.dest.size > 0
                     writes.append((value(node.dest.src, state), sized(rhs,node.dest.size*8)))

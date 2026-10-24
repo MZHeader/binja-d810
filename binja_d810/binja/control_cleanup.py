@@ -75,6 +75,17 @@ def tree_nodes(root, tick):
     return result
 
 
+def protected_nodes(root,tick):
+    """Propagate protected attributes along reachable edges, not stale SDK parents."""
+    result=set();stack=[(root,False)]
+    while stack:
+        tick();node,inherited=stack.pop()
+        protected=inherited or bool(node.attributes & _PROTECTED)
+        if protected:result.add(node.expr_index)
+        stack.extend((child,protected) for child in children(node))
+    return result
+
+
 class Scalar:
     def __init__(self, il, limits, work):
         self.aliased = frozenset(il.aliased_vars)

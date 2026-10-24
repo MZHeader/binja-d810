@@ -18,6 +18,16 @@ PREIMAGE_SITES = f"{PREFIX}.preimageSites"
 PREIMAGE_STEPS = f"{PREFIX}.preimageSteps"
 PREIMAGE_ROUNDS = f"{PREFIX}.preimageRounds"
 PREIMAGE_PROOF_MS = f"{PREFIX}.preimageProofMilliseconds"
+RECURRENCE_PREIMAGES = f"{PREFIX}.recurrencePreimages"
+RECURRENCE_WORK = f"{PREFIX}.recurrenceWork"
+RECURRENCE_LOOPS = f"{PREFIX}.recurrenceLoops"
+RECURRENCE_SITES = f"{PREFIX}.recurrenceSites"
+RECURRENCE_ITERATIONS = f"{PREFIX}.recurrenceIterations"
+RECURRENCE_STATES = f"{PREFIX}.recurrenceStates"
+RECURRENCE_BITS = f"{PREFIX}.recurrenceDomainBits"
+RECURRENCE_SOLUTIONS = f"{PREFIX}.recurrenceSolutions"
+RECURRENCE_SECONDS = f"{PREFIX}.recurrenceSeconds"
+RECURRENCE_RESERVE = f"{PREFIX}.recurrenceCleanupReserveSeconds"
 ENABLED = f"{PREFIX}.enabled"
 TIER2 = f"{PREFIX}.tier2"
 BITWISE_MASKS = f"{PREFIX}.bitwiseMaskFactoring"
@@ -109,6 +119,26 @@ CONSTANT_LIMITS = {
 }
 
 _SPECS = {
+    RECURRENCE_SECONDS: {"title":"Recurrence time allowance","type":"number","default":6,"minValue":1,
+                         "description":"Maximum seconds for recurrence proofs in one HLIL pass, within the shared function budget."},
+    RECURRENCE_RESERVE: {"title":"Time reserved after recurrence proofs","type":"number","default":1,"minValue":0,
+                         "description":"Seconds of the remaining function budget kept for branch and dead-loop cleanup."},
+    RECURRENCE_PREIMAGES: {"title":"Recover bounded recurrence predicates","type":"boolean","default":True,
+                          "description":"Summarize pure finite loops and completely enumerate bounded preimages. Runtime inputs remain unknown; incomplete searches are left alone."},
+    RECURRENCE_WORK: {"title":"Recurrence proof visits","type":"number","default":16000000,"minValue":1,
+                      "description":"Maximum summary, known-bit and finite-search visits per pass, also bounded by the shared function deadline."},
+    RECURRENCE_LOOPS: {"title":"Recurrence loop candidates","type":"number","default":64,"minValue":1,
+                       "description":"Maximum pure loops summarized across all rounds."},
+    RECURRENCE_SITES: {"title":"Recurrence predicate candidates","type":"number","default":128,"minValue":1,
+                       "description":"Maximum subsequent scalar expressions considered for recurrence predicates."},
+    RECURRENCE_ITERATIONS: {"title":"Recurrence iteration limit","type":"number","default":64,"minValue":1,
+                           "description":"Maximum exact body executions in a symbolic loop summary."},
+    RECURRENCE_STATES: {"title":"Recurrence states per search half","type":"number","default":65536,"minValue":1,"maxValue":1048576,
+                       "description":"Maximum states in each complete meet-in-the-middle search half. Larger domains are rejected before enumeration."},
+    RECURRENCE_BITS: {"title":"Recurrence unknown bits per side input","type":"number","default":8,"minValue":1,"maxValue":16,
+                     "description":"Maximum unknown bits in a side-input domain, preserving all correlations in the resulting predicate."},
+    RECURRENCE_SOLUTIONS: {"title":"Recurrence matching preimages","type":"number","default":16,"minValue":1,
+                          "description":"Maximum matching domain assignments. Exceeding it rejects the whole search."},
     COMPARISON_PREIMAGES: {"title":"Simplify encoded comparisons","type":"boolean","default":True,
                           "description":"Invert arithmetic/rotate encodings around constant equalities. Every replacement requires an exact proof."},
     PREIMAGE_INSTRUCTIONS: {"title":"Preimage instruction limit","type":"number","default":20000,"minValue":1,
@@ -348,6 +378,15 @@ def preimage_limits(ctx):
                   proof_ms=ctx.get_setting_uint64(PREIMAGE_PROOF_MS))
 
 
+def recurrence_limits(ctx):
+    from .recurrence_preimages import Limits
+    return Limits(instructions=ctx.get_setting_uint64(PREIMAGE_INSTRUCTIONS),nodes=ctx.get_setting_uint64(PREIMAGE_NODES),
+                  work=ctx.get_setting_uint64(RECURRENCE_WORK),loops=ctx.get_setting_uint64(RECURRENCE_LOOPS),
+                  sites=ctx.get_setting_uint64(RECURRENCE_SITES),iterations=ctx.get_setting_uint64(RECURRENCE_ITERATIONS),
+                  stages=ctx.get_setting_uint64(PREIMAGE_STEPS),domain_bits=ctx.get_setting_uint64(RECURRENCE_BITS),
+                  states=ctx.get_setting_uint64(RECURRENCE_STATES),solutions=ctx.get_setting_uint64(RECURRENCE_SOLUTIONS),
+                  rounds=ctx.get_setting_uint64(PREIMAGE_ROUNDS),bits=ctx.get_setting_uint64(CONTROL_BITS),
+                  proof_ms=ctx.get_setting_uint64(PREIMAGE_PROOF_MS))
 
 
 def control_limits(ctx):

@@ -67,6 +67,8 @@ def record(func, report: FunctionReport, level: str = "mlil") -> None:
         logger.log_debug(f"{func.start:#x} control cleanup: {line}")
     if report.preimage_conditions:
         logger.log_info(f"{func.start:#x} preimages: simplified {report.preimage_conditions} encoded comparisons")
+    if report.recurrence_conditions:
+        logger.log_info(f"{func.start:#x} preimages: recovered {report.recurrence_conditions} recurrence predicates by complete finite search")
     for line in report.preimages:
         logger.log_debug(f"{func.start:#x} preimages: {line}")
     for r in report.skipped:
@@ -130,8 +132,8 @@ def render(report: FunctionReport) -> str:
                      f"{report.control_loops} dead finite loops; {report.control_seconds:.3f} s")
     lines += [f"control cleanup: {line}" for line in report.control]
     if report.preimage_seconds:
-        lines.append(f"preimages: {report.preimage_conditions} comparisons; "
-                     f"{report.preimage_seconds:.3f} s")
+        lines.append(f"preimages: {report.preimage_conditions} comparisons; {report.recurrence_conditions} recurrence predicates; "
+                     f"{report.recurrence_states} state transitions; {report.preimage_seconds:.3f} s")
     lines += [f"preimages: {line}" for line in report.preimages]
     for r in report.rewrites:
         why = f", {r.reason}" if r.reason else ""

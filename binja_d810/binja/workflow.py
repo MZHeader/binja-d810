@@ -228,6 +228,19 @@ def _run(ctx, level: str) -> None:
         report.plan_cpu_seconds += preimages.cpu_seconds
         report.allowance_seconds += preimages.seconds
         report.budget_exhausted |= preimages.exhausted
+    if level == "hlil" and ctx.get_setting_bool(settings.RECURRENCE_PREIMAGES):
+        from . import recurrence_preimages
+        seconds=min(ctx.get_setting_uint64(settings.RECURRENCE_SECONDS),
+                    max(0.0,deadline.remaining()-ctx.get_setting_uint64(settings.RECURRENCE_RESERVE)))
+        recurrences = recurrence_preimages.run(il,settings.recurrence_limits(ctx),deadline.earlier(Deadline.after(seconds)))
+        report.preimages.extend(recurrences.notes)
+        report.recurrence_conditions, report.recurrence_states = recurrences.changed, recurrences.states
+        report.preimage_seconds += recurrences.seconds
+        report.total_seconds += recurrences.seconds
+        report.plan_seconds += recurrences.seconds
+        report.plan_cpu_seconds += recurrences.cpu_seconds
+        report.allowance_seconds += recurrences.seconds
+        report.budget_exhausted |= recurrences.exhausted
     if level == "hlil" and ctx.get_setting_bool(settings.EQUIVALENT_BRANCHES):
         from . import control_cleanup
         control = control_cleanup.run(il, settings.control_limits(ctx), deadline)
@@ -311,7 +324,7 @@ def _run(ctx, level: str) -> None:
     log.record(func, report, level)
     if report.errors or report.rolled_back:
         completion.failed(func.view)
-    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches or report.control_loops or report.preimage_conditions:
+    if report.rewrites or changed or scratch_changed or allocation_changed or constant_changed or mutable_changed or report.flag_conditions or report.control_branches or report.control_loops or report.preimage_conditions or report.recurrence_conditions:
         if level == "mlil":
             ctx.mlil = il
         else:

@@ -75,5 +75,6 @@ bash "$HERE/boolean_conditions.sh"
 bash "$HERE/masks.sh"
 bash "$HERE/control_cleanup.sh"
 bash "$HERE/preimages.sh"
+bash "$HERE/recurrences.sh"
 rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
 ls "$OUT"

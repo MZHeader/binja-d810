@@ -188,6 +188,46 @@ Randomized C fixtures cover 8/16/32/64-bit encodings on ARM64, x64 PE/ELF and i6
 An independent final-IL oracle checks their results; effect, ordering, budget and rollback
 controls stay unchanged. Compilers may leave unsupported forms intact rather than simplify them.
 
+## Bounded recurrence predicates
+
+D810 can recover input tests hidden behind a finite scalar loop. Loop control must be known;
+arithmetic inputs can remain unknown. The pass summarizes the loop, finds complete preimages
+of its final equality, and keeps correlations between repeated input bits. A meet-in-the-middle
+search bounds the work. Known bits narrow the domains without assuming unknown bits are zero.
+An optional Z3 proof reduces the resulting predicate to a single input equality or masked test.
+
+The supported state operations are addition, subtraction, XOR, odd constant multiplication,
+negation, complement and bounded rotations. All arithmetic uses the original bit widths.
+This is exact finite enumeration, not a guessed hash input or a probabilistic collision test.
+If either search half, the solution count or the time budget exceeds its cap, no partial
+answer is used. Completed proofs can survive a later timeout. Unknown control, calls, memory
+effects, aliases, stale inputs and unsupported operations keep the code unchanged. Anonymous
+scalar field reads are supported on little-endian IL; partial writes inside loops are excluded.
+
+Rewrites appear under **preimages**, including search-state counts and rejection reasons.
+Only the predicates are replaced; existing dead-loop cleanup removes a loop if its values
+are no longer read. Disabling `binja_d810.recurrencePreimages` and reanalysing restores the IL.
+
+| Setting | Default |
+| --- | ---: |
+| `binja_d810.recurrencePreimages` | true |
+| `binja_d810.recurrenceWork` | 16,000,000 visits |
+| `binja_d810.recurrenceLoops` | 64 candidates |
+| `binja_d810.recurrenceSites` | 128 subsequent expressions |
+| `binja_d810.recurrenceIterations` | 64 iterations per loop |
+| `binja_d810.recurrenceStates` | 65,536 states per search half |
+| `binja_d810.recurrenceDomainBits` | 8 unknown bits per side input |
+| `binja_d810.recurrenceSolutions` | 16 matching domain assignments |
+| `binja_d810.recurrenceSeconds` | 6 seconds within the shared function budget |
+| `binja_d810.recurrenceCleanupReserveSeconds` | 1 second reserved for later cleanup |
+
+Instruction, node, stage, round and proof limits use `preimageInstructions`, `preimageNodes`,
+`preimageSteps`, `preimageRounds` and `preimageProofMilliseconds` above. Scalar widths use
+`controlBits` (64 by default). Synthetic C fixtures vary 32/64-bit state parameters and include
+impossible targets. An independent Python model enumerates every input in their finite domain;
+an independent final-IL oracle checks the results on ARM64, x64 PE/ELF and i686 at O0/O2.
+This does not cover arbitrary cryptographic hashes, unbounded loops or runtime memory inputs.
+
 ## Equivalent scalar branches
 
 D810 compares both arms of a structured HLIL branch over shared, unconstrained inputs. It

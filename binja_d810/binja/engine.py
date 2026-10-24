@@ -116,6 +116,8 @@ class FunctionReport:
     preimages: list[str] = field(default_factory=list)
     preimage_conditions: int = 0
     preimage_seconds: float = 0.0
+    recurrence_conditions: int = 0
+    recurrence_states: int = 0
     # Time. Planning is the budgeted work; commit (replace, finalize, SSA, cleanup,
     # rollback) is native and measured separately. overrun: planning past the deadline.
     allowance_seconds: float = 0.0
@@ -144,7 +146,7 @@ class FunctionReport:
                        "allocation loads": self.allocation_loads, "allocation lifetimes": self.allocation_lifetimes,
                        "constant regions": self.constant_regions, "value-set invariants": self.mutable_folds,
                        "equivalent branches": self.control_branches, "dead finite loops": self.control_loops,
-                       "comparison preimages": self.preimage_conditions})
+                       "comparison preimages": self.preimage_conditions,"recurrence preimages":self.recurrence_conditions})
         left = Counter(r.reason.split(":")[0] for r in self.skipped)
         return {"folded": {k: n for k, n in folded.items() if n}, "left": dict(left)}
 

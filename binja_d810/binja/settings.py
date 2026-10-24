@@ -31,6 +31,8 @@ CALLEE_PROOF_MS = f"{PREFIX}.calleeProofMilliseconds"
 CALLEE_DEPTH = f"{PREFIX}.calleeDepth"
 CALLEE_NATIVE = f"{PREFIX}.calleeNativeInline"
 CALLEE_RED_ZONE = f"{PREFIX}.calleeRedZoneBytes"
+CALLEE_FRAME_WORK = f"{PREFIX}.calleeFrameWork"
+CALLEE_FRAME_CFG = f"{PREFIX}.calleeFrameControlFlow"
 SCRATCH = f"{PREFIX}.scratchSlots"
 SCRATCH_INSTRUCTIONS = f"{PREFIX}.scratchInstructions"
 SCRATCH_NODES = f"{PREFIX}.scratchNodes"
@@ -146,6 +148,10 @@ _SPECS = {
                      "description": "Maximum cleanup rounds per pass, before MBA rewriting and after control-flow recovery."},
     CALLEE_RED_ZONE: {"title": "Callee red-zone byte limit", "type": "number", "default": 128, "minValue": 0,
                       "description": "Maximum stack bytes below SP used by scratch proofs, capped by the platform ABI's red zone. Zero disables this; unknown and kernel platforms have none."},
+    CALLEE_FRAME_WORK: {"title": "Caller-frame proof work", "type": "number", "default": 40000, "minValue": 1,
+                       "description": "Maximum graph, state-merge and IL visits across one caller-frame proof, also bounded by the shared function deadline."},
+    CALLEE_FRAME_CFG: {"title": "Prove scratch helpers across caller branches", "type": "boolean", "default": True,
+                      "description": "Check all acyclic caller paths using conservative state merges. Disable to restrict scratch proofs to one basic block."},
     CALLEE_NATIVE: {"title": "Prefer native callee inlining", "type": "boolean", "default": False,
                     "description": "Compare native user-level inlining for register-only summaries. Requires Flow fixes for recorded undo; frame-dependent helpers use direct substitution."},
     CALLEE_DEPTH: {"title": "Callee summary depth", "type": "number", "default": 4, "minValue": 1,
@@ -237,7 +243,8 @@ def callee_limits(ctx):
                   nodes=ctx.get_setting_uint64(CALLEE_NODES), frame_bytes=ctx.get_setting_uint64(CALLEE_FRAME_BYTES),
                   caller_instructions=ctx.get_setting_uint64(CALLEE_CALLER_INSTRUCTIONS),
                   sites=ctx.get_setting_uint64(CALLEE_SITES), proof_ms=ctx.get_setting_uint64(CALLEE_PROOF_MS),
-                  depth=ctx.get_setting_uint64(CALLEE_DEPTH), red_zone_bytes=ctx.get_setting_uint64(CALLEE_RED_ZONE))
+                  depth=ctx.get_setting_uint64(CALLEE_DEPTH), red_zone_bytes=ctx.get_setting_uint64(CALLEE_RED_ZONE),
+                  frame_work=ctx.get_setting_uint64(CALLEE_FRAME_WORK), frame_cfg=ctx.get_setting_bool(CALLEE_FRAME_CFG))
 
 
 def scratch_limits(ctx):

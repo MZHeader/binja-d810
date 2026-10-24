@@ -12,6 +12,12 @@ class Frame:
         self.written = set()
         self.whole = {}  # retain whole stored values instead of repeatedly splitting/rejoining them
 
+    def copy(self):
+        result = type(self)(self.max_bytes, self.little_endian)
+        result.bytes, result.whole = self.bytes.copy(), self.whole.copy()
+        result.inputs, result.written = self.inputs.copy(), self.written.copy()
+        return result
+
     def _check(self, offset: int, size: int):
         if size <= 0 or size > self.max_bytes:
             raise ValueError("frame byte limit")

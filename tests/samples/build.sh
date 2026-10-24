@@ -70,5 +70,6 @@ for target in x86_64-pc-windows-msvc i686-pc-windows-msvc; do
 done
 bash "$HERE/allocations.sh"
 bash "$HERE/constant_buffers.sh"
+bash "$HERE/callee_cfg.sh"
 rm -f "$OUT"/*.obj "$OUT"/*.o "$OUT"/*.lib "$OUT"/*.exp
 ls "$OUT"

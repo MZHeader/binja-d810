@@ -5,7 +5,7 @@ Branches are explored rather than treated as unrelated phi inputs.
 """
 
 import z3
-from binaryninja import HighLevelILOperation as H
+from binaryninja import HighLevelILOperation as H, TypeClass
 
 
 def sized(value, width):
@@ -15,6 +15,21 @@ def sized(value, width):
 
 def value(node, state):
     op, width = node.operation, node.size * 8 or 1
+    if op == H.HLIL_DEREF_FIELD and node.expr_type.type_class == TypeClass.ArrayTypeClass:
+        return value(node.src, state) + node.offset  # array-to-pointer decay, not a scalar memory read
+    if op == H.HLIL_ADDRESS_OF:
+        def address(item):
+            if item.operation == H.HLIL_DEREF:
+                return value(item.src, state)
+            if item.operation == H.HLIL_DEREF_FIELD:
+                return value(item.src, state) + item.offset
+            if item.operation == H.HLIL_STRUCT_FIELD:
+                return address(item.src) + item.offset
+            if item.operation == H.HLIL_ARRAY_INDEX:
+                base = address(item.src)
+                return base + sized(value(item.index, state), base.size()) * item.size
+            raise AssertionError(f'unsupported lvalue address: {item}')
+        return address(node.src)
     if op in (H.HLIL_CONST, H.HLIL_CONST_PTR):
         return z3.BitVecVal(node.constant, width)
     if op == H.HLIL_IMPORT:
@@ -49,6 +64,7 @@ def value(node, state):
         return z3.If(overflow, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1))
     return {H.HLIL_ADD: lambda: a + b, H.HLIL_SUB: lambda: a - b, H.HLIL_MUL: lambda: a * b,
             H.HLIL_AND: lambda: a & b, H.HLIL_OR: lambda: a | b, H.HLIL_XOR: lambda: a ^ b,
+            H.HLIL_ROR: lambda: z3.RotateRight(a, b), H.HLIL_ROL: lambda: z3.RotateLeft(a, b),
             H.HLIL_LSL: lambda: a << b, H.HLIL_LSR: lambda: z3.LShR(a, b), H.HLIL_ASR: lambda: a >> b}[op]()
 
 
@@ -76,6 +92,9 @@ def execute(func):
                 returns.append((path, value(node.src[0], state), writes))
             elif op == H.HLIL_VAR_INIT:
                 state[node.dest.identifier] = value(node.src, state)
+                output.append((path, state, writes))
+            elif op == H.HLIL_ADDRESS_OF:
+                value(node, state)  # pure address expressions may survive as unused statements
                 output.append((path, state, writes))
             elif op == H.HLIL_ASSIGN:
                 rhs = value(node.src, state)

@@ -64,10 +64,13 @@ def plan(il, func, limits: Limits, deadline):
         sites[instruction.instr_index] = Site(instruction.instr_index, summary, ret)
     needing = {i for i, site in sites.items() if site.summary.frame_outputs}
     if needing:
-        accepted, why = frame.prove(il, func, {i: s.summary for i, s in sites.items()},
-                                    {i: s.return_address for i, s in sites.items()}, limits, deadline)
-        for i in needing - accepted:
-            notes.append(f"{il[i].address:#x}: {why}")
+        proof = frame.prove(il, func, {i: s.summary for i, s in sites.items()},
+                            {i: s.return_address for i, s in sites.items()}, limits, deadline)
+        if proof.accepted & needing:
+            notes.append(f"caller-frame proof: {len(proof.accepted & needing)} scratch call sites; "
+                         f"{proof.blocks} blocks checked once; {proof.work} work visits")
+        for i in needing - proof.accepted:
+            notes.append(f"{il[i].address:#x}: {proof.reason}")
             del sites[i]
     return sites, notes
 

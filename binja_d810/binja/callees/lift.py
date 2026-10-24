@@ -30,6 +30,8 @@ class Limits:
     proof_ms: int = 500
     sites: int = 64
     red_zone_bytes: int = 128
+    frame_work: int = 40000
+    frame_cfg: bool = True
 
 
 @dataclass
@@ -255,6 +257,14 @@ class Lifter:
                                  deadline=self.deadline, z3_timeout_ms=self.limits.proof_ms).verdict is Verdict.PROVEN)
         if not (stack_return or link_return):
             return Result(reason="unproved return target")
+        if stack_return:
+            # A RET/POP shape alone does not prove control returns to the caller. Check a
+            # snapshot so the mechanical return-address read does not become a data input.
+            returned = self.frame.copy().read(0, self.arch.address_size)
+            incoming = Frame(self.limits.frame_bytes, self.frame.little_endian).read(0, self.arch.address_size)
+            if check(returned, incoming, deadline=self.deadline,
+                     z3_timeout_ms=self.limits.proof_ms).verdict is not Verdict.PROVEN:
+                return Result(reason="callee stack return target is not preserved")
         stack = self.state.values[self.arch.stack_pointer]
         if check(stack, Var(self.arch.stack_pointer, self.arch.address_size * 8), deadline=self.deadline,
                  z3_timeout_ms=self.limits.proof_ms).verdict is not Verdict.PROVEN:

@@ -146,8 +146,14 @@ substitutes checked copies of the body at ordinary calls. The copies retain flag
 call/return stack effects. Unsupported effects, loops, tail calls and recursion stay unchanged.
 
 Scratch stores need a byte-level proof that the caller cannot read or escape them. This currently
-requires a straight-line caller whose other calls also have summaries. Partial overwrites do not
-hide later reads. The stores are retained in the copied IL; this pass does not clear alias flags or
+supports direct acyclic caller branches and multiple returns, with summaries for every call. Each block
+is checked once. At joins, the proof keeps every possible byte writer and treats differing scalar
+values as unknown; ambiguous stack-derived values reject the proof. A read on any path blocks the
+affected helper, and partial overwrites do not hide later reads. Loops, indirect branches, unproved calls, protected
+branches and uncertain or unbalanced stack positions stay unchanged.
+Saved stack return addresses are checked as well as the return opcode, including in nested summaries.
+
+The stores are retained in the copied IL; this pass does not clear alias flags or
 remove arbitrary stack writes. Fixed read-only loads are allowed; writable and relocated loads are not.
 
 The default limits are:
@@ -162,6 +168,8 @@ The default limits are:
 | Callee call-site limit | 64 caller sites |
 | Callee proof timeout | 500 ms |
 | Callee red-zone byte limit | 128, capped by the platform ABI |
+| `binja_d810.calleeFrameControlFlow` | true; disable to restrict scratch proofs to one block |
+| `binja_d810.calleeFrameWork` | 40,000 graph, merge and IL visits per caller-frame proof |
 
 Depth bounds composition through the current IL; helpers simplified in an earlier analysis can
 already be flatter. Summary planning and substitution share the function time budget.
@@ -175,9 +183,11 @@ helpers it records a user inline flag and restores it when disabled. It needs Fl
 undo queue. Frame-dependent helpers continue to use direct substitution, since a global inline
 flag would affect unproved callers too. Existing no-inline flags are respected.
 
-The debug report's `callees` entries list substitutions and rejection reasons. Synthetic fixtures
+The debug report's `callees` entries list substitutions, checked blocks, work visits and rejection reasons. Synthetic fixtures
 cover ARM64, x86-64 and ordinary i686 calls at O0/O2, with independent arithmetic models and undo
-checks. These tests do not establish coverage on real malware. Direct call-link substitution is
+checks. Branched-caller fixtures also cover i686 private registers, reads on only one path, partial
+overwrites, separate call sites, multiple returns and repeated branch joins. Independent Z3
+execution checks final results for every input. These tests do not establish coverage on real malware. Direct call-link substitution is
 currently supported on those three architectures; other architectures are left unchanged.
 
 ## Private scratch slots
@@ -437,7 +447,7 @@ function budget and reports rejected or exhausted proofs. Disable keys below use
 
 | Feature | Proven behavior | Heuristics, assumptions and remaining limits | Disable setting |
 | --- | --- | --- | --- |
-| Callee summaries | Exact register/frame arithmetic and checked call substitution | Bounded acyclic helpers; scratch proofs need supported straight-line callers. Direct call-link support is ARM64/x86/x64. Optional native inlining is a comparison mode. | `calleeSummaries` |
+| Callee summaries | Exact register/frame arithmetic, all-path scratch proofs and checked call substitution | Bounded acyclic helpers and callers; unknown calls or ambiguous stack joins reject scratch proofs. Direct call-link support is ARM64/x86/x64. Optional native inlining is a comparison mode. | `calleeSummaries` |
 | Scratch slots | No-escape checks and byte-range liveness on every CFG path | Unknown effects, ambiguous logical overlaps and big-endian partial fields stay unchanged. | `scratchSlots` |
 | Flag conditions | Exact-width comparison equivalence, original subtraction-overflow proofs and confined flag uses | Bounded two-arm merges; early models need pure operands and known flag metadata. Native `ADD_OVERFLOW` remains unmodeled. | `flagConditions` |
 | Allocation round trips | Exact private byte forwarding under explicit contracts | Fresh/nonnullable storage and elidable lifetime guarantees are assumptions supplied by the analyst; installed libraries did not provide them. No name matching. | `allocationRoundTrips` |

@@ -26,6 +26,13 @@ class State:
         self.written = set()
         self.live_in = set()
 
+    def copy(self):
+        from copy import copy
+        result = copy(self)
+        result.values = self.values.copy()
+        result.written, result.live_in = self.written.copy(), self.live_in.copy()
+        return result
+
     def read(self, reg: Register) -> Expr:
         value = self.values[reg.storage]
         if reg.width <= 0 or reg.offset < 0 or reg.offset + reg.width > value.width:

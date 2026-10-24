@@ -12,6 +12,9 @@ from .engine import EngineConfig
 PREFIX = "binja_d810"
 ENABLED = f"{PREFIX}.enabled"
 TIER2 = f"{PREFIX}.tier2"
+BITWISE_MASKS = f"{PREFIX}.bitwiseMaskFactoring"
+BITWISE_INPUTS = f"{PREFIX}.bitwiseInputs"
+BITWISE_CONSTANTS = f"{PREFIX}.bitwiseConstants"
 MAX_VARS = f"{PREFIX}.maxVariables"
 MAX_NODES = f"{PREFIX}.maxNodes"
 MAX_ITERATIONS = f"{PREFIX}.maxIterations"
@@ -183,6 +186,12 @@ _SPECS = {
               "description": "Global kill switch. When off, D-810 never rewrites anything."},
     TIER2: {"title": "Generic MBA simplifier (Tier 2)", "type": "boolean", "default": True,
             "description": "Use CoBRA (if installed) and the built-in linear-MBA simplifier."},
+    BITWISE_MASKS: {"title": "Factor masked bitwise expressions", "type": "boolean", "default": True,
+                    "description": "Share Boolean terms across constant bit masks. Exact proofs and the function budget still apply."},
+    BITWISE_INPUTS: {"title": "Bitwise expression inputs", "type": "number", "default": 4, "minValue": 1, "maxValue": 4,
+                     "description": "Maximum independent values in the bitwise truth table, including opaque arithmetic subexpressions."},
+    BITWISE_CONSTANTS: {"title": "Bitwise expression constants", "type": "number", "default": 4, "minValue": 1, "maxValue": 8,
+                        "description": "Maximum distinct constants in a bitwise expression."},
     MAX_VARS: {"title": "Tier 2 variable limit", "type": "number", "default": 4, "minValue": 1, "maxValue": 6,
                "description": "CoBRA skips subexpressions with more distinct variables (the linear simplifier counts atoms instead, up to 8)."},
     MAX_NODES: {"title": "Expression node limit", "type": "number", "default": 200, "minValue": 10, "maxValue": 5000,

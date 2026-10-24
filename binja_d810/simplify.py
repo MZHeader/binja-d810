@@ -39,6 +39,7 @@ class Outcome:
     skipped: Optional[str] = None
     errors: list[tuple[str, str]] = field(default_factory=list)
     refuted: int = 0  # candidate results the checker refuted (never applied)
+    requires_proof: bool = False  # retained across all steps of one proposed replacement
 
 
 Checker = Callable[[Expr, Expr], Union[Check, Verdict]]
@@ -155,6 +156,9 @@ def _finish(expr: Expr, current: Expr, sources: list[str], out: Outcome, check: 
         return False
     if folding and final.verdict is not Verdict.PROVEN:
         out.skipped = "constant on every sample, not proven" if constancy else "condition not proven"
+        return False
+    if out.requires_proof and final.verdict is not Verdict.PROVEN:
+        out.skipped = f"rewrite not proven: {final.reason or final.method}"
         return False
     out.rewrite = Rewrite(original=expr, replacement=current, source="+".join(dict.fromkeys(sources)),
                           verdict=final.verdict, method=final.method, reason=final.reason)
@@ -334,6 +338,7 @@ def _tier2(e, backends, limits, dead, sources, out: Outcome, check: Checker,
                 out.errors.append((source, f"refuted {to_str(node)} -> {to_str(result)}"))
                 continue
             sources.append(source)
+            out.requires_proof |= bool(getattr(backend, "requires_proof", False))
             return result
         return None
 

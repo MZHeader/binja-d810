@@ -76,6 +76,16 @@ def _backends() -> tuple:
     return tuple(default_backends())
 
 
+def _configured_backends(ctx) -> tuple:
+    from ..semantic.bitwise import BitwiseBackend
+
+    # Only the stateless bitwise backend varies per function. Keep the expensive backend caches.
+    return tuple(BitwiseBackend(mask_factoring=ctx.get_setting_bool(settings.BITWISE_MASKS),
+                                max_names=ctx.get_setting_uint64(settings.BITWISE_INPUTS),
+                                max_constants=ctx.get_setting_uint64(settings.BITWISE_CONSTANTS))
+                 if isinstance(backend, BitwiseBackend) else backend for backend in _backends())
+
+
 def _enabled(ctx) -> bool:
     func = ctx.function
     return (func is not None and ctx.get_setting_bool(ACTIVITY_SETTING) and ctx.get_setting_bool(settings.ENABLED)
@@ -206,7 +216,7 @@ def _run(ctx, level: str) -> None:
                               ctx.get_setting_bool(settings.CONSTANT_COMMENTS) and ctx.get_setting_bool(settings.FLOW_FIXES))
     make = MLILAdapter if level == "mlil" else HLILAdapter
     adapter = make(il, config.limits.max_nodes, deadline)
-    backends = _backends_override if _backends_override is not None else _backends()
+    backends = _backends_override if _backends_override is not None else _configured_backends(ctx)
     report = simplify_function(adapter, rules, backends if config.tier2 else (), config, deadline)
     report.reserved_seconds = reserved
     report.dispatch_probe_seconds = probe_seconds

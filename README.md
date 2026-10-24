@@ -125,6 +125,8 @@ itself lives in a separate **extension** group that Binary Ninja creates.
   time can exceed the budget.
 * **Generic MBA simplifier (Tier 2)**: the linear simplifier and CoBRA. Turn it off to use the
   rules only.
+* **Factor masked bitwise expressions**: on by default. Finds shared terms across constant
+  bit masks; the bitwise limits and proof checks are described below.
 * **Skipped functions** and **Disabled rules**: addresses and rule names to leave alone.
 * **Flow fixes**: on by default. Resolves code-pointer tables and identity wrappers, and undoes
   it all when D-810 is turned off. Your own types and branch targets always win.
@@ -141,6 +143,21 @@ itself lives in a separate **extension** group that Binary Ninja creates.
 * **Read-only ranges**: address ranges (`0x1000-0x1fff`, end included) to treat as constant. Use
   them for data you know never changes. Clearing a range puts the old types back.
 * **Enabled**: a kill switch for everything.
+
+## Masked bitwise expressions
+
+The bitwise simplifier compares its existing normal form with a Boolean polynomial whose
+coefficients are bit masks. This can reduce `(x & ~m) | ((x ^ y) & m)` to `x ^ (y & m)` when
+`m` is constant. The calculation comes from the expression's truth table; it does not match
+particular masks or instruction sequences. Arithmetic subexpressions remain independent inputs.
+Only smaller candidates that pass the normal exact-width proof are applied. Rewrites appear
+under `bitwise` in the function report and logger. The function deadline bounds the work.
+
+`binja_d810.bitwiseMaskFactoring` defaults to true; disabling it keeps the previous bitwise
+normal form. `bitwiseInputs` defaults to 4 (range 1–4), and `bitwiseConstants` defaults to 4
+(range 1–8). These limits apply to both forms. Random-mask fixtures at 8/16/32/64 bits check
+final values independently on ARM64, x64 PE/ELF and i686, at O0 and O2. This simplifies the
+mixing operations inside loops; it does not prove their runtime inputs constant.
 
 ## Arithmetic helpers
 

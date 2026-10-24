@@ -16,13 +16,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..ir.evaluate import evaluate
+from ..deadline import Deadline
+from ..ir.evaluate import evaluate_shared
 from ..ir.expr import BinOp, Const, Expr, UnOp, Var, mask, node_count, nodes, substitute, variables
 from ..ir.normalize import normalize
 from .linear_mba import _formula_for, _to_expr
-
-_MAX_NAMES = 4
-_MAX_CONSTANTS = 4
 
 
 def _abstract(e: Expr, atoms: dict[Expr, Var], taken: set[str], memo: dict[int, Expr]) -> Expr:
@@ -55,22 +53,35 @@ def _size(formula: tuple) -> int:
 class BitwiseBackend:
     name = "bitwise"
     abstracts_atoms = True  # bounds its own name count, whatever the leaf variables
+    requires_proof = True  # a timeout must never downgrade a new masked rewrite to sampling
+
+    def __init__(self, *, mask_factoring=True, max_names=4, max_constants=4):
+        self.mask_factoring = mask_factoring
+        self.max_names = max_names
+        self.max_constants = max_constants
 
     def simplify(self, e: Expr, deadline=None) -> Optional[Expr]:
-        # At most 2**4 evaluations: no deadline checks needed.
+        deadline = deadline or Deadline.never()
+        if deadline.expired():
+            return None
         if not isinstance(e, (BinOp, UnOp)) or e.op not in ("and", "or", "xor", "not"):
             return None
         atoms: dict[Expr, Var] = {}
         shape = _abstract(e, atoms, {v.name for v in variables(e)}, {})
         names = sorted(variables(shape), key=lambda v: v.name)
         constants = sorted({n.value for n in nodes(shape) if isinstance(n, Const)})
-        if len(names) > _MAX_NAMES or len(constants) > _MAX_CONSTANTS:
+        if len(names) > self.max_names or len(constants) > self.max_constants:
             return None
         w, m, t = e.width, mask(e.width), len(names)
-        results = [evaluate(shape, {v.name: m if (i >> k) & 1 else 0 for k, v in enumerate(names)})
-                   for i in range(1 << t)]
+        results = []
+        for i in range(1 << t):
+            if deadline.expired():
+                return None
+            results.append(evaluate_shared(shape, {v.name: m if (i >> k) & 1 else 0 for k, v in enumerate(names)}))
         classes: dict[tuple, int] = {}  # the constants' bits at a position -> those positions
         for p in range(w):
+            if deadline.expired():
+                return None
             key = tuple((c >> p) & 1 for c in constants)
             classes[key] = classes.get(key, 0) | (1 << p)
         full = (1 << (1 << t)) - 1
@@ -86,6 +97,8 @@ class BitwiseBackend:
                 pair[table] = pair.get(table, 0) | positions
         terms = []
         for tables in pairs.values():
+            if deadline.expired():
+                return None
             # The smaller formula is written out; the other table's positions flip it.
             base = min(tables, key=lambda tb: (_size(_formula_for(tb, t)), -bin(tables[tb]).count("1")))
             within = sum(tables.values())
@@ -102,7 +115,47 @@ class BitwiseBackend:
         result = terms[0] if terms else Const(0, w)
         for term in terms[1:]:
             result = BinOp("or", result, term, w)
-        if atoms:
-            result = substitute(result, {atom.name: term for term, atom in atoms.items()})
-        result = normalize(result)
+        candidates = [result]
+        if self.mask_factoring:
+            factored = _masked_polynomial(results, names, w, deadline)
+            if factored is not None:
+                candidates.append(factored)
+        if deadline.expired():
+            return None
+        bindings = {atom.name: term for term, atom in atoms.items()}
+        candidates = [normalize(substitute(c, bindings) if atoms else c) for c in candidates]
+        result = min(candidates, key=node_count)
         return result if node_count(result) < node_count(e) else None
+
+
+def _masked_polynomial(results: list[int], names: list[Var], width: int, deadline: Deadline) -> Optional[Expr]:
+    """Boolean algebraic normal form, with a word mask for each monomial's coefficient.
+
+    The Mobius transform operates on all bit positions together. Unlike independent bit classes,
+    it can share x between x outside a mask and x^y inside it. No particular mask or operator
+    pattern is recognized. The caller's usual exact verifier still gates every emitted rewrite.
+    """
+    coefficients = list(results)
+    for k in range(len(names)):
+        if deadline.expired():
+            return None
+        for row in range(len(coefficients)):
+            if row & (1 << k):
+                coefficients[row] ^= coefficients[row ^ (1 << k)]
+    terms = []
+    for row, coefficient in enumerate(coefficients):
+        if deadline.expired():
+            return None
+        if not coefficient:
+            continue
+        factors = [v for k, v in enumerate(names) if row & (1 << k)]
+        term = factors[0] if factors else Const(mask(width), width)
+        for factor in factors[1:]:
+            term = BinOp("and", term, factor, width)
+        if coefficient != mask(width):
+            term = BinOp("and", term, Const(coefficient, width), width)
+        terms.append(term)
+    result = terms[0] if terms else Const(0, width)
+    for term in terms[1:]:
+        result = BinOp("xor", result, term, width)
+    return result

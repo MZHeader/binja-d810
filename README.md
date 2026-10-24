@@ -245,6 +245,8 @@ Before native flag lowering, D810 can expand overflow from original integer subt
 It captures both operands, keeps the original instruction and flag effects, then adds an
 overflow formula proven against a widened signed subtraction. Architecture metadata identifies
 integer flag writers and condition dependencies; bounded liveness selects the reaching writes.
+Liveness revisits only predecessors whose inputs can change, so branch layout and loops do not
+force repeated scans of the whole function. The existing work limit and shared deadline still apply.
 Native tests cover operand clobbering and 8/16/32/64-bit signed-minimum cases on ARM64 and x86.
 Memory operands, protected operations and flags also used as raw data keep their original IL.
 

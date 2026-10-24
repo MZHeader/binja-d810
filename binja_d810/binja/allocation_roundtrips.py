@@ -8,7 +8,7 @@ from binaryninja import (Endianness, ILInstructionAttribute as Attr, ILSourceLoc
                          MediumLevelILFunction, MediumLevelILOperation as M, RegisterValueType,
                          SSAVariable, TypeClass, VariableSourceType)
 
-from ..allocations.contracts import ATTRIBUTE, Contract, parse
+from ..allocations.contracts import ATTRIBUTE, Contract, resolve
 from ..allocations.lifetime import Event, prove
 from ..deadline import Deadline
 from ..ir.evaluate import evaluate
@@ -74,18 +74,29 @@ class Factory:
         if func is not None:
             declared = func.get_metadata(ATTRIBUTE)
             if declared is not None:
-                contracts.append(parse(declared, self.limits.contract_bytes))
+                contracts.append(declared)
+        # Native provenance identifies the object that supplied this signature. Reading its
+        # original type recovers semantic attributes lost during native signature rebuilding.
+        # No catalogue of allocator or library names is used.
+        addresses = {value.value} if value.type in _CONSTANT else set()
+        if addresses and call.dest.operation in (M.MLIL_LOAD, M.MLIL_LOAD_SSA):
+            location = call.dest.src.value
+            if location.type in _CONSTANT: addresses.add(location.value)
+        for address in sorted(addresses):
+            self.tick()
+            origin = self.view.lookup_imported_object_library(address, call.function.source_function.platform)
+            if origin is not None:
+                library, name = origin
+                if library.arch != call.function.arch:
+                    raise ValueError("allocation library architecture differs")
+                types.append(library.get_named_object(name))
         for typ in types:
             if typ is not None and typ.type_class == TypeClass.PointerTypeClass:
                 typ = typ.target
             if typ is not None and ATTRIBUTE in typ.attributes:
-                contract = parse(typ.attributes[ATTRIBUTE], self.limits.contract_bytes)
-                if contract not in contracts:
-                    contracts.append(contract)
-        if len(contracts) > 1:
-            raise ValueError("conflicting allocation contracts")
-        if contracts:
-            contract = contracts[0]
+                contracts.append(typ.attributes[ATTRIBUTE])
+        contract = resolve(contracts, self.limits.contract_bytes)
+        if contract is not None:
             if contract.parameter >= len(call.params):
                 raise ValueError("allocation contract parameter is unavailable")
             return Binding(contract, call.params[contract.parameter])

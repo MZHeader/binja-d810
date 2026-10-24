@@ -40,3 +40,11 @@ def parse(text: str, max_bytes: int):
     if role == "deallocate" and any(k in spec for k in ("fresh", "ordinary", "nonnull")):
         raise ValueError("allocation-only guarantees on a deallocator")
     return Contract(role, parameter, spec.get("nonnull", False), spec.get("elidable", False))
+
+
+def resolve(sources, max_bytes):
+    """Every available declaration must agree; stronger assumptions never silently win."""
+    found = {parse(source, max_bytes) for source in sources if source is not None}
+    if len(found) > 1:
+        raise ValueError("conflicting allocation contracts")
+    return next(iter(found), None)

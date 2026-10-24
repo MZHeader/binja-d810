@@ -5,7 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from binaryninja import MediumLevelILOperation as M, Settings
+from binaryninja import MediumLevelILOperation as M, Settings, TypeLibrary
 from arch import IDS, MATRIX, sample
 from helpers import function_named, open_sample, set_types, settle
 from flowcases import text
@@ -51,6 +51,65 @@ def configure(bv, *, contracts=True, nonnull=True, elidable=True):
             function_named(bv, name).store_metadata(ATTRIBUTE, json.dumps(spec))
     for func in bv.functions: func.reanalyze()
     settle(bv)
+
+
+def library_contracts(bv, *, nonnull=True):
+    """Synthetic trusted effects attached to actual import provenance, not wrapper metadata."""
+    from uuid import uuid4
+    library = TypeLibrary.new(bv.arch, 'd810-fixture-' + str(uuid4()))
+    imported = []
+    for index, (name, role) in enumerate((('heap_allocate', 'allocate'), ('heap_release', 'deallocate'))):
+        wrapper = function_named(bv, name)
+        call = next(i for i in wrapper.mlil.instructions if i.operation in (M.MLIL_CALL, M.MLIL_TAILCALL))
+        declaration = dict(version=1, role=role, parameter=0, elidable=True)
+        if role == 'allocate': declaration.update(fresh=True, ordinary=True, nonnull=nonnull)
+        typ = wrapper.type.mutable_copy(); typ.attributes = {ATTRIBUTE: json.dumps(declaration)}
+        key = 'object_' + str(index)
+        library.add_named_object(key, typ.immutable_copy())
+        imported.append((call.dest.value.value, key, wrapper.platform))
+        if call.dest.operation == M.MLIL_LOAD:
+            imported.append((call.dest.src.value.value, key, wrapper.platform))
+        assert wrapper.get_metadata(ATTRIBUTE) is None
+    assert library.finalize()
+    bv.add_type_library(library)
+    for address, key, platform in imported:
+        bv.record_imported_object_library(library, key, address, platform)
+        assert ATTRIBUTE in library.get_named_object(key).attributes
+        target = bv.get_function_at(address)
+        if target is not None:
+            # Simulate the importer's signature binding, including native loss of custom
+            # attributes. Only the original library object retains the semantic contract.
+            signature = library.get_named_object(key).mutable_copy()
+            signature.attributes = {}
+            target.set_user_type(signature.immutable_copy())
+    return library, imported
+
+
+@pytest.mark.parametrize('build', MATRIX, ids=IDS)
+@pytest.mark.parametrize('nonnull', (False, True), ids=('nullable', 'infallible-test-contract'))
+def test_import_provenance_supplies_effects_without_function_metadata(build, nonnull):
+    bv = open_sample(sample('allocation_roundtrips', *build), d810=True)
+    try:
+        configure(bv, contracts=False)
+        func = function_named(bv, 'heap_roundtrip')
+        before = text(func); assert calls(func) == 2
+        library, imported = library_contracts(bv, nonnull=nonnull)
+        for f in bv.functions: f.reanalyze()
+        settle(bv)
+        report = log.latest_report(func)
+        if nonnull:
+            assert calls(func) == 0, log.render(report)
+            expression, x = value_ir(func)
+            assert check_equivalent(expression, expected('heap_roundtrip', x)) is Verdict.PROVEN
+            assert report.allocation_lifetimes == 1
+        else:
+            assert calls(func) == 2 and not report.allocation_lifetimes
+        Settings().set_bool(settings.ALLOCATIONS, False, bv)
+        for f in bv.functions: f.reanalyze()
+        settle(bv)
+        assert text(func) == before
+        assert all(bv.lookup_imported_object_library(address, platform) is not None for address, _, platform in imported)
+    finally: bv.file.close()
 
 
 @pytest.fixture(scope="module", params=MATRIX, ids=IDS)

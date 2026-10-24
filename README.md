@@ -266,9 +266,12 @@ memory accesses. A null check does not authorize deletion of its failure path.
 
 The installed type libraries we tested supplied signatures but no such effect guarantees.
 D810 does **not** identify allocators by names such as `malloc` or `free`. Contracts can come from
-the `binja_d810.memory` type attribute or explicit per-function metadata. Binary Ninja currently
-drops custom attributes when rebuilding some function signatures, so metadata is the reliable
-way to supply a verified contract. For a selected allocator with the required guarantees:
+the `binja_d810.memory` type attribute or explicit per-function metadata. D810 also follows Binary
+Ninja's recorded import provenance to the original type-library object, recovering contracts
+even when rebuilt signatures have lost their custom attributes. This works through checked
+wrappers and does not match allocator or library names. Conflicting declarations are rejected;
+an imported signature must expose the arguments required by its contract. For a selected
+allocator with the required guarantees, per-function metadata remains another option:
 
 ```python
 current_function.store_metadata("binja_d810.memory",
@@ -299,6 +302,11 @@ boxed-value wrappers, partial writes, escapes, pointer observations, missing gua
 on all eight builds. Elision tests explicitly assume infallible, unobservable test contracts;
 they do not prove those properties for a real allocator or for malware. Unannotated library
 allocations remain unchanged.
+
+Import-provenance fixtures provide explicit test guarantees in synthetic type libraries and
+strip them from the bound signatures. They verify automatic lookup, wrapper forwarding, nullable
+rejection and disable/restore across all eight builds. They do not supply guarantees for the
+installed standard libraries or establish that a real allocator's lifetime can be erased.
 
 ## Constant buffers and decoded text
 

@@ -34,17 +34,18 @@ def program(f,mode,taken):
         no=il.block([il.assign(4,il.deref(4,il.const_pointer(8,0x2000),None),read(z)),il.ret([read(y)])])
         if mode=='label':no=il.block([il.label(42),no])
         if mode=='protected':il.set_expr_attributes(no if taken else yes,{Attr.ILPreventDeadStoreElimination})
+        if mode=='protected_selected':il.set_expr_attributes(yes if taken else no,{Attr.ILPreventDeadStoreElimination})
         root=il.if_expr(guard,yes,no)
     il.root=il.get_expr(il.block([root]));il.finalize();il.generate_ssa_form([])
     return il
 
 
 @pytest.mark.parametrize('taken',(False,True))
-@pytest.mark.parametrize('mode',('effects','identity','ternary','protected','protected_container','load','label'))
+@pytest.mark.parametrize('mode',('effects','identity','ternary','protected','protected_selected','protected_container','load','label'))
 def test_constant_selection(owner,mode,taken):
     il=program(owner,mode,taken);before=str(il.root)
     report=cleanup.run(il,replace(cleanup.Limits(),equivalents=False),Deadline.after(5))
-    if mode in ('protected','protected_container','load','label'):
+    if mode in ('protected','protected_selected','protected_container','load','label'):
         assert report.constants==0 and str(il.root)==before,report.notes
         return
     assert report.constants==1,report.notes

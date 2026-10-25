@@ -121,7 +121,7 @@ CONSTANT_LIMITS = {
 
 _SPECS = {
     CONSTANT_BRANCHES: {"title":"Select proven constant branches","type":"boolean","default":True,
-                        "description":"Select the original arm of a pure, proven constant HLIL condition, including direct conditional assignments and returns. Labelled or protected untaken regions stay."},
+                        "description":"Select the original arm of a pure, proven constant HLIL condition, including direct conditional assignments and returns. Labelled or protected regions stay."},
     RECURRENCE_SECONDS: {"title":"Recurrence time allowance","type":"number","default":6,"minValue":1,
                          "description":"Maximum seconds for recurrence proofs in one HLIL pass, within the shared function budget."},
     RECURRENCE_RESERVE: {"title":"Time reserved after recurrence proofs","type":"number","default":1,"minValue":0,

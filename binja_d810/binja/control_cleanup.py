@@ -216,11 +216,12 @@ def run(il, limits, deadline):
                     constant=normalize(guard)
                     if limits.constants and isinstance(constant,Const):
                         region=list(walk(root,work.tick))
-                        rejected=root.false if constant.value else root.true
                         if any(node.operation==H.HLIL_LABEL for node in region):
                             raise ValueError('labelled constant branch kept')
-                        if any(node.attributes & _PROTECTED for node in walk(rejected,work.tick)):
-                            raise ValueError('protected untaken branch kept')
+                        # The structural copy preserves children but not root attributes.
+                        # Keep protected selected arms too, rather than lose their protection.
+                        if any(node.attributes & _PROTECTED for node in region):
+                            raise ValueError('protected constant branch kept')
                         if constant_guard(guard,proof_ms=limits.proof_ms,deadline=deadline) is not None:
                             plans.append((root,root.true if constant.value else root.false,'constant'))
                             covered.update(node.expr_index for node in region)

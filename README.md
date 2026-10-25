@@ -206,7 +206,9 @@ scalar field reads are supported on little-endian IL; partial writes inside loop
 
 Rewrites appear under **preimages**, including search-state counts and rejection reasons.
 Only the predicates are replaced; existing dead-loop cleanup removes a loop if its values
-are no longer read. Disabling `binja_d810.recurrencePreimages` and reanalysing restores the IL.
+are no longer read and its body is supported. Loops containing scalar field reads can have
+their predicates simplified while the older dead-loop pass retains the loop. Disabling
+`binja_d810.recurrencePreimages` and reanalysing restores the IL.
 
 | Setting | Default |
 | --- | ---: |

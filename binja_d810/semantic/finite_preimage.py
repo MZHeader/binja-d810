@@ -27,19 +27,22 @@ class Stage:
     values:tuple
     width:int
 
-    def apply(self,state,value,inverse=False):
+    def function(self,inverse=False):
+        """Prepare fixed widths and inverses once, outside the state enumeration."""
         w,m=self.width,mask(self.width)
-        if self.operation=='add':return (state-value if inverse else state+value)&m
-        if self.operation=='sub':return (state+value if inverse else state-value)&m
-        if self.operation=='subr':return (value-state)&m
-        if self.operation=='xor':return state^value
+        if self.operation=='add':return (lambda s,v:(s-v)&m) if inverse else (lambda s,v:(s+v)&m)
+        if self.operation=='sub':return (lambda s,v:(s+v)&m) if inverse else (lambda s,v:(s-v)&m)
+        if self.operation=='subr':return lambda s,v:(v-s)&m
+        if self.operation=='xor':return lambda s,v:s^v
         if self.operation=='mul':
-            factor=pow(value,-1,1<<w) if inverse else value
-            return state*factor&m
-        if self.operation=='not':return ~state&m
-        if self.operation=='neg':return -state&m
+            if len(self.values)!=1:raise ValueError('multiplier must be constant')
+            factor=pow(self.values[0],-1,1<<w) if inverse else self.values[0]
+            return lambda s,v:s*factor&m
+        if self.operation=='not':return lambda s,v:~s&m
+        if self.operation=='neg':return lambda s,v:-s&m
         if self.operation in ('rol','ror'):
-            return rotate(state,value,w,(self.operation=='rol') != inverse)
+            left=(self.operation=='rol') != inverse
+            return lambda s,v:rotate(s,v,w,left)
         raise ValueError('unsupported reversible stage')
 
 
@@ -120,28 +123,45 @@ def recover(expression,target,*,limits=Limits(),tick=lambda:None):
     def expand(rows,sequence,inverse):
         nonlocal visits
         for stage in sequence:
-            next_rows=[]
-            for state,bindings in rows:
+            next_rows=[];apply=stage.function(inverse)
+            for state in rows:
                 for value in stage.values:
                     tick();visits+=1
-                    bound=bindings if isinstance(stage.side,Const) else bindings+((stage.side,value),)
-                    next_rows.append((stage.apply(state,value,inverse),bound))
+                    next_rows.append(apply(state,value))
             if len(next_rows)>limits.states:raise ValueError('finite preimage state limit')
             rows=next_rows
         return rows
-    forward=expand([(value,() if isinstance(seed,Const) else ((seed,value),)) for value in initial],stages[:split],False)
+    def bindings(index,sequence,with_seed):
+        # Enumeration order is a mixed-radix index into the original domains. Keep only
+        # integer states during the search; reconstruct expressions only for matched rows.
+        result=[]
+        for stage in reversed(sequence):
+            index,choice=divmod(index,len(stage.values))
+            if not isinstance(stage.side,Const):result.append((stage.side,stage.values[choice]))
+        if with_seed and not isinstance(seed,Const):result.append((seed,initial[index]))
+        return result
+    forward_steps=stages[:split];backward_steps=list(reversed(stages[split:]))
+    forward=expand(list(initial),forward_steps,False)
     table={}
-    for value,bindings in forward:
-        tick();table.setdefault(value,[]).append(bindings)
-    backward=expand([(target&mask(expression.width),())],list(reversed(stages[split:])),True)
-    solutions=[]
-    for value,bindings in backward:
+    for index,value in enumerate(forward):
         tick()
-        for left in table.get(value,()):
+        if value not in table:table[value]=index
+        else:
+            previous=table[value]
+            if isinstance(previous,int):table[value]=[previous,index]
+            else:previous.append(index)
+    backward=expand([target&mask(expression.width)],backward_steps,True)
+    solutions=[]
+    for index,value in enumerate(backward):
+        tick()
+        matches=table.get(value,())
+        if isinstance(matches,int):matches=(matches,)
+        right=bindings(index,backward_steps,False) if matches else ()
+        for matched in matches:
             tick()
             # Contradictory occurrences of the same side expression cannot describe an input.
             joined={}
-            for e,v in left+bindings:
+            for e,v in bindings(matched,forward_steps,True)+list(right):
                 if e in joined and joined[e]!=v:break
                 joined[e]=v
             else:

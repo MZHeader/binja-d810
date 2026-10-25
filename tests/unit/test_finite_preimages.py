@@ -88,3 +88,27 @@ def test_solution_cap_rejects_the_complete_result():
     b=BinOp('and',Var('b',8),Const(3,8),8)
     with pytest.raises(ValueError,match='solution limit'):
         recover(BinOp('add',a,b,8),3,limits=Limits(states=256,solutions=1))
+
+
+def test_modular_inverses_are_not_recomputed_for_every_state(monkeypatch):
+    import builtins
+    original=builtins.pow;calls=0
+    def counted(*args,**kwargs):
+        nonlocal calls
+        if len(args)>=2 and args[1]==-1:calls+=1
+        return original(*args,**kwargs)
+    monkeypatch.setattr(builtins,'pow',counted)
+    result=recover(chain(32,4,5),1)
+    assert result is not None and result.states>100
+    assert calls<=2*result.stages
+
+
+def test_colliding_search_rows_retain_every_assignment():
+    terms=[BinOp('and',Var(name,8),Const(3,8),8) for name in ('a','b','c','d')]
+    expression=terms[0]
+    for term in terms[1:]:expression=BinOp('xor',expression,term,8)
+    result=recover(expression,1,limits=Limits(states=256,solutions=256))
+    assert result is not None and result.solutions==64
+    for values in itertools.product(range(4),repeat=4):
+        env=dict(zip(('a','b','c','d'),values))
+        assert evaluate(result.expression,env)==int(evaluate(expression,env)==1)

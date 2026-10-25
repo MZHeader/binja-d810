@@ -195,6 +195,8 @@ arithmetic inputs can remain unknown. The pass summarizes the loop, finds comple
 of its final equality, and keeps correlations between repeated input bits. A meet-in-the-middle
 search bounds the work. Known bits narrow the domains without assuming unknown bits are zero.
 An optional Z3 proof reduces the resulting predicate to a single input equality or masked test.
+Constant inverses are prepared once per stage. Search tables keep integer states; input
+bindings are reconstructed only for matching rows, including collisions and repeated inputs.
 
 The supported state operations are addition, subtraction, XOR, odd constant multiplication,
 negation, complement and bounded rotations. All arithmetic uses the original bit widths.

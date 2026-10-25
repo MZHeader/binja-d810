@@ -67,10 +67,10 @@ workflows are left alone; a failed insertion keeps the original workflow intact.
 
 ## Install
 
-Clone it and link it into your plugins folder:
+Clone the beta release and link it into your plugins folder:
 
 ```sh
-git clone https://github.com/MZHeader/binja-d810
+git clone --branch v0.2.0-beta.1 https://github.com/MZHeader/binja-d810
 ln -s "$PWD/binja-d810/binja_d810" "$HOME/Library/Application Support/Binary Ninja/plugins/binja_d810"
 ```
 

@@ -7,7 +7,7 @@ overrides = [{ name = "d810-ng", marker = "sys_platform == 'never'" }]
 
 [[package]]
 name = "binja-d810"
-version = "0.1.0"
+version = "0.2.0b1"
 source = { virtual = "." }
 
 [package.dev-dependencies]

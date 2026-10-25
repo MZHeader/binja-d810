@@ -84,7 +84,9 @@ def test_work_bound_and_rollback(builds,monkeypatch):
 
 @pytest.mark.parametrize('protected',(False,True))
 def test_mlil_protected_ancestor(builds,protected):
-    f=function_named(builds[1],'pi_32_0');il=MediumLevelILFunction(f.arch,source_func=f)
+    f=function_named(builds[1],'pi_32_0');il=MediumLevelILFunction(f.arch,low_level_il=f.llil)
+    il.prepare_to_copy_function(f.mlil);il.prepare_to_copy_block(f.mlil.basic_blocks[0])
+    il.set_current_address(f.start,f.arch)
     value=il.add(4,il.mult(4,il.var(4,f.parameter_vars[0]),il.const(4,7)),il.const(4,23))
     comparison=il.compare_equal(4,value,il.const(4,72))
     container=il.and_expr(4,il.bool_to_int(4,comparison),il.const(4,1))

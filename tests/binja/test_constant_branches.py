@@ -7,7 +7,7 @@ from helpers import open_sample,set_types,function_named,settle
 from flowcases import text
 from arch import BUILDS,sample
 from flag_model import execute
-from binja_d810.binja import control_cleanup as cleanup,settings,log
+from binja_d810.binja import control_cleanup as cleanup,settings,log,workflow
 from binja_d810.deadline import Deadline
 
 
@@ -80,8 +80,12 @@ def test_limits_switch_and_rollback(owner,monkeypatch):
 
 @pytest.mark.parametrize('build',BUILDS)
 def test_c_workflow_and_disable_restore(build):
-    bv=open_sample(sample('control_cleanup',build,'O0'),d810=True,options={settings.CONSTANT_BRANCHES:False})
+    # Keep the compiler's branch until HLIL, so the older MLIL/native folding cannot
+    # satisfy this test before the feature under test gets to see it.
+    workflow.set_levels_override({'hlil'})
+    bv=None
     try:
+        bv=open_sample(sample('control_cleanup',build,'O0'),d810=True,options={settings.CONSTANT_BRANCHES:False})
         set_types(bv,{'cb_identity':'uint32_t cb_identity(uint32_t x,uint32_t y,uint32_t z)'})
         settle(bv);f=function_named(bv,'cb_identity');before=text(f)
         Settings().set_bool(settings.CONSTANT_BRANCHES,True,bv);f.reanalyze();settle(bv)
@@ -93,4 +97,6 @@ def test_c_workflow_and_disable_restore(build):
             solver=z3.Solver();solver.add(path,writes[0][1]!=x);assert solver.check()==z3.unsat
         Settings().set_bool(settings.CONSTANT_BRANCHES,False,bv);f.reanalyze();settle(bv)
         assert text(f)==before
-    finally:bv.file.close()
+    finally:
+        if bv is not None:bv.file.close()
+        workflow.set_levels_override(None)

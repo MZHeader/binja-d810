@@ -223,6 +223,14 @@ their predicates simplified while the older dead-loop pass retains the loop. Dis
 | `binja_d810.recurrenceSeconds` | 6 seconds within the shared function budget |
 | `binja_d810.recurrenceCleanupReserveSeconds` | 1 second reserved for later cleanup |
 
+When HLIL contains loops, the configured recurrence allowance plus cleanup reserve is kept
+out of the earlier flag, MBA and comparison phases. This prevents cold solver work from
+using the whole function budget before recurrence recovery gets a turn. The overall deadline
+is unchanged; the reservation is reported under **preimages**. Loop-free functions keep their
+full expression allowance. Disabling recurrence recovery also removes the reservation.
+The expression engine commits rewrites proved by rules and the cheap backends before trying
+expensive solvers, then refreshes IL/SSA so newly exposed simplifications get a turn first.
+
 Instruction, node, stage, round and proof limits use `preimageInstructions`, `preimageNodes`,
 `preimageSteps`, `preimageRounds` and `preimageProofMilliseconds` above. Scalar widths use
 `controlBits` (64 by default). Synthetic C fixtures vary 32/64-bit state parameters and include

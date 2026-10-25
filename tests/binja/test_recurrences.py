@@ -41,6 +41,10 @@ def test_the_workflow_recovers_recurrence_predicates(builds):
     changed=[c['name'] for c in CASES if any(r.recurrence_conditions for r in log.latest_reports(function_named(on,c['name'])).values())]
     assert changed,{c['name']:[r.preimages for r in log.latest_reports(function_named(on,c['name'])).values()] for c in CASES}
     assert any(text(function_named(on,n))!=text(function_named(off,n)) for n in changed)
+    assert any(note.startswith('reserved ') for n in changed
+               for r in log.latest_reports(function_named(on,n)).values() for note in r.preimages)
+    assert not any(note.startswith('reserved ') for c in CASES
+                   for r in log.latest_reports(function_named(off,c['name'])).values() for note in r.preimages)
 
 
 def target(x):
@@ -103,6 +107,17 @@ def test_unproved_endian_field_layout_is_rejected(builds):
     fields=[n for n in recurrence.tree_nodes(il.root,lambda:None) if n.operation==H.HLIL_STRUCT_FIELD]
     assert fields
     with pytest.raises(ValueError,match='big-endian'):model.expression(fields[0])
+
+
+def test_structural_reservation_preflight_is_bounded(builds):
+    f=function_named(builds[1],'rp_32_0');il=program(f,'positive')
+    assert recurrence.has_loops(il,recurrence.Limits(),Deadline.after(1))
+    assert not recurrence.has_loops(il,replace(recurrence.Limits(),work=1),Deadline.after(1))
+    assert not recurrence.has_loops(il,replace(recurrence.Limits(),instructions=1),Deadline.after(1))
+    assert not recurrence.has_loops(il,recurrence.Limits(),Deadline.after(0))
+    empty=HighLevelILFunction(f.arch,source_func=f)
+    empty.root=empty.get_expr(empty.block([empty.ret([empty.const(4,0)])]));empty.finalize()
+    assert not recurrence.has_loops(empty,recurrence.Limits(),Deadline.after(1))
 
 
 def test_bounds_and_rollback(builds,monkeypatch):

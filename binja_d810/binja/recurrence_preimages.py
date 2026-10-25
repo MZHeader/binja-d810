@@ -212,6 +212,14 @@ def expression_roots(node):
     return []
 
 
+def has_loops(il,limits,deadline):
+    """Cheap structural preflight; no arithmetic lifting or native variable cache."""
+    if len(il)>limits.instructions:return False
+    work=Work(limits,deadline)
+    try:return any(node.operation in _LOOPS for node in structure(il.root,work.tick))
+    except (ValueError,RecursionError):return False
+
+
 def plans(il,limits,work,report,remaining):
     nodes=tree_nodes(il.root,work.tick)
     protected=protected_nodes(il.root,work.tick)

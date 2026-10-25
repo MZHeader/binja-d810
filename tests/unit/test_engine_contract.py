@@ -238,6 +238,29 @@ def test_cheap_backends_reach_every_candidate_before_slow_ones_spend_the_budget(
     assert report.budget_exhausted
 
 
+def test_cheap_rewrites_expose_later_candidates_before_expensive_search():
+    class Revealed(FakeAdapter):
+        def candidates(self,skip):
+            for name,e in self.roots.items():
+                if name=='later' and is_mba(self.roots['early']):continue
+                if is_mba(e):yield Candidate(name,0x1000,e)
+
+    adapter=Revealed({'early':p('(x ^ y) + 2 * (x & y)'),
+                      'later':p('(u ^ v) + 2 * (u & v)'),
+                      'stuck':p('(x * y) ^ (x + z)')})
+    calls=[]
+    class Expensive:
+        name='expensive'
+        def simplify(self,e,deadline=None):
+            calls.append((adapter.roots['early'],adapter.roots['later']))
+            return None
+
+    report=simplify_function(adapter,[],[LinearMBABackend(),Expensive()],EngineConfig())
+    assert len(report.rewrites)==2 and not report.errors and not report.rolled_back
+    assert calls and all(pair==(p('x + y'),p('u + v')) for pair in calls)
+    assert all(r.verdict=='PROVEN' for r in report.rewrites)
+
+
 class SharedAdapter(FakeAdapter):
     """r = (a ^ z) + 2 * (a & z) where a = (x * y) - (x | y) + (x & 7) is also used elsewhere: the
     deep lift inlines a, and its result a + z copies a's definition into r (a Tigress VM's handlers)."""

@@ -339,6 +339,10 @@ def _passes(adapter, rules, backends, config, deadline, report, dead: set, skip)
                     planned.append((chosen, rewrite))
                     consumed |= chosen.consumes
             pending = deferred
+            if planned and not final:
+                # Refresh IL/SSA before costly backends: these proved rewrites can expose
+                # more cheap candidates or remove the expensive expressions altogether.
+                break
         # Per-path constancy last, with what remains of the budget (v3.3): the costliest
         # and rarest mechanism must not take the time of other candidates' folds (an OLLVM-obfuscated export).
         for candidate in by_path:

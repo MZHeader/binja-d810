@@ -162,6 +162,18 @@ def _run(ctx, level: str) -> None:
             reserved = min(DISPATCH_RESERVE_SECONDS, remaining / 2)
         probe_seconds, probe_cpu = time.monotonic() - started, time.thread_time() - cpu
     deadline = Deadline(allowance.deadline.at - reserved)
+    expression_deadline = deadline
+    recurrence_limits = None
+    recurrence_reserved = preflight_seconds = preflight_cpu = 0.0
+    if level == "hlil" and ctx.get_setting_bool(settings.RECURRENCE_PREIMAGES):
+        from . import recurrence_preimages
+        started, cpu = time.monotonic(), time.thread_time()
+        recurrence_limits = settings.recurrence_limits(ctx)
+        if recurrence_preimages.has_loops(il, recurrence_limits, deadline):
+            expression_deadline = deadline.reserve(ctx.get_setting_uint64(settings.RECURRENCE_SECONDS)
+                                                   + ctx.get_setting_uint64(settings.RECURRENCE_RESERVE))
+            recurrence_reserved = 0.0 if expression_deadline.at == deadline.at else deadline.at - expression_deadline.at
+        preflight_seconds, preflight_cpu = time.monotonic() - started, time.thread_time() - cpu
     allocations = None
     allocation_changed = False
     if level == "mlil" and ctx.get_setting_bool(settings.ALLOCATIONS):
@@ -178,7 +190,7 @@ def _run(ctx, level: str) -> None:
         scratch_changed = il is not original
         if scratch_changed:
             allowance.adopt(_handle(il), il)
-    flags = flag_conditions.run(il, level, settings.flag_limits(ctx), deadline) \
+    flags = flag_conditions.run(il, level, settings.flag_limits(ctx), expression_deadline) \
         if ctx.get_setting_bool(settings.FLAGS) else None
     mutable = None
     mutable_changed = False
@@ -215,14 +227,22 @@ def _run(ctx, level: str) -> None:
         annotations.reconcile(func, settings.CONSTANT_BUFFERS, sites,
                               ctx.get_setting_bool(settings.CONSTANT_COMMENTS) and ctx.get_setting_bool(settings.FLOW_FIXES))
     make = MLILAdapter if level == "mlil" else HLILAdapter
-    adapter = make(il, config.limits.max_nodes, deadline)
+    adapter = make(il, config.limits.max_nodes, expression_deadline)
     backends = _backends_override if _backends_override is not None else _configured_backends(ctx)
-    report = simplify_function(adapter, rules, backends if config.tier2 else (), config, deadline)
+    report = simplify_function(adapter, rules, backends if config.tier2 else (), config, expression_deadline)
+    report.preimage_seconds += preflight_seconds
+    report.total_seconds += preflight_seconds
+    report.plan_seconds += preflight_seconds
+    report.plan_cpu_seconds += preflight_cpu
+    report.allowance_seconds += recurrence_reserved + preflight_seconds
+    if recurrence_reserved:
+        report.preimages.append(f"reserved {recurrence_reserved:.3f} s for recurrence proofs and cleanup within the function budget")
     if ctx.get_setting_bool(settings.COMPARISON_PREIMAGES):
         from . import comparison_preimages
-        preimages = comparison_preimages.run(il,level,settings.preimage_limits(ctx),deadline)
-        report.preimages, report.preimage_conditions = preimages.notes, preimages.changed
-        report.preimage_seconds = preimages.seconds
+        preimages = comparison_preimages.run(il,level,settings.preimage_limits(ctx),expression_deadline)
+        report.preimages.extend(preimages.notes)
+        report.preimage_conditions = preimages.changed
+        report.preimage_seconds += preimages.seconds
         report.total_seconds += preimages.seconds
         report.plan_seconds += preimages.seconds
         report.plan_cpu_seconds += preimages.cpu_seconds
@@ -232,7 +252,7 @@ def _run(ctx, level: str) -> None:
         from . import recurrence_preimages
         seconds=min(ctx.get_setting_uint64(settings.RECURRENCE_SECONDS),
                     max(0.0,deadline.remaining()-ctx.get_setting_uint64(settings.RECURRENCE_RESERVE)))
-        recurrences = recurrence_preimages.run(il,settings.recurrence_limits(ctx),deadline.earlier(Deadline.after(seconds)))
+        recurrences = recurrence_preimages.run(il,recurrence_limits,deadline.earlier(Deadline.after(seconds)))
         report.preimages.extend(recurrences.notes)
         report.recurrence_conditions, report.recurrence_states = recurrences.changed, recurrences.states
         report.preimage_seconds += recurrences.seconds

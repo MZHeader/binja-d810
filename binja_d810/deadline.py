@@ -26,3 +26,9 @@ class Deadline:
 
     def earlier(self, other: "Deadline") -> "Deadline":
         return self if self.at <= other.at else other
+
+    def reserve(self, seconds: float) -> "Deadline":
+        """Shorten an earlier phase so later work can use the same outer deadline."""
+        if self.at == float("inf"):
+            return self
+        return Deadline(self.at - min(max(0.0, seconds), self.remaining()))
